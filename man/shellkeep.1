@@ -1,0 +1,89 @@
+.\" SPDX-FileCopyrightText: 2026 shellkeep contributors
+.\" SPDX-License-Identifier: GPL-3.0-or-later
+.TH SHELLKEEP 1 "2026-03-26" "shellkeep 0.1.0" "User Commands"
+.SH NAME
+shellkeep \- persistent SSH terminal sessions with tmux
+.SH SYNOPSIS
+.B shellkeep
+[\fIoptions\fR] [\fIuser\fR@]\fIhost\fR
+.SH DESCRIPTION
+.B shellkeep
+is an SSH terminal emulator that persists sessions on the remote server
+using tmux.  Sessions survive network interruptions, power failures, and
+client restarts.  Window layout is saved per device.
+.SH OPTIONS
+.TP
+.BI \-p " PORT"
+SSH port (default: 22).
+.TP
+.BI \-i " FILE"
+Path to identity file (private key).
+.TP
+.BI \-l " USER"
+Login user name.
+.TP
+.BI \-\-debug [= COMPONENT ]
+Enable debug logging.  Optionally restrict to a component
+(ssh, terminal, state, ui, tmux, sftp, general).
+.TP
+.BI \-\-trace [= COMPONENT ]
+Enable trace logging (very verbose).
+.TP
+.BI \-\-config " PATH"
+Path to configuration file.
+.TP
+.B \-\-minimized
+Start minimized to system tray.
+.TP
+.B \-\-crash\-report
+Display crash report from previous run and exit.
+.TP
+.B \-\-version
+Show version information and exit.
+.SH ENVIRONMENT
+.TP
+.B SHELLKEEP_LOG_LEVEL
+Override log level (error, warn, info, debug, trace).
+.TP
+.B SHELLKEEP_LOG_COMPONENT
+Comma-separated list of components to log.
+.TP
+.B SHELLKEEP_LOG_FILE
+Override log file path.
+.TP
+.B SHELLKEEP_LOG_JOURNALD
+Set to 1 to enable journald logging (if compiled with libsystemd).
+.SH FILES
+.TP
+.I $XDG_CONFIG_HOME/shellkeep/config.ini
+User configuration file (INI format).
+.TP
+.I $XDG_CONFIG_HOME/shellkeep/client-id
+Auto-generated client identifier (UUID v4 or user-defined name).
+.TP
+.I $XDG_DATA_HOME/shellkeep/recent_connections.json
+Recent connections list (max 50 entries).
+.TP
+.I $XDG_STATE_HOME/shellkeep/logs/shellkeep.log
+Log file (rotated at 10 MB, max 5 files).
+.TP
+.I $XDG_STATE_HOME/shellkeep/crashes/
+Crash dump directory.
+.TP
+.I ~/.terminal-state/<client-id>.json
+Server-side state file (primary source of truth).
+.SH EXIT STATUS
+.TP
+.B 0
+Success.
+.TP
+.B 1
+Error (see log for details).
+.SH BUGS
+Report bugs at https://github.com/shellkeep/shellkeep/issues
+.SH LICENSE
+GPL-3.0-or-later.  See LICENSE file.
+.SH SEE ALSO
+.BR ssh (1),
+.BR tmux (1),
+.BR ssh_config (5)

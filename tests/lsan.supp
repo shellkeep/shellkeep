@@ -1,0 +1,20 @@
+# SPDX-FileCopyrightText: 2026 shellkeep contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# LeakSanitizer suppressions for shellkeep tests.
+# Suppresses known leaks in external libraries (libssh, GLib, etc.)
+
+# libssh internal allocations (session state, crypto contexts)
+leak:libssh
+leak:ssh_connect
+leak:ssh_options_set
+leak:ssh_new
+
+# GLib type system (one-time allocations)
+leak:g_type_register
+leak:g_type_class_ref
+
+# OpenSSL / GnuTLS crypto initialization
+leak:libcrypto
+leak:libssl
+leak:libgnutls

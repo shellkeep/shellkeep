@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: 2026 shellkeep contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# List of source files containing translatable strings.
+# NFR-I18N-01: All user-visible strings use _() (gettext).
+src/main.c
+src/ui/sk_dialogs.c
+src/ui/sk_welcome.c
+src/ui/sk_conn_feedback.c
+src/ui/sk_toast.c
+src/ui/sk_app_window.c
+src/ui/tray.c
+src/terminal/sk_terminal_dead.c
+src/terminal/sk_terminal_search.c

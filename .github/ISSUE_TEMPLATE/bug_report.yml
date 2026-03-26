@@ -1,0 +1,137 @@
+# SPDX-FileCopyrightText: 2026 shellkeep contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+name: Bug Report
+description: Report a bug in shellkeep
+title: "[Bug]: "
+labels: ["bug", "triage"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting a bug. Please fill in as much detail as possible.
+
+        **IMPORTANT:** Never include passwords, private keys, terminal output containing
+        secrets, or any other sensitive information in bug reports.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what the bug is.
+      placeholder: Describe what happened...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+      placeholder: Describe what you expected...
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: How can we reproduce this bug?
+      placeholder: |
+        1. Connect to server with `shellkeep user@host`
+        2. Open a new tab with Ctrl+Shift+T
+        3. ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which part of shellkeep is affected?
+      options:
+        - Connection / SSH
+        - Session Management / tmux
+        - Terminal Rendering
+        - UI / Tabs / Windows
+        - State Persistence
+        - Tray Icon
+        - Configuration
+        - Logging / Crash Handling
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: shellkeep Version
+      description: Output of `shellkeep --version`
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: distro
+    attributes:
+      label: Linux Distribution
+      options:
+        - Ubuntu 22.04
+        - Ubuntu 24.04
+        - Debian 12
+        - Fedora 40+
+        - Arch Linux
+        - Other (specify in additional context)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: display
+    attributes:
+      label: Display Server
+      options:
+        - Wayland
+        - X11
+        - Unknown
+    validations:
+      required: false
+
+  - type: input
+    id: server-os
+    attributes:
+      label: Server OS and tmux Version
+      description: Remote server OS and `tmux -V` output
+      placeholder: "Ubuntu 22.04, tmux 3.3a"
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Log Output
+      description: |
+        Paste relevant log output from `~/.local/state/shellkeep/logs/shellkeep.log`.
+        You can also run with `--debug` for more detail.
+        **WARNING:** Review logs before pasting. Never include passwords or keys.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: crash
+    attributes:
+      label: Crash Report
+      description: If shellkeep crashed, paste the output of `shellkeep --crash-report`.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: Any other context, screenshots, or information.
+    validations:
+      required: false

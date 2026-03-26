@@ -1,0 +1,455 @@
+# Brazilian Portuguese translation for shellkeep.
+# Copyright (C) 2026 shellkeep contributors
+# This file is distributed under the same license as the shellkeep package.
+#
+# NFR-I18N-05: v1 languages: English (source) and Brazilian Portuguese (pt_BR).
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: shellkeep 0.1.0\n"
+"Report-Msgid-Bugs-To: https://github.com/shellkeep/shellkeep/issues\n"
+"POT-Creation-Date: 2026-03-26 00:00+0000\n"
+"PO-Revision-Date: 2026-03-26 00:00+0000\n"
+"Last-Translator: shellkeep contributors\n"
+"Language-Team: Portuguese (Brazil)\n"
+"Language: pt_BR\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+#. Translators: %1$s is user (or empty), %2$s is "@" separator
+#. (or empty), %3$s is hostname, %4$d is port number
+#: src/main.c
+#, c-format
+msgid "Connecting to %1$s%2$s%3$s:%4$d ..."
+msgstr "Conectando a %1$s%2$s%3$s:%4$d ..."
+
+#: src/main.c
+msgid ""
+"shellkeep — no host specified.\n"
+"Usage: shellkeep [options] [user@]host"
+msgstr ""
+"shellkeep — nenhum host especificado.\n"
+"Uso: shellkeep [opcoes] [usuario@]host"
+
+#. Translators: %1$s is hostname, %2$s is key type, %3$s is fingerprint
+#: src/ui/sk_dialogs.c
+#, c-format
+msgid ""
+"The authenticity of host '%1$s' cannot be established.\n"
+"\n"
+"Key type: %2$s\n"
+"Fingerprint:\n"
+"  %3$s\n"
+"\n"
+"Are you sure you want to continue connecting?"
+msgstr ""
+"A autenticidade do host '%1$s' nao pode ser estabelecida.\n"
+"\n"
+"Tipo de chave: %2$s\n"
+"Impressao digital:\n"
+"  %3$s\n"
+"\n"
+"Tem certeza de que deseja continuar conectando?"
+
+#: src/ui/sk_dialogs.c src/terminal/sk_terminal_search.c
+msgid "unknown"
+msgstr "desconhecido"
+
+#: src/ui/sk_dialogs.c
+msgid "Unknown Host Key"
+msgstr "Chave do Host Desconhecida"
+
+#: src/ui/sk_dialogs.c
+msgid "Accept and save"
+msgstr "Aceitar e salvar"
+
+#: src/ui/sk_dialogs.c
+msgid "Connect once"
+msgstr "Conectar uma vez"
+
+#: src/ui/sk_dialogs.c src/ui/sk_dialogs.c src/ui/sk_dialogs.c
+#: src/ui/sk_dialogs.c src/ui/sk_dialogs.c
+msgid "Cancel"
+msgstr "Cancelar"
+
+#. Translators: %1$s is hostname, %2$s is key type, %3$s is old fingerprint,
+#. %4$s is new fingerprint, %5$s is hostname (repeated for command)
+#: src/ui/sk_dialogs.c
+#, c-format
+msgid ""
+"WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!\n"
+"\n"
+"Someone could be eavesdropping on you right now (man-in-the-middle attack)!\n"
+"\n"
+"Host: %1$s\n"
+"Key type: %2$s\n"
+"\n"
+"Previous fingerprint:\n"
+"  %3$s\n"
+"\n"
+"Current fingerprint:\n"
+"  %4$s\n"
+"\n"
+"The connection has been blocked for your security.\n"
+"To resolve this, remove the old key from your known_hosts file:\n"
+"\n"
+"  ssh-keygen -R %5$s"
+msgstr ""
+"AVISO: A IDENTIFICACAO DO HOST REMOTO FOI ALTERADA!\n"
+"\n"
+"Alguem pode estar interceptando sua conexao neste momento (ataque man-in-the-middle)!\n"
+"\n"
+"Host: %1$s\n"
+"Tipo de chave: %2$s\n"
+"\n"
+"Impressao digital anterior:\n"
+"  %3$s\n"
+"\n"
+"Impressao digital atual:\n"
+"  %4$s\n"
+"\n"
+"A conexao foi bloqueada para sua seguranca.\n"
+"Para resolver, remova a chave antiga do seu arquivo known_hosts:\n"
+"\n"
+"  ssh-keygen -R %5$s"
+
+#: src/ui/sk_dialogs.c
+msgid "(not available)"
+msgstr "(indisponivel)"
+
+#: src/ui/sk_dialogs.c
+msgid "Host Key Has Changed"
+msgstr "A Chave do Host Foi Alterada"
+
+#: src/ui/sk_dialogs.c
+msgid "Authentication Required"
+msgstr "Autenticacao Necessaria"
+
+#: src/ui/sk_dialogs.c src/ui/sk_dialogs.c
+msgid "OK"
+msgstr "OK"
+
+#: src/ui/sk_dialogs.c
+msgid "Password:"
+msgstr "Senha:"
+
+#. Translators: %s is the authentication method name
+#: src/ui/sk_dialogs.c
+#, c-format
+msgid "Authentication: %s"
+msgstr "Autenticacao: %s"
+
+#: src/ui/sk_dialogs.c
+msgid "Verification Required"
+msgstr "Verificacao Necessaria"
+
+#: src/ui/sk_dialogs.c
+msgid "Response:"
+msgstr "Resposta:"
+
+#. Translators: %1$s is the hostname, %2$s is the connection timestamp
+#: src/ui/sk_dialogs.c
+#, c-format
+msgid ""
+"Another shellkeep instance is currently connected to this server.\n"
+"\n"
+"Connected from: %1$s\n"
+"Since: %2$s\n"
+"\n"
+"Only one connection per device identity is allowed at a time.\n"
+"\n"
+"Would you like to disconnect the other instance and connect here?"
+msgstr ""
+"Outra instancia do shellkeep esta conectada a este servidor.\n"
+"\n"
+"Conectado de: %1$s\n"
+"Desde: %2$s\n"
+"\n"
+"Apenas uma conexao por identidade de dispositivo e permitida por vez.\n"
+"\n"
+"Deseja desconectar a outra instancia e conectar aqui?"
+
+#: src/ui/sk_dialogs.c
+msgid "(unknown)"
+msgstr "(desconhecido)"
+
+#: src/ui/sk_dialogs.c
+msgid "Active Connection Detected"
+msgstr "Conexao Ativa Detectada"
+
+#: src/ui/sk_dialogs.c
+msgid "Disconnect and connect here"
+msgstr "Desconectar e conectar aqui"
+
+#: src/ui/sk_dialogs.c
+msgid "Select Environment"
+msgstr "Selecionar Ambiente"
+
+#: src/ui/sk_dialogs.c
+msgid "Open"
+msgstr "Abrir"
+
+#: src/ui/sk_dialogs.c
+msgid "Filter environments..."
+msgstr "Filtrar ambientes..."
+
+#. NFR-I18N-03: Use ngettext for plural handling
+#. Translators: %d is the number of active sessions
+#: src/ui/sk_dialogs.c
+#, c-format
+msgid ""
+"This window has %d active session.\n"
+"\n"
+"Sessions will continue running on the server even if you hide or close this "
+"window."
+msgid_plural ""
+"This window has %d active sessions.\n"
+"\n"
+"Sessions will continue running on the server even if you hide or close this "
+"window."
+msgstr[0] ""
+"Esta janela tem %d sessao ativa.\n"
+"\n"
+"As sessoes continuarao rodando no servidor mesmo se voce ocultar ou fechar "
+"esta janela."
+msgstr[1] ""
+"Esta janela tem %d sessoes ativas.\n"
+"\n"
+"As sessoes continuarao rodando no servidor mesmo se voce ocultar ou fechar "
+"esta janela."
+
+#: src/ui/sk_dialogs.c
+msgid "Close Window"
+msgstr "Fechar Janela"
+
+#: src/ui/sk_dialogs.c
+msgid "Hide"
+msgstr "Ocultar"
+
+#: src/ui/sk_dialogs.c
+msgid "Terminate sessions"
+msgstr "Encerrar sessoes"
+
+#: src/ui/sk_dialogs.c
+msgid "Error"
+msgstr "Erro"
+
+#: src/ui/sk_dialogs.c
+msgid "Information"
+msgstr "Informacao"
+
+#. Translators: This is the app subtitle shown on the welcome screen
+#: src/ui/sk_welcome.c
+msgid "Persistent terminal sessions over SSH"
+msgstr "Sessoes de terminal persistentes via SSH"
+
+#: src/ui/sk_welcome.c
+msgid "Connect"
+msgstr "Conectar"
+
+#: src/ui/sk_welcome.c
+msgid "Quit"
+msgstr "Sair"
+
+#. Translators: Onboarding steps shown on first use
+#: src/ui/sk_welcome.c
+msgid ""
+"1. Connect to a server\n"
+"2. Your sessions persist even if you disconnect\n"
+"3. Reconnect and everything is right where you left it"
+msgstr ""
+"1. Conecte-se a um servidor\n"
+"2. Suas sessoes persistem mesmo se voce desconectar\n"
+"3. Reconecte e tudo estara exatamente onde voce deixou"
+
+#: src/ui/sk_welcome.c
+msgid "Name this device:"
+msgstr "Nome deste dispositivo:"
+
+#: src/ui/sk_welcome.c
+msgid "e.g., My Desktop, Work Laptop"
+msgstr "ex.: Meu Desktop, Laptop do Trabalho"
+
+#: src/ui/sk_welcome.c
+msgid "user@hostname or IP address"
+msgstr "usuario@hostname ou endereco IP"
+
+#: src/ui/sk_welcome.c
+msgid "Recent connections"
+msgstr "Conexoes recentes"
+
+#: src/ui/sk_welcome.c
+msgid ""
+"No recent connections.\n"
+"Enter a hostname above to get started."
+msgstr ""
+"Nenhuma conexao recente.\n"
+"Digite um hostname acima para comecar."
+
+#: src/ui/sk_conn_feedback.c
+msgid "Connecting..."
+msgstr "Conectando..."
+
+#: src/ui/sk_conn_feedback.c
+msgid "Authenticating..."
+msgstr "Autenticando..."
+
+#: src/ui/sk_conn_feedback.c
+msgid "Checking tmux..."
+msgstr "Verificando tmux..."
+
+#: src/ui/sk_conn_feedback.c
+msgid "Loading state..."
+msgstr "Carregando estado..."
+
+#: src/ui/sk_conn_feedback.c
+msgid "Restoring sessions..."
+msgstr "Restaurando sessoes..."
+
+#: src/ui/sk_conn_feedback.c
+msgid "Connected"
+msgstr "Conectado"
+
+#: src/ui/sk_conn_feedback.c
+msgid "Connection failed"
+msgstr "Falha na conexao"
+
+#. Translators: %1$d is the current session number, %2$d is the total
+#: src/ui/sk_conn_feedback.c
+#, c-format
+msgid "Restoring sessions (%1$d/%2$d)..."
+msgstr "Restaurando sessoes (%1$d/%2$d)..."
+
+#: src/ui/sk_toast.c
+msgid ""
+"Session kept on server \xe2\x80\x94 you can restore it later"
+msgstr ""
+"Sessao mantida no servidor \xe2\x80\x94 voce pode restaura-la depois"
+
+#: src/ui/sk_toast.c
+msgid ""
+"shellkeep continues running in the system tray. Your sessions remain active."
+msgstr ""
+"shellkeep continua rodando na bandeja do sistema. Suas sessoes permanecem ativas."
+
+#: src/ui/sk_app_window.c
+msgid "Rename"
+msgstr "Renomear"
+
+#: src/ui/sk_app_window.c
+msgid "Close (keep session)"
+msgstr "Fechar (manter sessao)"
+
+#: src/ui/sk_app_window.c
+msgid "New Tab"
+msgstr "Nova Aba"
+
+#. Translators: %s is the environment name
+#: src/ui/tray.c
+#, c-format
+msgid "Environment: %s"
+msgstr "Ambiente: %s"
+
+#: src/ui/tray.c
+msgid "No environment"
+msgstr "Nenhum ambiente"
+
+#: src/ui/tray.c
+msgid "Switch to"
+msgstr "Alternar para"
+
+#: src/ui/tray.c
+msgid "Rename environment"
+msgstr "Renomear ambiente"
+
+#: src/ui/tray.c
+msgid "New environment"
+msgstr "Novo ambiente"
+
+#: src/ui/tray.c
+msgid "Delete environment"
+msgstr "Excluir ambiente"
+
+#: src/ui/tray.c
+msgid "Untitled"
+msgstr "Sem titulo"
+
+#. Translators: %s is the window title
+#: src/ui/tray.c
+#, c-format
+msgid "[*] %s (hidden)"
+msgstr "[*] %s (oculta)"
+
+#. Translators: %s is the window title
+#: src/ui/tray.c
+#, c-format
+msgid "    %s (hidden)"
+msgstr "    %s (oculta)"
+
+#. Translators: %s is the window title
+#: src/ui/tray.c
+#, c-format
+msgid "[*] %s"
+msgstr "[*] %s"
+
+#: src/ui/tray.c
+msgid "More windows..."
+msgstr "Mais janelas..."
+
+#: src/ui/tray.c
+msgid "Show all"
+msgstr "Mostrar todas"
+
+#: src/ui/tray.c
+msgid "No windows"
+msgstr "Nenhuma janela"
+
+#: src/ui/tray.c
+msgid "Quit (sessions active)"
+msgstr "Sair (sessoes ativas)"
+
+#: src/terminal/sk_terminal_dead.c
+msgid "This session has ended on the server."
+msgstr "Esta sessao foi encerrada no servidor."
+
+#: src/terminal/sk_terminal_dead.c
+msgid ""
+"The terminal content above is preserved from the session history.\n"
+"You can scroll through it and copy text."
+msgstr ""
+"O conteudo do terminal acima foi preservado do historico da sessao.\n"
+"Voce pode rolar e copiar texto."
+
+#: src/terminal/sk_terminal_dead.c
+msgid "Create New Session"
+msgstr "Criar Nova Sessao"
+
+#: src/terminal/sk_terminal_search.c
+msgid "Search scrollback..."
+msgstr "Pesquisar historico..."
+
+#: src/terminal/sk_terminal_search.c
+msgid "Previous match (Shift+Enter)"
+msgstr "Resultado anterior (Shift+Enter)"
+
+#: src/terminal/sk_terminal_search.c
+msgid "Next match (Enter)"
+msgstr "Proximo resultado (Enter)"
+
+#: src/terminal/sk_terminal_search.c
+msgid "Close search (Esc)"
+msgstr "Fechar pesquisa (Esc)"
+
+#: src/terminal/sk_terminal_search.c
+msgid "Invalid"
+msgstr "Invalido"
+
+#: src/terminal/sk_terminal_search.c
+msgid "Found"
+msgstr "Encontrado"
+
+#: src/terminal/sk_terminal_search.c
+msgid "No matches"
+msgstr "Nenhum resultado"

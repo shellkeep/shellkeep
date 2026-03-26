@@ -1,0 +1,4 @@
+{"ts":"2026-03-26T10:00:00Z","type":"output","text":"hello world\n"}
+{"ts":"2026-03-26T10:00:01Z","type":"input_echo","text":"ls -la\n"}
+{"ts":"2026-03-26T10:00:02Z","type":"resize","size":{"cols":120,"rows":40}}
+{"ts":"2026-03-26T10:00:03Z","type":"meta","text":"session started"}

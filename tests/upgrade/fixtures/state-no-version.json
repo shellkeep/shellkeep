@@ -1,0 +1,25 @@
+{
+  "last_modified": "2026-02-01T00:00:00Z",
+  "client_id": "no-version-client",
+  "environments": {
+    "default": {
+      "windows": [
+        {
+          "id": "win-nv-001",
+          "title": "No Version Window",
+          "visible": true,
+          "tabs": [
+            {
+              "session_uuid": "abababab-1111-2222-3333-444444444444",
+              "tmux_session_name": "nv_session",
+              "title": "No Version Tab",
+              "position": 0
+            }
+          ],
+          "active_tab": 0
+        }
+      ]
+    }
+  },
+  "last_environment": "default"
+}

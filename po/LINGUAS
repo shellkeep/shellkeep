@@ -1,0 +1,6 @@
+# SPDX-FileCopyrightText: 2026 shellkeep contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# List of supported languages (ISO 639-1 codes).
+# NFR-I18N-05: v1 languages: English (source) and Brazilian Portuguese.
+pt_BR

@@ -1,2 +1,286 @@
-# shellkeep
-SSH sessions that survives to everything. Auto-reconnect, multi-tab, per-device layout sync. Zero server setup.
+<!--
+SPDX-FileCopyrightText: 2026 shellkeep contributors
+SPDX-License-Identifier: GPL-3.0-or-later
+-->
+
+<p align="center">
+  <h1 align="center">shellkeep</h1>
+  <p align="center">
+    <strong>SSH sessions that survive everything.</strong>
+    <br />
+    Open source. Native Linux. Zero server setup.
+  </p>
+</p>
+
+<p align="center">
+  <a href="https://github.com/shellkeep/shellkeep/actions/workflows/ci.yml"><img src="https://github.com/shellkeep/shellkeep/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/shellkeep/shellkeep/actions/workflows/lint.yml"><img src="https://github.com/shellkeep/shellkeep/actions/workflows/lint.yml/badge.svg" alt="Lint"></a>
+  <a href="https://github.com/shellkeep/shellkeep/actions/workflows/codeql.yml"><img src="https://github.com/shellkeep/shellkeep/actions/workflows/codeql.yml/badge.svg" alt="CodeQL"></a>
+  <a href="https://www.gnu.org/licenses/gpl-3.0"><img src="https://img.shields.io/badge/License-GPLv3-blue.svg" alt="License: GPL v3"></a>
+  <a href="https://github.com/shellkeep/shellkeep/releases"><img src="https://img.shields.io/badge/version-0.1.0-green.svg" alt="Version"></a>
+</p>
+
+<p align="center">
+  <img src="docs/demo.gif" alt="shellkeep demo: connect, work across tabs, lose your network, get everything back automatically" width="720">
+</p>
+
+> **[Watch the full demo (webm)](docs/demo.webm)** — with pause, seek, and full quality.
+
+<p align="center">
+  <em>Connect. Create tabs. Lose your network. Get everything back -- automatically.</em>
+</p>
+
+---
+
+## The problem
+
+You SSH into a server, set up your terminal tabs, get deep into a debugging session -- and your Wi-Fi drops. Or your laptop sleeps. Or your VPN reconnects. **Everything is gone.** You reconnect, re-create your layout, try to remember where you were. This happens multiple times a day.
+
+## The solution
+
+**shellkeep** is a GTK 3 terminal that makes SSH sessions permanent. It pairs with tmux on the server (which you probably already have) to keep your sessions alive across any interruption. When your connection drops, shellkeep reconnects automatically and restores your exact terminal state -- every tab, every scroll position, every running process. No server-side installation required. No accounts. No cloud.
+
+---
+
+## Features
+
+**Persistent sessions** -- Backed by tmux on the server. Your sessions survive reboots, network changes, and laptop sleep. No extra daemons needed.
+
+**Automatic reconnection** -- Exponential backoff with jitter. When your network comes back, shellkeep reconnects and reattaches -- across all tabs simultaneously.
+
+**Multi-tab interface** -- Create, rename, and organize tabs. Each tab maps to a tmux session on the server.
+
+**Per-device layout sync** -- Each computer remembers its own window and tab arrangement. Open shellkeep on your desktop and laptop with different layouts for the same server.
+
+**Dead session recovery** -- If a session ended while you were disconnected, shellkeep preserves the scrollback history so you can review what happened.
+
+**System tray** -- Minimize to tray and let sessions persist in the background. One-click to restore your windows.
+
+**Zero server config** -- The server only needs tmux (3.0+) and sshd. No shellkeep installation, no custom daemons, no root access.
+
+**Host key verification (TOFU)** -- Trust-on-first-use with SHA256 fingerprint display. Explicit cipher, MAC, and KEX configuration.
+
+**Environments** -- Named groups of sessions for context separation. Switch between "Backend", "Frontend", and "DevOps" environments instantly.
+
+**Native GTK 3** -- Not Electron. Integrates with your desktop theme, respects system fonts and colors.
+
+**i18n ready** -- English and Brazilian Portuguese (pt_BR) included. Gettext-ready for community translations.
+
+---
+
+## Quick start
+
+```bash
+# Download the AppImage
+chmod +x shellkeep-*.AppImage
+
+# Connect (replaces ssh)
+./shellkeep-*.AppImage user@server.com
+
+# That's it. Your sessions now survive everything.
+```
+
+---
+
+## Screenshots
+
+| | |
+|:---:|:---:|
+| ![Welcome](docs/screenshots/01-welcome.png) **Welcome screen** | ![TOFU](docs/screenshots/02-tofu.png) **Host key verification** |
+| ![Tabs](docs/screenshots/03-tabs.png) **Multi-tab terminal** | ![Reconnecting](docs/screenshots/04-reconnecting.png) **Auto-reconnect** |
+| ![Dead session](docs/screenshots/05-dead-session.png) **Dead session recovery** | ![Conflict](docs/screenshots/06-conflict.png) **Client-ID conflict** |
+| ![Environments](docs/screenshots/07-environment-select.png) **Environment selector** | ![Tray](docs/screenshots/08-tray-menu.png) **System tray menu** |
+
+---
+
+## Comparison
+
+| Feature | shellkeep | Termius | Eternal Terminal | Mosh | Tabby |
+|:---|:---:|:---:|:---:|:---:|:---:|
+| Persistent sessions | &#x2705; | Partial | &#x2705; | &#x2705; | &#x274C; |
+| Multi-device layout sync | &#x2705; | &#x274C; | &#x274C; | &#x274C; | Partial |
+| Auto-reconnect | &#x2705; | &#x274C; | &#x2705; | &#x2705; | &#x274C; |
+| Dead session recovery | &#x2705; | &#x274C; | &#x274C; | &#x274C; | &#x274C; |
+| Open source | &#x2705; GPL-3.0 | &#x274C; | &#x2705; Apache-2.0 | &#x2705; GPL-3.0 | &#x2705; MIT |
+| Native Linux app | &#x2705; GTK 3 | &#x274C; Electron | &#x2705; CLI only | &#x2705; CLI only | &#x274C; Electron |
+| No server agent required | &#x2705; tmux only | &#x274C; | &#x274C; etserver | &#x274C; mosh-server | N/A |
+| Zero config / free | &#x2705; | &#x274C; Account req. | &#x274C; Server config | &#x2705; | &#x274C; Plugin setup |
+
+---
+
+## How it works
+
+shellkeep is a **client-only** application. The architecture is simple:
+
+1. **Connect** -- shellkeep opens an SSH connection using libssh
+2. **Attach** -- On the server, it creates or reattaches to tmux sessions (one per tab)
+3. **Sync** -- Layout state (tabs, names, positions) is stored as a small JSON file on the server via SFTP, keyed by device ID
+4. **Reconnect** -- When the connection drops, shellkeep retries with exponential backoff and reattaches to the same tmux sessions -- all output is preserved
+
+No custom software runs on the server. No ports to open. No configuration files to edit.
+
+---
+
+## Installation
+
+### AppImage (recommended)
+
+```bash
+# Download from shellkeep.org
+chmod +x shellkeep-*.AppImage
+./shellkeep-*.AppImage user@server.com
+```
+
+### Debian / Ubuntu
+
+```bash
+sudo apt update
+sudo apt install shellkeep
+```
+
+### Build from source
+
+```bash
+# Install dependencies (Debian/Ubuntu)
+sudo apt install build-essential meson ninja-build pkg-config \
+  libgtk-3-dev libvte-2.91-dev libssh-dev \
+  libayatana-appindicator3-dev libjson-glib-dev
+
+# Build and install
+git clone https://github.com/shellkeep/shellkeep.git
+cd shellkeep
+meson setup build --buildtype=release
+meson compile -C build
+sudo meson install -C build
+```
+
+---
+
+## Usage
+
+```bash
+shellkeep user@server.com                    # Basic connection
+shellkeep -p 2222 user@server.com            # Custom port
+shellkeep -i ~/.ssh/id_ed25519 user@server   # Specific key
+shellkeep --minimized user@server.com        # Start in tray
+shellkeep --debug user@server.com            # Debug logging
+shellkeep --debug=ssh,tmux user@server.com   # Targeted debug
+```
+
+---
+
+## Configuration
+
+shellkeep works out of the box with no configuration. Optionally, create `~/.config/shellkeep/config.ini`:
+
+```ini
+[general]
+client_id = work-laptop            # Human-readable device name
+theme = dark                       # "dark", "light", or "system"
+
+[terminal]
+font_family = JetBrains Mono
+font_size = 13
+scrollback_lines = 50000
+cursor_shape = ibeam               # "block", "ibeam", "underline"
+
+[ssh]
+connect_timeout = 15
+keepalive_interval = 30
+
+[reconnect]
+max_attempts = 20
+base_delay = 1
+max_delay = 60
+```
+
+---
+
+## Keyboard shortcuts
+
+All shortcuts use `Ctrl+Shift` to avoid conflicts with remote applications.
+
+| Shortcut | Action |
+|:---|:---|
+| `Ctrl+Shift+T` | New tab |
+| `Ctrl+Shift+W` | Close tab |
+| `Ctrl+Shift+N` | New window |
+| `F2` | Rename current tab |
+| `Ctrl+Shift+F` | Search in scrollback |
+| `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab |
+| `Ctrl+Shift+C` / `Ctrl+Shift+V` | Copy / paste |
+| `Ctrl+Shift+A` | Copy entire scrollback |
+| `Ctrl+Shift+Plus` / `Minus` / `0` | Zoom in / out / reset |
+
+All shortcuts are customizable in `config.ini`.
+
+---
+
+## Requirements
+
+### Client (your machine)
+
+- Linux with GTK 3
+- Runtime: libvte-2.91, libssh (>= 0.10.0), libayatana-appindicator3
+
+### Server (remote)
+
+- **tmux >= 3.0** -- the only requirement
+- No shellkeep installation, no custom daemons, no root access needed
+
+---
+
+## Documentation
+
+| Document | Description |
+|:---|:---|
+| [ARCHITECTURE](docs/ARCHITECTURE.md) | Layered architecture and data flow |
+| [STATE-FORMAT](docs/STATE-FORMAT.md) | State file JSON schema |
+| [CONTRIBUTING](CONTRIBUTING.md) | How to build, test, and contribute |
+| [CHANGELOG](CHANGELOG.md) | Release history |
+| [SECURITY](SECURITY.md) | Vulnerability disclosure policy |
+| [CODE_OF_CONDUCT](CODE_OF_CONDUCT.md) | Community guidelines |
+
+Run `man shellkeep` after installation for the full manual page.
+
+---
+
+## Contributing
+
+We welcome contributions of all kinds -- bug reports, feature requests, code, documentation, and translations.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions and guidelines. External contributors are asked to sign a [Contributor License Agreement](CLA.md) before their changes can be merged.
+
+---
+
+## Roadmap
+
+**Current (v0.1)**
+
+- Single-hop SSH with full tmux integration
+- Per-device layout persistence and environments
+- AppImage and .deb distribution
+- English and pt_BR localization
+
+**Future**
+
+- RPM and Flatpak packages
+- Multi-hop SSH (ProxyJump)
+- Local integrations (URL opening, file drag-and-drop, notifications)
+- macOS and Windows clients
+- Plugin system
+
+---
+
+## License
+
+shellkeep is licensed under the **GNU General Public License v3.0 or later** (GPL-3.0-or-later). See [LICENSE](LICENSE) for the full text.
+
+---
+
+<p align="center">
+  <a href="https://shellkeep.org">Website</a> &middot;
+  <a href="https://github.com/shellkeep/shellkeep">Source</a> &middot;
+  <a href="https://github.com/shellkeep/shellkeep/issues">Issues</a> &middot;
+  <a href="mailto:security@shellkeep.org">Security</a>
+</p>

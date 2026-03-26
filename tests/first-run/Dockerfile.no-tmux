@@ -1,0 +1,30 @@
+# SPDX-FileCopyrightText: 2026 shellkeep contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# Dockerfile for first-run scenario testing: server WITHOUT tmux.
+# Used by scenarios 2, 3, 5 to verify the "tmux not found" error flow.
+
+FROM debian:bookworm-slim
+
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        openssh-server \
+        procps \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create SSH host keys.
+RUN mkdir -p /run/sshd && \
+    ssh-keygen -A
+
+# Configure sshd.
+RUN sed -i 's/^#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
+    sed -i 's/^#PermitRootLogin .*/PermitRootLogin no/' /etc/ssh/sshd_config && \
+    sed -i 's/^UsePAM yes/UsePAM no/' /etc/ssh/sshd_config && \
+    echo "PubkeyAuthentication yes" >> /etc/ssh/sshd_config
+
+# Create test user with known password.
+RUN useradd -m -s /bin/bash testuser && \
+    echo 'testuser:testpass' | chpasswd
+
+EXPOSE 22
+CMD ["/usr/sbin/sshd", "-D", "-e"]

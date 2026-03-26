@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-FileCopyrightText: 2026 shellkeep contributors -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- NFR-DIST-01: AppStream metadata for AppImage and software centers -->
+<component type="desktop-application">
+  <id>org.shellkeep.ShellKeep</id>
+  <metadata_license>GPL-3.0-or-later</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>ShellKeep</name>
+  <summary>Persistent SSH terminal sessions with tmux integration</summary>
+  <description>
+    <p>
+      ShellKeep is a GTK 3 application that provides persistent SSH terminal
+      sessions backed by tmux. It automatically saves and restores your session
+      layout per device, supports multiple environments (named groups of
+      sessions), and reconnects seamlessly after network interruptions.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Per-device layout persistence via client-id</li>
+      <li>Named environments for organizing sessions by context</li>
+      <li>Automatic reconnection with exponential backoff and jitter</li>
+      <li>Session scrollback history preserved on the server</li>
+      <li>System tray integration for background operation</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">shellkeep.desktop</launchable>
+  <url type="homepage">https://shellkeep.org</url>
+  <url type="bugtracker">https://github.com/shellkeep/shellkeep/issues</url>
+  <url type="vcs-browser">https://github.com/shellkeep/shellkeep</url>
+  <provides>
+    <binary>shellkeep</binary>
+  </provides>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="0.1.0" date="2026-03-25">
+      <description>
+        <p>Initial release.</p>
+      </description>
+    </release>
+  </releases>
+</component>

@@ -1,0 +1,46 @@
+# SPDX-FileCopyrightText: 2026 shellkeep contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# Dockerfile for first-run scenario testing: server with tmux 2.x.
+# Used by scenario 4 to verify the tmux version warning flow.
+#
+# Strategy: Install tmux normally, then replace it with a wrapper script
+# that reports version 2.9a. The real tmux binary is renamed so tmux commands
+# still work, but `tmux -V` returns the fake version string.
+
+FROM debian:bookworm-slim
+
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        openssh-server \
+        tmux \
+        procps \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create SSH host keys.
+RUN mkdir -p /run/sshd && \
+    ssh-keygen -A
+
+# Configure sshd.
+RUN sed -i 's/^#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
+    sed -i 's/^#PermitRootLogin .*/PermitRootLogin no/' /etc/ssh/sshd_config && \
+    sed -i 's/^UsePAM yes/UsePAM no/' /etc/ssh/sshd_config && \
+    echo "PubkeyAuthentication yes" >> /etc/ssh/sshd_config
+
+# Create test user with known password.
+RUN useradd -m -s /bin/bash testuser && \
+    echo 'testuser:testpass' | chpasswd
+
+# Replace tmux with a wrapper that reports version 2.9a.
+# The real binary is moved to tmux.real so other tmux commands still work.
+RUN mv /usr/bin/tmux /usr/bin/tmux.real && \
+    printf '#!/bin/bash\nif [ "$1" = "-V" ]; then\n  echo "tmux 2.9a"\nelse\n  exec /usr/bin/tmux.real "$@"\nfi\n' > /usr/bin/tmux && \
+    chmod +x /usr/bin/tmux
+
+# Create state directory.
+RUN mkdir -p /home/testuser/.terminal-state && \
+    chown -R testuser:testuser /home/testuser/.terminal-state && \
+    chmod 700 /home/testuser/.terminal-state
+
+EXPOSE 22
+CMD ["/usr/sbin/sshd", "-D", "-e"]

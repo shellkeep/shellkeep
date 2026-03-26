@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=ShellKeep
+GenericName=SSH Terminal Manager
+Comment=Persistent SSH sessions with tmux integration
+Exec=shellkeep %u
+Icon=shellkeep
+Terminal=false
+Categories=System;TerminalEmulator;
+Keywords=ssh;terminal;tmux;remote;persistent;session;
+StartupNotify=true
+StartupWMClass=shellkeep
+MimeType=x-scheme-handler/ssh;
+X-GNOME-UsesNotifications=true

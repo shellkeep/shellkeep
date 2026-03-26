@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "last_modified": "2026-03-15T08:30:00Z",
+  "client_id": "multi-env-client",
+  "environments": {
+    "production": {
+      "windows": [
+        {
+          "id": "win-prod-001",
+          "title": "Prod Monitor",
+          "visible": true,
+          "geometry": {
+            "x": 0,
+            "y": 0,
+            "width": 1920,
+            "height": 1080
+          },
+          "tabs": [
+            {
+              "session_uuid": "bbbbbbbb-1111-2222-3333-444444444444",
+              "tmux_session_name": "prod_logs",
+              "title": "Logs",
+              "position": 0
+            },
+            {
+              "session_uuid": "cccccccc-1111-2222-3333-444444444444",
+              "tmux_session_name": "prod_metrics",
+              "title": "Metrics",
+              "position": 1
+            }
+          ],
+          "active_tab": 1
+        },
+        {
+          "id": "win-prod-002",
+          "title": "Prod Deploy",
+          "visible": false,
+          "tabs": [
+            {
+              "session_uuid": "dddddddd-1111-2222-3333-444444444444",
+              "tmux_session_name": "prod_deploy",
+              "title": "Deploy",
+              "position": 0
+            }
+          ],
+          "active_tab": 0
+        }
+      ]
+    },
+    "staging": {
+      "windows": [
+        {
+          "id": "win-stg-001",
+          "title": "Staging Shell",
+          "visible": true,
+          "tabs": [
+            {
+              "session_uuid": "eeeeeeee-1111-2222-3333-444444444444",
+              "tmux_session_name": "stg_shell",
+              "title": "Shell",
+              "position": 0
+            }
+          ],
+          "active_tab": 0
+        }
+      ]
+    },
+    "development": {
+      "windows": [
+        {
+          "id": "win-dev-001",
+          "title": "Dev IDE",
+          "visible": true,
+          "geometry": {
+            "x": 50,
+            "y": 50,
+            "width": 1600,
+            "height": 900
+          },
+          "tabs": [
+            {
+              "session_uuid": "ffffffff-1111-2222-3333-444444444444",
+              "tmux_session_name": "dev_editor",
+              "title": "Editor",
+              "position": 0
+            },
+            {
+              "session_uuid": "11111111-aaaa-bbbb-cccc-dddddddddddd",
+              "tmux_session_name": "dev_tests",
+              "title": "Tests",
+              "position": 1
+            },
+            {
+              "session_uuid": "22222222-aaaa-bbbb-cccc-dddddddddddd",
+              "tmux_session_name": "dev_debug",
+              "title": "Debug",
+              "position": 2
+            }
+          ],
+          "active_tab": 0
+        }
+      ]
+    }
+  },
+  "last_environment": "development"
+}

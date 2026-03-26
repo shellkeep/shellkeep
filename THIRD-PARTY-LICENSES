@@ -1,0 +1,190 @@
+# SPDX-FileCopyrightText: 2026 shellkeep contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# Third-Party Licenses
+#
+# shellkeep depends on the following third-party libraries. All dependencies
+# are dynamically linked and their licenses are compatible with GPL-3.0-or-later.
+#
+# This file documents each dependency, its license, and where to find the
+# full license text.
+
+================================================================================
+GTK 3 (GIMP Toolkit)
+================================================================================
+License: LGPL-2.1-or-later
+Website: https://gtk.org/
+Source:  https://gitlab.gnome.org/GNOME/gtk
+Full license: https://gitlab.gnome.org/GNOME/gtk/-/blob/gtk-3-24/COPYING
+
+GTK is a multi-platform toolkit for creating graphical user interfaces.
+shellkeep uses GTK 3 for all UI elements including windows, dialogs,
+menus, and the application framework (GtkApplication).
+
+================================================================================
+GLib
+================================================================================
+License: LGPL-2.1-or-later
+Website: https://docs.gtk.org/glib/
+Source:  https://gitlab.gnome.org/GNOME/glib
+Full license: https://gitlab.gnome.org/GNOME/glib/-/blob/main/COPYING
+
+GLib provides core non-graphical functionality used by GTK and shellkeep,
+including the main event loop (GMainLoop), threading (GTask), data
+structures, file utilities, and D-Bus integration.
+
+================================================================================
+VTE (Virtual Terminal Emulator)
+================================================================================
+License: LGPL-2.1-or-later
+Website: https://wiki.gnome.org/Apps/Terminal/VTE
+Source:  https://gitlab.gnome.org/GNOME/vte
+Full license: https://gitlab.gnome.org/GNOME/vte/-/blob/master/COPYING.LGPL2
+
+VTE is the terminal emulator widget library used by GNOME Terminal and
+other GTK-based terminals. shellkeep uses libvte-2.91 for terminal
+rendering, scrollback, input handling, and escape sequence processing.
+
+================================================================================
+libssh
+================================================================================
+License: LGPL-2.1-or-later
+Website: https://www.libssh.org/
+Source:  https://git.libssh.org/projects/libssh.git
+Full license: https://git.libssh.org/projects/libssh.git/tree/COPYING
+
+libssh is a C library implementing the SSH protocol. shellkeep uses
+libssh >= 0.9.6 for all SSH connections, authentication, channel
+management, and SFTP file operations.
+
+================================================================================
+libayatana-appindicator3
+================================================================================
+License: LGPL-3.0-only
+Website: https://github.com/AyatanaIndicators/libayatana-appindicator
+Source:  https://github.com/AyatanaIndicators/libayatana-appindicator
+Full license: https://github.com/AyatanaIndicators/libayatana-appindicator/blob/master/COPYING
+
+libayatana-appindicator3 provides the system tray icon functionality
+using the StatusNotifierItem D-Bus protocol. It works on both X11 and
+Wayland desktop environments.
+
+================================================================================
+json-glib
+================================================================================
+License: LGPL-2.1-or-later
+Website: https://gnome.pages.gitlab.gnome.org/json-glib/
+Source:  https://gitlab.gnome.org/GNOME/json-glib
+Full license: https://gitlab.gnome.org/GNOME/json-glib/-/blob/master/COPYING
+
+json-glib is a GLib-based JSON parser/generator. shellkeep uses it for
+reading and writing state files, recent connections, and JSONL history.
+
+================================================================================
+OpenSSL
+================================================================================
+License: Apache-2.0
+Website: https://www.openssl.org/
+Source:  https://github.com/openssl/openssl
+Full license: https://github.com/openssl/openssl/blob/master/LICENSE.txt
+
+OpenSSL >= 3.0 provides the cryptographic primitives used by libssh.
+The Apache-2.0 license (used since OpenSSL 3.0) is compatible with
+GPL-3.0-or-later.
+
+Note: shellkeep does not link to OpenSSL directly; it is a transitive
+dependency via libssh.
+
+================================================================================
+Pango (transitive via GTK 3)
+================================================================================
+License: LGPL-2.1-or-later
+Website: https://pango.gnome.org/
+Source:  https://gitlab.gnome.org/GNOME/pango
+Full license: https://gitlab.gnome.org/GNOME/pango/-/blob/main/COPYING
+
+Pango is a text layout and rendering library, used transitively through
+GTK 3 for rendering text in the UI. shellkeep does not link to Pango
+directly.
+
+================================================================================
+Cairo (transitive via GTK 3)
+================================================================================
+License: LGPL-2.1-only OR MPL-1.1
+Website: https://www.cairographics.org/
+Source:  https://gitlab.freedesktop.org/cairo/cairo
+Full license: https://gitlab.freedesktop.org/cairo/cairo/-/blob/master/COPYING
+
+Cairo is a 2D graphics library used by GTK 3 for rendering. shellkeep
+does not link to Cairo directly; it is a transitive dependency via GTK.
+
+================================================================================
+GIO (part of GLib)
+================================================================================
+License: LGPL-2.1-or-later
+Website: https://docs.gtk.org/gio/
+Source:  https://gitlab.gnome.org/GNOME/glib
+Full license: https://gitlab.gnome.org/GNOME/glib/-/blob/main/COPYING
+
+GIO provides high-level I/O, networking, and D-Bus support. It is part of
+the GLib project and is used directly by shellkeep for asynchronous I/O
+and file operations.
+
+================================================================================
+libsystemd (optional, runtime only)
+================================================================================
+License: LGPL-2.1-or-later
+Website: https://systemd.io/
+Source:  https://github.com/systemd/systemd
+Full license: https://github.com/systemd/systemd/blob/main/LICENSE.LGPL2.1
+
+libsystemd is an optional dependency used for systemd journal (journald)
+logging integration. It is only linked when available and the journald
+option is enabled at build time.
+
+================================================================================
+cmocka (development/testing only)
+================================================================================
+License: Apache-2.0
+Website: https://cmocka.org/
+Source:  https://git.cryptomilk.org/projects/cmocka.git
+Full license: https://git.cryptomilk.org/projects/cmocka.git/tree/COPYING
+
+cmocka is a unit testing framework for C. It is used only for running
+tests and is not included in release builds or distributed packages.
+
+================================================================================
+tmux (server-side, not linked)
+================================================================================
+License: ISC
+Website: https://github.com/tmux/tmux
+Source:  https://github.com/tmux/tmux
+Full license: https://github.com/tmux/tmux/blob/master/COPYING
+
+tmux is a terminal multiplexer used on the remote server as the session
+persistence backend. shellkeep interacts with tmux via SSH commands and
+control mode. tmux is NOT linked into shellkeep and is NOT distributed
+with it; it must be independently installed on the server.
+
+================================================================================
+License Compatibility Summary
+================================================================================
+
+All dynamically-linked dependencies use licenses compatible with
+GPL-3.0-or-later:
+
+| Library                    | License          | Compatibility     |
+|----------------------------|------------------|-------------------|
+| GTK 3                      | LGPL-2.1+        | Compatible        |
+| GLib                       | LGPL-2.1+        | Compatible        |
+| GIO                        | LGPL-2.1+        | Compatible        |
+| VTE (libvte-2.91)          | LGPL-2.1+        | Compatible        |
+| libssh                     | LGPL-2.1+        | Compatible        |
+| libayatana-appindicator3   | LGPL-3.0         | Compatible        |
+| json-glib                  | LGPL-2.1+        | Compatible        |
+| Pango (transitive)         | LGPL-2.1+        | Compatible        |
+| Cairo (transitive)         | LGPL-2.1/MPL-1.1 | Compatible       |
+| OpenSSL >= 3.0             | Apache-2.0       | Compatible (GPLv3)|
+| libsystemd (optional)      | LGPL-2.1+        | Compatible        |
+| cmocka (test only)         | Apache-2.0       | Compatible        |
+| tmux (not linked)          | ISC              | N/A (not linked)  |

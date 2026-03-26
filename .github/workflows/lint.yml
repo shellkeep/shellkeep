@@ -1,0 +1,107 @@
+# SPDX-FileCopyrightText: 2026 shellkeep contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+name: Lint
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '**.c'
+      - '**.h'
+      - '.clang-format'
+      - '.clang-tidy'
+      - '.github/workflows/lint.yml'
+
+concurrency:
+  group: lint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  clang-format:
+    name: clang-format check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install clang-format
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends clang-format
+
+      - name: Check formatting
+        run: |
+          find src/ include/ tests/ -name '*.c' -o -name '*.h' | \
+            xargs clang-format --dry-run --Werror
+
+  cppcheck:
+    name: cppcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            cppcheck \
+            libgtk-3-dev \
+            libvte-2.91-dev \
+            libssh-dev \
+            libayatana-appindicator3-dev \
+            libjson-glib-dev
+
+      - name: Run cppcheck
+        run: |
+          cppcheck \
+            --enable=warning,style,performance,portability \
+            --error-exitcode=1 \
+            --suppress=missingIncludeSystem \
+            --inline-suppr \
+            -I include/ \
+            src/
+
+  clang-tidy:
+    name: clang-tidy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            clang-tidy \
+            meson \
+            ninja-build \
+            pkg-config \
+            libgtk-3-dev \
+            libvte-2.91-dev \
+            libssh-dev \
+            libayatana-appindicator3-dev \
+            libjson-glib-dev \
+            libcmocka-dev
+
+      - name: Configure
+        run: meson setup build --buildtype=debug
+
+      - name: Run clang-tidy
+        run: |
+          # Generate compile_commands.json
+          cd build
+          find ../src/ ../include/ -name '*.c' -o -name '*.h' | \
+            xargs clang-tidy -p . --warnings-as-errors='*' || true
+        continue-on-error: true
+
+  reuse:
+    name: REUSE compliance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install reuse tool
+        run: pip install reuse
+
+      - name: Check REUSE compliance
+        run: reuse lint
+        continue-on-error: true

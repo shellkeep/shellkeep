@@ -1,0 +1,40 @@
+Source: shellkeep
+Section: utils
+Priority: optional
+Maintainer: shellkeep contributors <maintainers@shellkeep.org>
+Build-Depends:
+ debhelper-compat (= 13),
+ meson (>= 0.59.0),
+ pkg-config,
+ libgtk-3-dev (>= 3.24.0),
+ libvte-2.91-dev (>= 0.62.0),
+ libssh-dev (>= 0.10.0),
+ libglib2.0-dev (>= 2.66.0),
+ libjson-glib-dev (>= 1.6.0),
+ libayatana-appindicator3-dev,
+ libsystemd-dev,
+Standards-Version: 4.6.2
+Homepage: https://shellkeep.org
+Vcs-Git: https://github.com/shellkeep/shellkeep.git
+Vcs-Browser: https://github.com/shellkeep/shellkeep
+Rules-Requires-Root: no
+
+Package: shellkeep
+Architecture: any
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends},
+ tmux,
+Multi-Arch: foreign
+Description: Persistent SSH terminal sessions with tmux integration
+ ShellKeep is a GTK 3 application that provides persistent SSH terminal
+ sessions backed by tmux. It automatically saves and restores your session
+ layout per device, supports multiple environments (named groups of
+ sessions), and reconnects seamlessly after network interruptions.
+ .
+ Features include per-device layout persistence, named environments,
+ automatic reconnection with exponential backoff, session history,
+ and tray icon integration.
+ .
+ ShellKeep is NOT registered as x-terminal-emulator because it is not
+ a local terminal — it is an SSH session manager.

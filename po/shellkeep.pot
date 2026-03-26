@@ -1,0 +1,403 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) 2026 shellkeep contributors
+# This file is distributed under the same license as the shellkeep package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: shellkeep 0.1.0\n"
+"Report-Msgid-Bugs-To: https://github.com/shellkeep/shellkeep/issues\n"
+"POT-Creation-Date: 2026-03-26 00:00+0000\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+#. Translators: %1$s is user (or empty), %2$s is "@" separator
+#. (or empty), %3$s is hostname, %4$d is port number
+#: src/main.c
+#, c-format
+msgid "Connecting to %1$s%2$s%3$s:%4$d ..."
+msgstr ""
+
+#: src/main.c
+msgid ""
+"shellkeep — no host specified.\n"
+"Usage: shellkeep [options] [user@]host"
+msgstr ""
+
+#. Translators: %1$s is hostname, %2$s is key type, %3$s is fingerprint
+#: src/ui/sk_dialogs.c
+#, c-format
+msgid ""
+"The authenticity of host '%1$s' cannot be established.\n"
+"\n"
+"Key type: %2$s\n"
+"Fingerprint:\n"
+"  %3$s\n"
+"\n"
+"Are you sure you want to continue connecting?"
+msgstr ""
+
+#: src/ui/sk_dialogs.c src/terminal/sk_terminal_search.c
+msgid "unknown"
+msgstr ""
+
+#: src/ui/sk_dialogs.c
+msgid "Unknown Host Key"
+msgstr ""
+
+#: src/ui/sk_dialogs.c
+msgid "Accept and save"
+msgstr ""
+
+#: src/ui/sk_dialogs.c
+msgid "Connect once"
+msgstr ""
+
+#: src/ui/sk_dialogs.c src/ui/sk_dialogs.c src/ui/sk_dialogs.c
+#: src/ui/sk_dialogs.c src/ui/sk_dialogs.c
+msgid "Cancel"
+msgstr ""
+
+#. Translators: %1$s is hostname, %2$s is key type, %3$s is old fingerprint,
+#. %4$s is new fingerprint, %5$s is hostname (repeated for command)
+#: src/ui/sk_dialogs.c
+#, c-format
+msgid ""
+"WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!\n"
+"\n"
+"Someone could be eavesdropping on you right now (man-in-the-middle attack)!\n"
+"\n"
+"Host: %1$s\n"
+"Key type: %2$s\n"
+"\n"
+"Previous fingerprint:\n"
+"  %3$s\n"
+"\n"
+"Current fingerprint:\n"
+"  %4$s\n"
+"\n"
+"The connection has been blocked for your security.\n"
+"To resolve this, remove the old key from your known_hosts file:\n"
+"\n"
+"  ssh-keygen -R %5$s"
+msgstr ""
+
+#: src/ui/sk_dialogs.c
+msgid "(not available)"
+msgstr ""
+
+#: src/ui/sk_dialogs.c
+msgid "Host Key Has Changed"
+msgstr ""
+
+#: src/ui/sk_dialogs.c
+msgid "Authentication Required"
+msgstr ""
+
+#: src/ui/sk_dialogs.c src/ui/sk_dialogs.c
+msgid "OK"
+msgstr ""
+
+#: src/ui/sk_dialogs.c
+msgid "Password:"
+msgstr ""
+
+#. Translators: %s is the authentication method name
+#: src/ui/sk_dialogs.c
+#, c-format
+msgid "Authentication: %s"
+msgstr ""
+
+#: src/ui/sk_dialogs.c
+msgid "Verification Required"
+msgstr ""
+
+#: src/ui/sk_dialogs.c
+msgid "Response:"
+msgstr ""
+
+#. Translators: %1$s is the hostname, %2$s is the connection timestamp
+#: src/ui/sk_dialogs.c
+#, c-format
+msgid ""
+"Another shellkeep instance is currently connected to this server.\n"
+"\n"
+"Connected from: %1$s\n"
+"Since: %2$s\n"
+"\n"
+"Only one connection per device identity is allowed at a time.\n"
+"\n"
+"Would you like to disconnect the other instance and connect here?"
+msgstr ""
+
+#: src/ui/sk_dialogs.c
+msgid "(unknown)"
+msgstr ""
+
+#: src/ui/sk_dialogs.c
+msgid "Active Connection Detected"
+msgstr ""
+
+#: src/ui/sk_dialogs.c
+msgid "Disconnect and connect here"
+msgstr ""
+
+#: src/ui/sk_dialogs.c
+msgid "Select Environment"
+msgstr ""
+
+#: src/ui/sk_dialogs.c
+msgid "Open"
+msgstr ""
+
+#: src/ui/sk_dialogs.c
+msgid "Filter environments..."
+msgstr ""
+
+#. NFR-I18N-03: Use ngettext for plural handling
+#. Translators: %d is the number of active sessions
+#: src/ui/sk_dialogs.c
+#, c-format
+msgid ""
+"This window has %d active session.\n"
+"\n"
+"Sessions will continue running on the server even if you hide or close this "
+"window."
+msgid_plural ""
+"This window has %d active sessions.\n"
+"\n"
+"Sessions will continue running on the server even if you hide or close this "
+"window."
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/ui/sk_dialogs.c
+msgid "Close Window"
+msgstr ""
+
+#: src/ui/sk_dialogs.c
+msgid "Hide"
+msgstr ""
+
+#: src/ui/sk_dialogs.c
+msgid "Terminate sessions"
+msgstr ""
+
+#: src/ui/sk_dialogs.c
+msgid "Error"
+msgstr ""
+
+#: src/ui/sk_dialogs.c
+msgid "Information"
+msgstr ""
+
+#. Translators: This is the app subtitle shown on the welcome screen
+#: src/ui/sk_welcome.c
+msgid "Persistent terminal sessions over SSH"
+msgstr ""
+
+#: src/ui/sk_welcome.c
+msgid "Connect"
+msgstr ""
+
+#: src/ui/sk_welcome.c
+msgid "Quit"
+msgstr ""
+
+#. Translators: Onboarding steps shown on first use
+#: src/ui/sk_welcome.c
+msgid ""
+"1. Connect to a server\n"
+"2. Your sessions persist even if you disconnect\n"
+"3. Reconnect and everything is right where you left it"
+msgstr ""
+
+#: src/ui/sk_welcome.c
+msgid "Name this device:"
+msgstr ""
+
+#: src/ui/sk_welcome.c
+msgid "e.g., My Desktop, Work Laptop"
+msgstr ""
+
+#: src/ui/sk_welcome.c
+msgid "user@hostname or IP address"
+msgstr ""
+
+#: src/ui/sk_welcome.c
+msgid "Recent connections"
+msgstr ""
+
+#: src/ui/sk_welcome.c
+msgid ""
+"No recent connections.\n"
+"Enter a hostname above to get started."
+msgstr ""
+
+#: src/ui/sk_conn_feedback.c
+msgid "Connecting..."
+msgstr ""
+
+#: src/ui/sk_conn_feedback.c
+msgid "Authenticating..."
+msgstr ""
+
+#: src/ui/sk_conn_feedback.c
+msgid "Checking tmux..."
+msgstr ""
+
+#: src/ui/sk_conn_feedback.c
+msgid "Loading state..."
+msgstr ""
+
+#: src/ui/sk_conn_feedback.c
+msgid "Restoring sessions..."
+msgstr ""
+
+#: src/ui/sk_conn_feedback.c
+msgid "Connected"
+msgstr ""
+
+#: src/ui/sk_conn_feedback.c
+msgid "Connection failed"
+msgstr ""
+
+#. Translators: %1$d is the current session number, %2$d is the total
+#: src/ui/sk_conn_feedback.c
+#, c-format
+msgid "Restoring sessions (%1$d/%2$d)..."
+msgstr ""
+
+#: src/ui/sk_toast.c
+msgid ""
+"Session kept on server \xe2\x80\x94 you can restore it later"
+msgstr ""
+
+#: src/ui/sk_toast.c
+msgid ""
+"shellkeep continues running in the system tray. Your sessions remain active."
+msgstr ""
+
+#: src/ui/sk_app_window.c
+msgid "Rename"
+msgstr ""
+
+#: src/ui/sk_app_window.c
+msgid "Close (keep session)"
+msgstr ""
+
+#: src/ui/sk_app_window.c
+msgid "New Tab"
+msgstr ""
+
+#. Translators: %s is the environment name
+#: src/ui/tray.c
+#, c-format
+msgid "Environment: %s"
+msgstr ""
+
+#: src/ui/tray.c
+msgid "No environment"
+msgstr ""
+
+#: src/ui/tray.c
+msgid "Switch to"
+msgstr ""
+
+#: src/ui/tray.c
+msgid "Rename environment"
+msgstr ""
+
+#: src/ui/tray.c
+msgid "New environment"
+msgstr ""
+
+#: src/ui/tray.c
+msgid "Delete environment"
+msgstr ""
+
+#: src/ui/tray.c
+msgid "Untitled"
+msgstr ""
+
+#. Translators: %s is the window title
+#: src/ui/tray.c
+#, c-format
+msgid "[*] %s (hidden)"
+msgstr ""
+
+#. Translators: %s is the window title
+#: src/ui/tray.c
+#, c-format
+msgid "    %s (hidden)"
+msgstr ""
+
+#. Translators: %s is the window title
+#: src/ui/tray.c
+#, c-format
+msgid "[*] %s"
+msgstr ""
+
+#: src/ui/tray.c
+msgid "More windows..."
+msgstr ""
+
+#: src/ui/tray.c
+msgid "Show all"
+msgstr ""
+
+#: src/ui/tray.c
+msgid "No windows"
+msgstr ""
+
+#: src/ui/tray.c
+msgid "Quit (sessions active)"
+msgstr ""
+
+#: src/terminal/sk_terminal_dead.c
+msgid "This session has ended on the server."
+msgstr ""
+
+#: src/terminal/sk_terminal_dead.c
+msgid ""
+"The terminal content above is preserved from the session history.\n"
+"You can scroll through it and copy text."
+msgstr ""
+
+#: src/terminal/sk_terminal_dead.c
+msgid "Create New Session"
+msgstr ""
+
+#: src/terminal/sk_terminal_search.c
+msgid "Search scrollback..."
+msgstr ""
+
+#: src/terminal/sk_terminal_search.c
+msgid "Previous match (Shift+Enter)"
+msgstr ""
+
+#: src/terminal/sk_terminal_search.c
+msgid "Next match (Enter)"
+msgstr ""
+
+#: src/terminal/sk_terminal_search.c
+msgid "Close search (Esc)"
+msgstr ""
+
+#: src/terminal/sk_terminal_search.c
+msgid "Invalid"
+msgstr ""
+
+#: src/terminal/sk_terminal_search.c
+msgid "Found"
+msgstr ""
+
+#: src/terminal/sk_terminal_search.c
+msgid "No matches"
+msgstr ""

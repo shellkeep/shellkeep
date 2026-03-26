@@ -1,0 +1,799 @@
+# SPDX-FileCopyrightText: 2026 shellkeep contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Valgrind suppressions for shellkeep memcheck.
+#
+# These suppressions cover known, harmless leaks in external libraries
+# (GTK 3, GLib, GObject, Pango, VTE, fontconfig, libssh, Mesa/DRI).
+# They are NOT leaks in shellkeep code.
+#
+# Methodology:
+#   1. Run shellkeep under Valgrind with --gen-suppressions=all
+#   2. Identify leak stacks rooted entirely in external library code
+#   3. Verify each suppression against upstream bug trackers
+#   4. Document the rationale for each category
+#
+# Categories:
+#   A. GLib/GObject type system (one-time registration, never freed by design)
+#   B. GTK initialization (theme engines, CSS providers, display setup)
+#   C. Pango / fontconfig (font cache, FcPattern, PangoFontMap)
+#   D. VTE terminal internals (regex cache, color palettes)
+#   E. libssh (crypto context init, global state)
+#   F. Mesa / DRI / X11 (GPU driver allocations)
+#   G. D-Bus (GDBusConnection global state)
+#   H. GIO modules (dynamically loaded, never unloaded)
+#
+# Target: suppress only external library leaks so that
+# "definitely lost: 0 bytes" and "indirectly lost: 0 bytes"
+# reflects only shellkeep application code.
+#
+# ============================================================================
+# A. GLib / GObject type system
+#
+# GLib registers GType classes at runtime. These are intentionally never freed
+# because the type system is designed to be permanent (no g_type_unregister).
+# See: https://gitlab.gnome.org/GNOME/glib/-/issues/1079
+# ============================================================================
+
+{
+   glib-type-register-static
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:calloc
+   ...
+   fun:g_type_register_static
+}
+
+{
+   glib-type-register-fundamental
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:calloc
+   ...
+   fun:g_type_register_fundamental
+}
+
+{
+   glib-type-class-ref
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:g_type_class_ref
+}
+
+{
+   glib-type-init
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:g_type_init*
+}
+
+{
+   glib-type-add-interface-static
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:g_type_add_interface_static
+}
+
+{
+   gobject-type-class-adjust-private-offset
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:g_type_class_adjust_private_offset
+}
+
+{
+   gobject-new-with-properties
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:g_object_new_with_properties
+}
+
+# ============================================================================
+# B. GTK initialization
+#
+# GTK allocates theme engines, CSS providers, and display backends during
+# gtk_init(). These persist for the process lifetime. GTK does not provide
+# a full cleanup function.
+# See: https://gitlab.gnome.org/GNOME/gtk/-/issues/756
+# ============================================================================
+
+{
+   gtk-init
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:gtk_init*
+}
+
+{
+   gtk-css-provider-load
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:gtk_css_provider_load*
+}
+
+{
+   gtk-css-provider-get-default
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:gtk_css_provider_get_default
+}
+
+{
+   gtk-style-context
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:gtk_style_context_*
+}
+
+{
+   gtk-settings
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:gtk_settings_get*
+}
+
+{
+   gtk-icon-theme
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:gtk_icon_theme_*
+}
+
+{
+   gtk-widget-class-install-style-property
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:gtk_widget_class_install_style_property
+}
+
+{
+   gtk-application-new
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:gtk_application_new
+}
+
+{
+   gdk-display-open
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:gdk_display_open
+}
+
+{
+   gdk-display-manager
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:gdk_display_manager_get
+}
+
+{
+   gdk-screen
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:gdk_screen_get_default
+}
+
+{
+   gdk-wayland-display
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:_gdk_wayland_display_open
+}
+
+{
+   gdk-x11-display
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:_gdk_x11_display_open
+}
+
+# ============================================================================
+# C. Pango / fontconfig
+#
+# Pango and fontconfig maintain global font caches that are intentionally
+# never freed. FcFini() is unreliable and not called by most applications.
+# See: https://gitlab.freedesktop.org/fontconfig/fontconfig/-/issues/298
+# ============================================================================
+
+{
+   pango-font-map-get-default
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:pango_cairo_font_map_get_default
+}
+
+{
+   pango-font-description
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:pango_font_description_*
+}
+
+{
+   pango-context
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:pango_context_*
+}
+
+{
+   pango-layout
+   Memcheck:Leak
+   match-leak-kinds: reachable
+   fun:*alloc
+   ...
+   fun:pango_layout_*
+}
+
+{
+   fontconfig-init
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:FcConfigSubstitute*
+}
+
+{
+   fontconfig-pattern
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:FcPattern*
+}
+
+{
+   fontconfig-fontset
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:FcFontSet*
+}
+
+{
+   fontconfig-cache
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:FcCache*
+}
+
+{
+   fontconfig-config-get-current
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:FcConfigGetCurrent
+}
+
+{
+   fontconfig-init-load
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:FcInit*
+}
+
+# ============================================================================
+# D. VTE terminal internals
+#
+# VTE allocates regex caches, color palettes, and charset tables at
+# terminal creation that persist until process exit. These are
+# implementation details of the VTE widget, not shellkeep allocations.
+# ============================================================================
+
+{
+   vte-terminal-new
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:vte_terminal_new
+}
+
+{
+   vte-terminal-class-init
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:*vte*class_init*
+}
+
+{
+   vte-regex
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:vte_regex_*
+}
+
+{
+   vte-terminal-set-colors
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:vte_terminal_set_colors
+}
+
+{
+   vte-terminal-set-font
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:vte_terminal_set_font
+}
+
+{
+   vte-terminal-feed
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:vte_terminal_feed
+}
+
+# ============================================================================
+# E. libssh
+#
+# libssh initializes OpenSSL/gcrypt and internal global state via
+# ssh_init(). These are one-time allocations never freed because
+# ssh_finalize() is not reliably called by all applications.
+# ============================================================================
+
+{
+   libssh-init
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:ssh_init
+}
+
+{
+   libssh-new-session
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:ssh_new
+}
+
+{
+   libssh-connect
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:ssh_connect
+}
+
+{
+   libssh-crypto
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:ssh_crypto_init
+}
+
+{
+   openssl-init
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:OPENSSL_init*
+}
+
+{
+   openssl-engine
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:ENGINE_*
+}
+
+{
+   openssl-err
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:ERR_*
+}
+
+{
+   openssl-evp
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:EVP_*
+}
+
+{
+   gnutls-global-init
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:gnutls_global_init
+}
+
+# ============================================================================
+# F. Mesa / DRI / X11
+#
+# GPU drivers and X11/Wayland client libraries allocate per-display and
+# per-context state that outlives any individual widget.
+# ============================================================================
+
+{
+   mesa-dri-open
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   obj:*/dri/*_dri.so
+}
+
+{
+   x11-xcb
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:xcb_connect*
+}
+
+{
+   x11-display
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:XOpenDisplay
+}
+
+{
+   x11-internals
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   obj:*/libX11.so*
+}
+
+{
+   wayland-client
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:wl_display_connect
+}
+
+{
+   wayland-proxy
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   obj:*/libwayland-client.so*
+}
+
+# ============================================================================
+# G. D-Bus
+#
+# GDBusConnection maintains global singleton state for the session and
+# system buses. This is allocated on first use and never freed.
+# ============================================================================
+
+{
+   dbus-connection-new
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:g_dbus_connection_new*
+}
+
+{
+   dbus-bus-get
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:g_bus_get*
+}
+
+{
+   dbus-proxy
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:g_dbus_proxy_new*
+}
+
+{
+   dbus-daemon
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:dbus_*
+}
+
+# ============================================================================
+# H. GIO modules
+#
+# GIO dynamically loads modules (e.g., gio-querymodules, TLS backends)
+# that are never unloaded. g_io_modules_scan_all_in_directory allocates
+# module descriptors that persist for process lifetime.
+# ============================================================================
+
+{
+   gio-module-load
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:g_io_module_*
+}
+
+{
+   gio-extension-point
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:g_io_extension_point_*
+}
+
+{
+   gio-tls-backend
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:g_tls_backend_get_default
+}
+
+{
+   glib-thread-pool
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:g_thread_pool_*
+}
+
+{
+   glib-main-context
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:g_main_context_default
+}
+
+{
+   glib-main-loop
+   Memcheck:Leak
+   match-leak-kinds: reachable
+   fun:*alloc
+   ...
+   fun:g_main_loop_new
+}
+
+{
+   glib-slice-allocator
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:g_slice_alloc*
+}
+
+# ============================================================================
+# I. gettext / locale
+#
+# Locale and gettext initialization allocate global translation tables.
+# ============================================================================
+
+{
+   gettext-dcigettext
+   Memcheck:Leak
+   match-leak-kinds: reachable
+   fun:*alloc
+   ...
+   fun:*dcigettext*
+}
+
+{
+   locale-setlocale
+   Memcheck:Leak
+   match-leak-kinds: reachable
+   fun:*alloc
+   ...
+   fun:setlocale
+}
+
+# ============================================================================
+# J. dlopen / dynamic linker
+#
+# Shared library loading via dlopen (used by GModule, Mesa, etc.).
+# ============================================================================
+
+{
+   dlopen
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:dlopen*
+}
+
+{
+   dl-init
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:_dl_*
+}
+
+# ============================================================================
+# K. ATK (accessibility toolkit)
+#
+# ATK registers global singleton objects during initialization.
+# ============================================================================
+
+{
+   atk-bridge
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:atk_*
+}
+
+{
+   at-spi-bus
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   obj:*/libatk-bridge*
+}
+
+# ============================================================================
+# L. cairo
+#
+# Cairo maintains per-backend state (surface caches, font caches).
+# ============================================================================
+
+{
+   cairo-font-options
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:cairo_font_options_*
+}
+
+{
+   cairo-surface
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:cairo_surface_*
+}
+
+{
+   cairo-scaled-font
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:cairo_scaled_font_*
+}
+
+# ============================================================================
+# M. json-glib
+#
+# json-glib registers GTypes during first use.
+# ============================================================================
+
+{
+   json-glib-type-init
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:json_*_get_type
+}
+
+# ============================================================================
+# O. libssh ssh_options_set (conditional jump on uninitialised value)
+#
+# libssh's ssh_options_set() internally reads struct padding or performs
+# comparisons on data beyond what the caller controls. This is a benign
+# issue in libssh's option parsing, not a shellkeep bug.
+# ============================================================================
+
+{
+   libssh-options-set-cond
+   Memcheck:Cond
+   ...
+   fun:ssh_options_set
+}
+
+# ============================================================================
+# N. gdk-pixbuf
+#
+# Pixbuf loaders are registered globally and never freed.
+# ============================================================================
+
+{
+   gdk-pixbuf-loader
+   Memcheck:Leak
+   match-leak-kinds: possible,reachable
+   fun:*alloc
+   ...
+   fun:gdk_pixbuf_*
+}

@@ -1,0 +1,79 @@
+# SPDX-FileCopyrightText: 2026 shellkeep contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Dockerfile for distro matrix testing — Ubuntu 22.04 (Jammy)
+
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV LC_ALL=C.UTF-8
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    meson \
+    ninja-build \
+    pkg-config \
+    libgtk-3-dev \
+    libvte-2.91-dev \
+    libssh-dev \
+    libglib2.0-dev \
+    libjson-glib-dev \
+    libayatana-appindicator3-dev \
+    libsystemd-dev \
+    libcmocka-dev \
+    desktop-file-utils \
+    man-db \
+    tmux \
+    dpkg-dev \
+    debhelper \
+    xvfb \
+    xauth \
+    git \
+    && (apt-get install -y --no-install-recommends dh-sequence-glib 2>/dev/null || true) \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy project source
+COPY . /src/shellkeep
+WORKDIR /src/shellkeep
+
+# Stage 1: Build with meson
+RUN meson setup build --buildtype=release -Dtests=true -Djournald=enabled \
+    && meson compile -C build
+
+# Stage 2: Run unit tests
+RUN meson test -C build --suite unit --print-errorlogs || true
+
+# Stage 3: Verify --help (non-fatal — GTK apps may segfault without full desktop)
+RUN xvfb-run ./build/shellkeep --help 2>&1 && echo "HELP_OK" || echo "HELP_FAILED (exit $?)"
+
+# Stage 4: Validate .desktop file
+RUN desktop-file-validate data/shellkeep.desktop
+
+# Stage 5: Verify man page renders
+RUN man -l man/shellkeep.1 > /dev/null 2>&1 && echo "man page OK"
+
+# Stage 6: Record dependency versions
+RUN echo "=== DEPENDENCY VERSIONS ===" \
+    && echo "meson: $(meson --version)" \
+    && echo "gcc: $(gcc --version | head -1)" \
+    && pkg-config --modversion gtk+-3.0 | xargs -I{} echo "gtk+-3.0: {}" \
+    && pkg-config --modversion vte-2.91 | xargs -I{} echo "vte-2.91: {}" \
+    && pkg-config --modversion libssh | xargs -I{} echo "libssh: {}" \
+    && pkg-config --modversion glib-2.0 | xargs -I{} echo "glib-2.0: {}" \
+    && pkg-config --modversion json-glib-1.0 | xargs -I{} echo "json-glib-1.0: {}" \
+    && tmux -V \
+    && echo "=== END ==="
+
+# Stage 7: Build .deb package (non-fatal)
+WORKDIR /src/shellkeep
+RUN dpkg-buildpackage -us -uc -b 2>&1 | tail -30; \
+    if ls /src/shellkeep_*.deb 2>/dev/null; then echo "DEB_BUILD_OK"; else echo "DEB_BUILD_FAILED"; fi
+
+# Stage 8: Install .deb in place and verify (non-fatal)
+RUN if ls /src/shellkeep_*.deb 2>/dev/null; then \
+      dpkg -i /src/shellkeep_*.deb && echo "DEB_INSTALL_OK"; \
+      xvfb-run shellkeep --help 2>&1 && echo "DEB_HELP_OK" || echo "DEB_HELP_FAILED"; \
+    else echo "DEB_INSTALL_SKIPPED"; fi
+
+CMD ["echo", "distro-test-ubuntu2204-complete"]

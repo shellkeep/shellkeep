@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=ShellKeep
+GenericName=SSH Terminal Manager
+Comment=Persistent SSH sessions with tmux integration
+Exec=shellkeep --minimized
+Icon=shellkeep
+Terminal=false
+Categories=System;TerminalEmulator;
+StartupWMClass=shellkeep
+X-GNOME-Autostart-enabled=true
+X-GNOME-Autostart-Delay=5
