@@ -21,7 +21,9 @@
 #include <locale.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef HAVE_PRCTL
 #include <sys/prctl.h>
+#endif
 
 /* ------------------------------------------------------------------ */
 /* Command-line option storage                                         */
@@ -339,7 +341,9 @@ main(int argc, char *argv[])
   /* NFR-SEC-10: Disable core dumps early to prevent leaking sensitive
    * memory (passwords, keys). This is also set in sk_crash_handler_install()
    * but we do it as early as possible for defense-in-depth. */
+#ifdef HAVE_PRCTL
   prctl(PR_SET_DUMPABLE, 0);
+#endif
 
   /* NFR-I18N-06: Initialize gettext */
   setlocale(LC_ALL, "");

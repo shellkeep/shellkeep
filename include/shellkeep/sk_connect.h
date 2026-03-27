@@ -20,9 +20,8 @@
 
 #include "shellkeep/sk_types.h"
 
-#include <gtk/gtk.h>
-
 #include <glib.h>
+#include <gio/gio.h>
 
 #include <stdbool.h>
 
@@ -65,8 +64,8 @@ extern "C"
     const char *username;      /**< Remote username (NULL = current). */
     const char *identity_file; /**< Explicit key path, or NULL. */
     const char *proxy_jump;    /**< ProxyJump host or NULL (FR-PROXY-01). */
-    GtkApplication *app;       /**< GtkApplication instance. */
-    GtkWindow *parent_window;  /**< Parent window for dialogs, or NULL. */
+    void *app;                 /**< Application instance (toolkit-specific, opaque). */
+    void *parent_window;       /**< Parent window for dialogs, or NULL (opaque). */
   } SkConnectParams;
 
   /* ------------------------------------------------------------------ */

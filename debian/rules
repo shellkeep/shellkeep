@@ -2,22 +2,19 @@
 # SPDX-FileCopyrightText: 2026 shellkeep contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-# NFR-DIST-02: .deb build rules using Meson
+# NFR-DIST-02: .deb build rules using CMake
 # NFR-DIST-07: Do NOT register as x-terminal-emulator
 
 %:
-	dh $@ --buildsystem=meson
+	dh $@
 
 override_dh_auto_configure:
-	dh_auto_configure -- \
-		-Dtests=false \
-		-Djournald=enabled
-
-# Hardening flags
-export DEB_BUILD_MESON_OPTIONS = --buildtype=release
+	dh_auto_configure --buildsystem=cmake -- \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DSK_BUILD_QT_UI=ON \
+		-DSK_BUILD_TESTS=OFF \
+		-DSK_JOURNALD=ON
 
 # NFR-DIST-07: Explicitly do NOT register as x-terminal-emulator.
 # shellkeep is not a local terminal — registering it would confuse
 # applications that expect a local shell.
-# No override_dh_installalternatives is needed because we never
-# call update-alternatives.

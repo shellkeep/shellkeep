@@ -8,7 +8,7 @@ SPDX-License-Identifier: GPL-3.0-or-later
   <p align="center">
     <strong>SSH sessions that survive everything.</strong>
     <br />
-    Open source. Native Linux. Zero server setup.
+    Open source. Cross-platform. Zero server setup.
   </p>
 </p>
 
@@ -17,7 +17,7 @@ SPDX-License-Identifier: GPL-3.0-or-later
   <a href="https://github.com/shellkeep/shellkeep/actions/workflows/lint.yml"><img src="https://github.com/shellkeep/shellkeep/actions/workflows/lint.yml/badge.svg" alt="Lint"></a>
   <a href="https://github.com/shellkeep/shellkeep/actions/workflows/codeql.yml"><img src="https://github.com/shellkeep/shellkeep/actions/workflows/codeql.yml/badge.svg" alt="CodeQL"></a>
   <a href="https://www.gnu.org/licenses/gpl-3.0"><img src="https://img.shields.io/badge/License-GPLv3-blue.svg" alt="License: GPL v3"></a>
-  <a href="https://github.com/shellkeep/shellkeep/releases"><img src="https://img.shields.io/badge/version-0.1.0-green.svg" alt="Version"></a>
+  <a href="https://github.com/shellkeep/shellkeep/releases"><img src="https://img.shields.io/badge/version-0.2.0-green.svg" alt="Version"></a>
 </p>
 
 <p align="center">
@@ -38,7 +38,7 @@ You SSH into a server, set up your terminal tabs, get deep into a debugging sess
 
 ## The solution
 
-**shellkeep** is a GTK 3 terminal that makes SSH sessions permanent. It pairs with tmux on the server (which you probably already have) to keep your sessions alive across any interruption. When your connection drops, shellkeep reconnects automatically and restores your exact terminal state -- every tab, every scroll position, every running process. No server-side installation required. No accounts. No cloud.
+**shellkeep** is a cross-platform terminal that makes SSH sessions permanent. It pairs with tmux on the server (which you probably already have) to keep your sessions alive across any interruption. When your connection drops, shellkeep reconnects automatically and restores your exact terminal state -- every tab, every scroll position, every running process. No server-side installation required. No accounts. No cloud.
 
 ---
 
@@ -62,7 +62,9 @@ You SSH into a server, set up your terminal tabs, get deep into a debugging sess
 
 **Environments** -- Named groups of sessions for context separation. Switch between "Backend", "Frontend", and "DevOps" environments instantly.
 
-**Native GTK 3** -- Not Electron. Integrates with your desktop theme, respects system fonts and colors.
+**Modern Qt6 UI** -- Native look on Linux, macOS, and Windows. Dark theme by default, fast rendering, crisp text.
+
+**Cross-platform** -- Runs natively on Linux, macOS, and Windows. Same codebase, native feel everywhere.
 
 **i18n ready** -- English and Brazilian Portuguese (pt_BR) included. Gettext-ready for community translations.
 
@@ -71,11 +73,12 @@ You SSH into a server, set up your terminal tabs, get deep into a debugging sess
 ## Quick start
 
 ```bash
-# Download the AppImage
+# Linux: Download the AppImage
 chmod +x shellkeep-*.AppImage
-
-# Connect (replaces ssh)
 ./shellkeep-*.AppImage user@server.com
+
+# macOS: Download the .dmg, drag to Applications
+shellkeep user@server.com
 
 # That's it. Your sessions now survive everything.
 ```
@@ -102,8 +105,9 @@ chmod +x shellkeep-*.AppImage
 | Auto-reconnect | &#x2705; | &#x274C; | &#x2705; | &#x2705; | &#x274C; |
 | Dead session recovery | &#x2705; | &#x274C; | &#x274C; | &#x274C; | &#x274C; |
 | Open source | &#x2705; GPL-3.0 | &#x274C; | &#x2705; Apache-2.0 | &#x2705; GPL-3.0 | &#x2705; MIT |
-| Native Linux app | &#x2705; GTK 3 | &#x274C; Electron | &#x2705; CLI only | &#x2705; CLI only | &#x274C; Electron |
+| Cross-platform native | &#x2705; Qt6 | &#x274C; Electron | &#x2705; CLI only | &#x2705; CLI only | &#x274C; Electron |
 | No server agent required | &#x2705; tmux only | &#x274C; | &#x274C; etserver | &#x274C; mosh-server | N/A |
+| Linux + macOS + Windows | &#x2705; | &#x2705; | &#x274C; Linux only | &#x274C; Unix only | &#x2705; |
 | Zero config / free | &#x2705; | &#x274C; Account req. | &#x274C; Server config | &#x2705; | &#x274C; Plugin setup |
 
 ---
@@ -123,35 +127,53 @@ No custom software runs on the server. No ports to open. No configuration files 
 
 ## Installation
 
-### AppImage (recommended)
+### Linux
+
+**AppImage (recommended)**
 
 ```bash
-# Download from shellkeep.org
 chmod +x shellkeep-*.AppImage
 ./shellkeep-*.AppImage user@server.com
 ```
 
-### Debian / Ubuntu
+**Debian / Ubuntu**
 
 ```bash
 sudo apt update
 sudo apt install shellkeep
 ```
 
+### macOS
+
+Download the `.dmg` from the [releases page](https://github.com/shellkeep/shellkeep/releases), open it, and drag ShellKeep to Applications.
+
+Or via Homebrew (coming soon):
+
+```bash
+brew install --cask shellkeep
+```
+
+### Windows
+
+Download the installer from the [releases page](https://github.com/shellkeep/shellkeep/releases).
+
 ### Build from source
 
 ```bash
-# Install dependencies (Debian/Ubuntu)
-sudo apt install build-essential meson ninja-build pkg-config \
-  libgtk-3-dev libvte-2.91-dev libssh-dev \
-  libayatana-appindicator3-dev libjson-glib-dev
+# Install dependencies
+# Debian/Ubuntu:
+sudo apt install build-essential cmake ninja-build pkg-config \
+  qt6-base-dev libgl-dev libssh-dev libglib2.0-dev libjson-glib-dev
 
-# Build and install
+# macOS:
+brew install cmake ninja pkg-config qt@6 libssh glib json-glib
+
+# Build
 git clone https://github.com/shellkeep/shellkeep.git
 cd shellkeep
-meson setup build --buildtype=release
-meson compile -C build
-sudo meson install -C build
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSK_BUILD_QT_UI=ON
+cmake --build build
+sudo cmake --install build
 ```
 
 ---
@@ -220,8 +242,9 @@ All shortcuts are customizable in `config.ini`.
 
 ### Client (your machine)
 
-- Linux with GTK 3
-- Runtime: libvte-2.91, libssh (>= 0.10.0), libayatana-appindicator3
+- **Linux**: Qt6, libssh (>= 0.10.0)
+- **macOS**: macOS 12+ (Monterey or later)
+- **Windows**: Windows 10+ (64-bit)
 
 ### Server (remote)
 
@@ -255,20 +278,22 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions and guidelines. Ex
 
 ## Roadmap
 
-**Current (v0.1)**
+**Current (v0.2)**
 
+- Cross-platform Qt6 UI (Linux, macOS, Windows)
 - Single-hop SSH with full tmux integration
 - Per-device layout persistence and environments
-- AppImage and .deb distribution
+- AppImage, .deb, .dmg, and Windows installer
 - English and pt_BR localization
 
 **Future**
 
 - RPM and Flatpak packages
+- Homebrew cask
 - Multi-hop SSH (ProxyJump)
 - Local integrations (URL opening, file drag-and-drop, notifications)
-- macOS and Windows clients
 - Plugin system
+- Split panes within tabs
 
 ---
 

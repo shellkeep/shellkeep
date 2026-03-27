@@ -21,8 +21,8 @@ SPDX-License-Identifier: GPL-3.0-or-later
 
 <!-- How did you verify these changes? -->
 
-- [ ] Unit tests pass (`meson test -C build --suite unit`)
-- [ ] Integration tests pass (`meson test -C build --suite integration`)
+- [ ] Unit tests pass (`ctest --test-dir build --label-regex unit --output-on-failure`)
+- [ ] Integration tests pass (`ctest --test-dir build --label-regex integration --output-on-failure`)
 - [ ] Manual testing performed (describe below)
 
 ## Checklist
@@ -32,7 +32,7 @@ SPDX-License-Identifier: GPL-3.0-or-later
 - [ ] Requirement IDs referenced in code comments where applicable
 - [ ] User-visible strings use `_()` / `ngettext()` for i18n
 - [ ] No passwords, keys, or terminal content in logs
-- [ ] No blocking operations on the GTK main thread
+- [ ] No blocking operations on the UI main thread
 - [ ] Error handling uses `GError **` or return status codes
 - [ ] New files have `0600`/`0700` permissions where required
 - [ ] Documentation updated if behavior changed

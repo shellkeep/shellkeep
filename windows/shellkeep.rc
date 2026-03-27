@@ -1,0 +1,33 @@
+// SPDX-FileCopyrightText: 2026 shellkeep contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#include <winver.h>
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION     0,2,0,0
+PRODUCTVERSION  0,2,0,0
+FILEFLAGSMASK   VS_FFI_FILEFLAGSMASK
+FILEFLAGS       0
+FILEOS          VOS_NT_WINDOWS32
+FILETYPE        VFT_APP
+FILESUBTYPE     VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904E4"
+        BEGIN
+            VALUE "CompanyName", "shellkeep contributors"
+            VALUE "FileDescription", "ShellKeep - Persistent SSH Terminal Manager"
+            VALUE "FileVersion", "0.2.0"
+            VALUE "InternalName", "shellkeep"
+            VALUE "LegalCopyright", "Copyright 2026 shellkeep contributors"
+            VALUE "OriginalFilename", "shellkeep.exe"
+            VALUE "ProductName", "ShellKeep"
+            VALUE "ProductVersion", "0.2.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1252
+    END
+END

@@ -8,6 +8,7 @@ on:
     branches: [main]
     paths:
       - '**.c'
+      - '**.cpp'
       - '**.h'
       - '.clang-format'
       - '.clang-tidy'
@@ -31,7 +32,7 @@ jobs:
 
       - name: Check formatting
         run: |
-          find src/ include/ tests/ -name '*.c' -o -name '*.h' | \
+          find src/ include/ tests/ -name '*.c' -o -name '*.h' -o -name '*.cpp' | \
             xargs clang-format --dry-run --Werror
 
   cppcheck:
@@ -45,10 +46,9 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
             cppcheck \
-            libgtk-3-dev \
-            libvte-2.91-dev \
+            qt6-base-dev \
             libssh-dev \
-            libayatana-appindicator3-dev \
+            libglib2.0-dev \
             libjson-glib-dev
 
       - name: Run cppcheck
@@ -71,25 +71,18 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            clang-tidy \
-            meson \
-            ninja-build \
-            pkg-config \
-            libgtk-3-dev \
-            libvte-2.91-dev \
-            libssh-dev \
-            libayatana-appindicator3-dev \
-            libjson-glib-dev \
+            clang-tidy cmake ninja-build pkg-config \
+            qt6-base-dev libgl-dev \
+            libssh-dev libglib2.0-dev libjson-glib-dev \
             libcmocka-dev
 
       - name: Configure
-        run: meson setup build --buildtype=debug
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DSK_BUILD_TESTS=ON -DSK_BUILD_QT_UI=ON
 
       - name: Run clang-tidy
         run: |
-          # Generate compile_commands.json
           cd build
-          find ../src/ ../include/ -name '*.c' -o -name '*.h' | \
+          find ../src/ ../include/ -name '*.c' -o -name '*.cpp' -o -name '*.h' | \
             xargs clang-tidy -p . --warnings-as-errors='*' || true
         continue-on-error: true
 
@@ -98,10 +91,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Install reuse tool
         run: pip install reuse
-
       - name: Check REUSE compliance
         run: reuse lint
         continue-on-error: true

@@ -12,8 +12,8 @@ permissions:
   contents: write
 
 jobs:
-  build-deb:
-    name: Build .deb (${{ matrix.os }})
+  build-linux:
+    name: Build Linux (${{ matrix.codename }})
     runs-on: ubuntu-latest
     container: ${{ matrix.container }}
 
@@ -21,15 +21,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: Ubuntu 22.04
-            container: ubuntu:22.04
-            codename: jammy
-          - os: Ubuntu 24.04
+          - codename: noble
             container: ubuntu:24.04
-            codename: noble
-          - os: Debian 12
+          - codename: bookworm
             container: debian:12
-            codename: bookworm
 
     env:
       DEBIAN_FRONTEND: noninteractive
@@ -39,48 +34,116 @@ jobs:
         run: |
           apt-get update -qq
           apt-get install -y --no-install-recommends \
-            build-essential \
-            meson \
-            ninja-build \
-            pkg-config \
-            git \
-            ca-certificates \
-            debhelper \
-            devscripts \
-            fakeroot \
-            libgtk-3-dev \
-            libvte-2.91-dev \
-            libssh-dev \
-            libayatana-appindicator3-dev \
-            libjson-glib-dev
+            build-essential cmake ninja-build pkg-config \
+            git ca-certificates debhelper devscripts fakeroot \
+            qt6-base-dev libgl-dev \
+            libssh-dev libglib2.0-dev libjson-glib-dev libsystemd-dev \
+            file
 
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Build
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr \
+            -DSK_BUILD_QT_UI=ON \
+            -DSK_JOURNALD=ON
+          cmake --build build
+          DESTDIR=$(pwd)/pkg cmake --install build
+
       - name: Build .deb package
         run: |
-          meson setup build --buildtype=release --prefix=/usr
-          meson compile -C build
-          DESTDIR=$(pwd)/pkg meson install -C build
-          # Build the Debian package
           dpkg-buildpackage -us -uc -b || true
           mkdir -p dist
           cp ../*.deb dist/ 2>/dev/null || true
-          # Fallback: create a tarball if dpkg-buildpackage fails
           if [ ! -f dist/*.deb ]; then
             cd pkg && tar czf ../dist/shellkeep-${GITHUB_REF_NAME}-${{ matrix.codename }}.tar.gz . && cd ..
           fi
 
-      - name: Upload build artifacts
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: package-${{ matrix.codename }}
+          name: package-linux-${{ matrix.codename }}
           path: dist/
+          retention-days: 90
+
+  build-macos:
+    name: Build macOS
+    runs-on: macos-14
+
+    steps:
+      - name: Install dependencies
+        run: brew install cmake ninja pkg-config qt@6 libssh glib json-glib
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH=$(brew --prefix qt@6) \
+            -DSK_BUILD_QT_UI=ON
+          cmake --build build
+
+      - name: Create .dmg
+        run: |
+          mkdir -p dist
+          macdeployqt build/shellkeep.app -dmg || true
+          cp build/*.dmg dist/ 2>/dev/null || true
+          if [ ! -f dist/*.dmg ]; then
+            cd build && zip -r ../dist/shellkeep-${GITHUB_REF_NAME}-macos.zip shellkeep.app && cd ..
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-macos
+          path: dist/
+          retention-days: 90
+
+  build-windows:
+    name: Build Windows
+    runs-on: windows-latest
+
+    steps:
+      - name: Install dependencies
+        run: |
+          choco install cmake ninja -y
+          git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
+          C:\vcpkg\bootstrap-vcpkg.bat
+          C:\vcpkg\vcpkg install qt6-base libssh glib json-glib --triplet x64-windows
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build
+        run: |
+          cmake -B build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake `
+            -DSK_BUILD_QT_UI=ON
+          cmake --build build
+
+      - name: Package
+        run: |
+          mkdir dist
+          Copy-Item build\shellkeep.exe dist\
+          windeployqt dist\shellkeep.exe 2>$null
+          Compress-Archive -Path dist\* -DestinationPath dist\shellkeep-$env:GITHUB_REF_NAME-windows.zip
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-windows
+          path: dist/*.zip
           retention-days: 90
 
   release:
     name: Create GitHub Release
-    needs: build-deb
+    needs: [build-linux, build-macos, build-windows]
     runs-on: ubuntu-latest
 
     steps:
@@ -92,16 +155,14 @@ jobs:
         with:
           path: artifacts/
 
-      - name: Collect release files and generate checksums
+      - name: Collect release files
         run: |
           mkdir -p release
-          find artifacts/ -type f \( -name '*.deb' -o -name '*.tar.gz' \) -exec cp {} release/ \;
-          cd release
-          sha256sum * > SHA256SUMS.txt
+          find artifacts/ -type f \( -name '*.deb' -o -name '*.tar.gz' -o -name '*.dmg' -o -name '*.zip' \) -exec cp {} release/ \;
+          cd release && sha256sum * > SHA256SUMS.txt
 
-      - name: Extract changelog for this version
+      - name: Extract changelog
         run: |
-          # Extract the section for the current tag from CHANGELOG.md
           VERSION="${GITHUB_REF_NAME#v}"
           awk "/^## \[${VERSION}\]/{found=1; next} /^## \[/{if(found) exit} found{print}" \
             CHANGELOG.md > release_notes.md || true
@@ -115,6 +176,6 @@ jobs:
           body_path: release_notes.md
           files: release/*
           draft: false
-          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') }}
+          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

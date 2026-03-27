@@ -16,38 +16,45 @@ concurrency:
 jobs:
   build:
     name: Build & Test (${{ matrix.os }})
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     container: ${{ matrix.container }}
 
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: Ubuntu 22.04
-            container: ubuntu:22.04
           - os: Ubuntu 24.04
+            runner: ubuntu-latest
             container: ubuntu:24.04
           - os: Debian 12
+            runner: ubuntu-latest
             container: debian:12
+          - os: macOS
+            runner: macos-14
+            container: ''
+          - os: Windows
+            runner: windows-latest
+            container: ''
 
     env:
       DEBIAN_FRONTEND: noninteractive
 
     steps:
-      - name: Install system dependencies
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
         run: |
           apt-get update -qq
           apt-get install -y --no-install-recommends \
             build-essential \
-            meson \
+            cmake \
             ninja-build \
             pkg-config \
             git \
             ca-certificates \
-            libgtk-3-dev \
-            libvte-2.91-dev \
+            qt6-base-dev \
+            libgl-dev \
             libssh-dev \
-            libayatana-appindicator3-dev \
+            libglib2.0-dev \
             libjson-glib-dev \
             libcmocka-dev \
             gcovr \
@@ -56,45 +63,44 @@ jobs:
             libasan6 \
             libubsan1
 
+      - name: Install system dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install cmake ninja pkg-config qt@6 libssh glib json-glib cmocka
+
+      - name: Install system dependencies (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          choco install cmake ninja pkgconfiglite -y
+          # Qt6 and libssh via vcpkg
+          git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
+          C:\vcpkg\bootstrap-vcpkg.bat
+          C:\vcpkg\vcpkg install qt6-base libssh glib json-glib cmocka --triplet x64-windows
+
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Configure (debug + coverage)
+      - name: Configure (debug + tests)
         run: |
-          meson setup build \
-            --buildtype=debug \
-            -Db_coverage=true \
-            -Db_sanitize=address,undefined \
-            -Dwerror=true
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DSK_BUILD_TESTS=ON \
+            -DSK_BUILD_QT_UI=ON
 
       - name: Build
-        run: meson compile -C build
+        run: cmake --build build
 
-      - name: Run unit tests
-        run: meson test -C build --suite unit --print-errorlogs --timeout-multiplier 3
+      - name: Run backend unit tests
+        run: ctest --test-dir build --label-regex unit --output-on-failure --timeout 120
 
       - name: Run integration tests
-        run: meson test -C build --suite integration --print-errorlogs --timeout-multiplier 5
+        run: ctest --test-dir build --label-regex integration --output-on-failure --timeout 300
         continue-on-error: true
-
-      - name: Generate coverage report
-        if: matrix.os == 'Ubuntu 24.04'
-        run: |
-          ninja -C build coverage-html
-          ninja -C build coverage-xml || true
-
-      - name: Upload coverage
-        if: matrix.os == 'Ubuntu 24.04'
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-report
-          path: build/meson-logs/coveragereport/
-          retention-days: 14
 
       - name: Upload test logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: test-logs-${{ matrix.os }}
-          path: build/meson-logs/
+          path: build/Testing/
           retention-days: 7

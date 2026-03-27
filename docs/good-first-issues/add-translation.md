@@ -28,7 +28,7 @@ translation helps make the application accessible to more users.
    first (menus, dialogs, error messages).
 4. Test your translation:
    ```bash
-   meson compile -C build
+   cmake --build build
    LANGUAGE=<lang_code> ./build/shellkeep user@host
    ```
 5. Submit a PR titled "i18n: add <Language> translation" or "i18n: update

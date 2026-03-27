@@ -92,7 +92,7 @@ static struct
 
   /* Initialisation guard */
   bool initialised;
-} g_log;
+} s_sk_log;
 
 /* ================================================================== */
 /* String ↔ enum helpers                                              */
@@ -163,13 +163,13 @@ sk_log_component_from_string(const char *str)
 SkLogLevel
 sk_log_get_level(void)
 {
-  return g_log.min_level;
+  return s_sk_log.min_level;
 }
 
 void
 sk_log_set_level(SkLogLevel level)
 {
-  g_log.min_level = level;
+  s_sk_log.min_level = level;
 }
 
 /* ================================================================== */
@@ -237,13 +237,13 @@ sk_mkdir_p(const char *path, mode_t mode)
 static void
 sk_log_rotate(void)
 {
-  if (!g_log.log_file_path)
+  if (!s_sk_log.log_file_path)
     return;
 
-  if (g_log.log_fp)
+  if (s_sk_log.log_fp)
   {
-    fclose(g_log.log_fp);
-    g_log.log_fp = NULL;
+    fclose(s_sk_log.log_fp);
+    s_sk_log.log_fp = NULL;
   }
 
   /* Rotate existing files: .5 → delete, .4 → .5, … , .1 → .2, current → .1 */
@@ -251,26 +251,26 @@ sk_log_rotate(void)
   char new_path[4096];
 
   /* Delete oldest if it exists */
-  snprintf(old_path, sizeof(old_path), "%s.%d", g_log.log_file_path, SK_LOG_MAX_ROTATED_FILES);
+  snprintf(old_path, sizeof(old_path), "%s.%d", s_sk_log.log_file_path, SK_LOG_MAX_ROTATED_FILES);
   (void)unlink(old_path);
 
   for (int i = SK_LOG_MAX_ROTATED_FILES - 1; i >= 1; i--)
   {
-    snprintf(old_path, sizeof(old_path), "%s.%d", g_log.log_file_path, i);
-    snprintf(new_path, sizeof(new_path), "%s.%d", g_log.log_file_path, i + 1);
+    snprintf(old_path, sizeof(old_path), "%s.%d", s_sk_log.log_file_path, i);
+    snprintf(new_path, sizeof(new_path), "%s.%d", s_sk_log.log_file_path, i + 1);
     (void)rename(old_path, new_path);
   }
 
-  snprintf(new_path, sizeof(new_path), "%s.1", g_log.log_file_path);
-  (void)rename(g_log.log_file_path, new_path);
+  snprintf(new_path, sizeof(new_path), "%s.1", s_sk_log.log_file_path);
+  (void)rename(s_sk_log.log_file_path, new_path);
 
   /* Open fresh log file — 0600 per INV-SECURITY-3 */
-  int fd = open(g_log.log_file_path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+  int fd = open(s_sk_log.log_file_path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
   if (fd >= 0)
   {
-    g_log.log_fp = fdopen(fd, "w");
+    s_sk_log.log_fp = fdopen(fd, "w");
   }
-  g_log.bytes_written = 0;
+  s_sk_log.bytes_written = 0;
 }
 
 /* ================================================================== */
@@ -304,27 +304,27 @@ static void
 sk_log_flush_entry(const SkLogEntry *entry)
 {
   /* Write to log file */
-  if (g_log.log_fp)
+  if (s_sk_log.log_fp)
   {
-    size_t written = fwrite(entry->message, 1, entry->len, g_log.log_fp);
-    g_log.bytes_written += written;
+    size_t written = fwrite(entry->message, 1, entry->len, s_sk_log.log_fp);
+    s_sk_log.bytes_written += written;
 
     /* Check if rotation needed */
-    if (g_log.bytes_written >= SK_LOG_MAX_FILE_SIZE)
+    if (s_sk_log.bytes_written >= SK_LOG_MAX_FILE_SIZE)
     {
       sk_log_rotate();
     }
   }
 
   /* Write to stderr if debug/trace mode */
-  if (g_log.stderr_enabled)
+  if (s_sk_log.stderr_enabled)
   {
     (void)fwrite(entry->message, 1, entry->len, stderr);
   }
 
 #ifdef HAVE_SYSTEMD
   /* NFR-OBS-14: optional journald output */
-  if (g_log.journald_enabled)
+  if (s_sk_log.journald_enabled)
   {
     /* Strip trailing newline for journald */
     char jmsg[SK_LOG_MAX_MSG_LEN];
@@ -351,54 +351,54 @@ sk_log_writer_func(void *arg)
   struct timespec flush_deadline;
   size_t bytes_since_flush = 0;
 
-  while (atomic_load(&g_log.running) ||
-         atomic_load(&g_log.write_head) != atomic_load(&g_log.read_head))
+  while (atomic_load(&s_sk_log.running) ||
+         atomic_load(&s_sk_log.write_head) != atomic_load(&s_sk_log.read_head))
   {
-    uint64_t rh = atomic_load(&g_log.read_head);
-    uint64_t wh = atomic_load(&g_log.write_head);
+    uint64_t rh = atomic_load(&s_sk_log.read_head);
+    uint64_t wh = atomic_load(&s_sk_log.write_head);
 
     if (rh == wh)
     {
       /* Nothing to read — wait for signal or timeout (1 second) */
-      pthread_mutex_lock(&g_log.wake_mutex);
+      pthread_mutex_lock(&s_sk_log.wake_mutex);
       clock_gettime(CLOCK_REALTIME, &flush_deadline);
       flush_deadline.tv_sec += 1;
-      pthread_cond_timedwait(&g_log.wake_cond, &g_log.wake_mutex, &flush_deadline);
-      pthread_mutex_unlock(&g_log.wake_mutex);
+      pthread_cond_timedwait(&s_sk_log.wake_cond, &s_sk_log.wake_mutex, &flush_deadline);
+      pthread_mutex_unlock(&s_sk_log.wake_mutex);
       continue;
     }
 
     /* Consume entries */
     while (rh != wh)
     {
-      const SkLogEntry *entry = &g_log.ring[rh & SK_LOG_RING_MASK];
+      const SkLogEntry *entry = &s_sk_log.ring[rh & SK_LOG_RING_MASK];
       sk_log_flush_entry(entry);
       bytes_since_flush += entry->len;
       rh++;
-      atomic_store(&g_log.read_head, rh);
+      atomic_store(&s_sk_log.read_head, rh);
 
       /* Flush to disk every 64 KB — NFR-OBS-05 */
       if (bytes_since_flush >= SK_LOG_FLUSH_BYTES)
       {
-        if (g_log.log_fp)
-          fflush(g_log.log_fp);
+        if (s_sk_log.log_fp)
+          fflush(s_sk_log.log_fp);
         bytes_since_flush = 0;
       }
 
-      wh = atomic_load(&g_log.write_head);
+      wh = atomic_load(&s_sk_log.write_head);
     }
 
     /* Periodic flush */
-    if (g_log.log_fp && bytes_since_flush > 0)
+    if (s_sk_log.log_fp && bytes_since_flush > 0)
     {
-      fflush(g_log.log_fp);
+      fflush(s_sk_log.log_fp);
       bytes_since_flush = 0;
     }
   }
 
   /* Final flush */
-  if (g_log.log_fp)
-    fflush(g_log.log_fp);
+  if (s_sk_log.log_fp)
+    fflush(s_sk_log.log_fp);
 
   return NULL;
 }
@@ -432,8 +432,8 @@ sk_log_parse_component_filter(const char *str)
   if (!str || str[0] == '\0')
     return;
 
-  g_log.component_filter_active = true;
-  memset(g_log.component_filter, 0, sizeof(g_log.component_filter));
+  s_sk_log.component_filter_active = true;
+  memset(s_sk_log.component_filter, 0, sizeof(s_sk_log.component_filter));
 
   char *copy = strdup(str);
   if (!copy)
@@ -450,7 +450,7 @@ sk_log_parse_component_filter(const char *str)
       *end-- = '\0';
 
     SkLogComponent c = sk_log_component_from_string(tok);
-    g_log.component_filter[(int)c] = true;
+    s_sk_log.component_filter[(int)c] = true;
   }
 
   free(copy);
@@ -465,11 +465,11 @@ sk_log_write(SkLogLevel level, SkLogComponent component, const char *file, int l
              const char *fmt, ...)
 {
   /* Level check */
-  if (level > g_log.min_level)
+  if (level > s_sk_log.min_level)
     return;
 
   /* Component filter check — NFR-OBS-06 */
-  if (g_log.component_filter_active && !g_log.component_filter[(int)component])
+  if (s_sk_log.component_filter_active && !s_sk_log.component_filter[(int)component])
     return;
 
   /* Format timestamp — NFR-OBS-03 */
@@ -490,8 +490,8 @@ sk_log_write(SkLogLevel level, SkLogComponent component, const char *file, int l
    * TIMESTAMP LEVEL [COMPONENT] message   (source:line)
    * NFR-OBS-03
    */
-  uint64_t slot = atomic_fetch_add(&g_log.write_head, 1);
-  SkLogEntry *entry = &g_log.ring[slot & SK_LOG_RING_MASK];
+  uint64_t slot = atomic_fetch_add(&s_sk_log.write_head, 1);
+  SkLogEntry *entry = &s_sk_log.ring[slot & SK_LOG_RING_MASK];
 
   entry->level = level;
   entry->component = component;
@@ -503,9 +503,9 @@ sk_log_write(SkLogLevel level, SkLogComponent component, const char *file, int l
     entry->len = sizeof(entry->message) - 1;
 
   /* Wake writer thread */
-  pthread_mutex_lock(&g_log.wake_mutex);
-  pthread_cond_signal(&g_log.wake_cond);
-  pthread_mutex_unlock(&g_log.wake_mutex);
+  pthread_mutex_lock(&s_sk_log.wake_mutex);
+  pthread_cond_signal(&s_sk_log.wake_cond);
+  pthread_mutex_unlock(&s_sk_log.wake_mutex);
 }
 
 /* ================================================================== */
@@ -522,12 +522,12 @@ sk_log_open_file(void)
     if (strcmp(env_file, "/dev/stderr") == 0)
     {
       /* No file output; stderr only */
-      g_log.stderr_enabled = true;
-      g_log.log_file_path = NULL;
-      g_log.log_fp = NULL;
+      s_sk_log.stderr_enabled = true;
+      s_sk_log.log_file_path = NULL;
+      s_sk_log.log_fp = NULL;
       return 0;
     }
-    g_log.log_file_path = strdup(env_file);
+    s_sk_log.log_file_path = strdup(env_file);
   }
   else
   {
@@ -550,7 +550,7 @@ sk_log_open_file(void)
       return -1;
     }
 
-    if (asprintf(&g_log.log_file_path, "%s/shellkeep.log", dir) < 0)
+    if (asprintf(&s_sk_log.log_file_path, "%s/shellkeep.log", dir) < 0)
     {
       free(dir);
       return -1;
@@ -558,15 +558,15 @@ sk_log_open_file(void)
     free(dir);
   }
 
-  if (g_log.log_file_path)
+  if (s_sk_log.log_file_path)
   {
     /* Open with 0600 permissions — INV-SECURITY-3 */
-    int fd = open(g_log.log_file_path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
+    int fd = open(s_sk_log.log_file_path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
     if (fd < 0)
       return -1;
 
-    g_log.log_fp = fdopen(fd, "a");
-    if (!g_log.log_fp)
+    s_sk_log.log_fp = fdopen(fd, "a");
+    if (!s_sk_log.log_fp)
     {
       close(fd);
       return -1;
@@ -575,9 +575,9 @@ sk_log_open_file(void)
     /* Check current size for rotation */
     struct stat st;
     if (fstat(fd, &st) == 0)
-      g_log.bytes_written = (size_t)st.st_size;
+      s_sk_log.bytes_written = (size_t)st.st_size;
     else
-      g_log.bytes_written = 0;
+      s_sk_log.bytes_written = 0;
 
     /* Ensure permissions are correct */
     fchmod(fd, 0600);
@@ -593,33 +593,33 @@ sk_log_open_file(void)
 int
 sk_log_init(bool debug_mode, bool trace_mode, const char *debug_components)
 {
-  if (g_log.initialised)
+  if (s_sk_log.initialised)
     return 0;
 
-  memset(&g_log, 0, sizeof(g_log));
-  atomic_store(&g_log.write_head, 0);
-  atomic_store(&g_log.read_head, 0);
-  atomic_store(&g_log.running, true);
+  memset(&s_sk_log, 0, sizeof(s_sk_log));
+  atomic_store(&s_sk_log.write_head, 0);
+  atomic_store(&s_sk_log.read_head, 0);
+  atomic_store(&s_sk_log.running, true);
 
   /* Default level: INFO — NFR-OBS-01 */
-  g_log.min_level = SK_LOG_LEVEL_INFO;
+  s_sk_log.min_level = SK_LOG_LEVEL_INFO;
 
   /* CLI overrides — FR-CLI-04 */
   if (trace_mode)
   {
-    g_log.min_level = SK_LOG_LEVEL_TRACE;
-    g_log.stderr_enabled = true;
+    s_sk_log.min_level = SK_LOG_LEVEL_TRACE;
+    s_sk_log.stderr_enabled = true;
   }
   else if (debug_mode)
   {
-    g_log.min_level = SK_LOG_LEVEL_DEBUG;
-    g_log.stderr_enabled = true;
+    s_sk_log.min_level = SK_LOG_LEVEL_DEBUG;
+    s_sk_log.stderr_enabled = true;
   }
 
   /* Env var overrides — NFR-OBS-06 */
   const char *env_level = getenv("SHELLKEEP_LOG_LEVEL");
   if (env_level && env_level[0] != '\0')
-    g_log.min_level = sk_log_level_from_string(env_level);
+    s_sk_log.min_level = sk_log_level_from_string(env_level);
 
   /* Component filter from CLI --debug=ssh,tmux or from env var */
   if (debug_mode && debug_components)
@@ -633,34 +633,34 @@ sk_log_init(bool debug_mode, bool trace_mode, const char *debug_components)
 #ifdef HAVE_SYSTEMD
   const char *env_journald = getenv("SHELLKEEP_LOG_JOURNALD");
   if (env_journald && strcmp(env_journald, "1") == 0)
-    g_log.journald_enabled = true;
+    s_sk_log.journald_enabled = true;
 #endif
 
   /* Open log file */
   if (sk_log_open_file() != 0)
   {
     /* Fall back to stderr only */
-    g_log.stderr_enabled = true;
+    s_sk_log.stderr_enabled = true;
   }
 
   /* Start writer thread — NFR-OBS-05 */
-  pthread_mutex_init(&g_log.wake_mutex, NULL);
-  pthread_cond_init(&g_log.wake_cond, NULL);
+  pthread_mutex_init(&s_sk_log.wake_mutex, NULL);
+  pthread_cond_init(&s_sk_log.wake_cond, NULL);
 
-  if (pthread_create(&g_log.writer_thread, NULL, sk_log_writer_func, NULL) != 0)
+  if (pthread_create(&s_sk_log.writer_thread, NULL, sk_log_writer_func, NULL) != 0)
   {
-    if (g_log.log_fp)
-      fclose(g_log.log_fp);
+    if (s_sk_log.log_fp)
+      fclose(s_sk_log.log_fp);
     return -1;
   }
 
   /* Install crash handlers — NFR-OBS-09 */
   sk_crash_handler_install();
 
-  g_log.initialised = true;
+  s_sk_log.initialised = true;
 
   SK_LOG_INFO(SK_LOG_COMPONENT_GENERAL, "logging initialised level=%s",
-              sk_log_level_to_string(g_log.min_level));
+              sk_log_level_to_string(s_sk_log.min_level));
 
   return 0;
 }
@@ -672,29 +672,29 @@ sk_log_init(bool debug_mode, bool trace_mode, const char *debug_components)
 void
 sk_log_shutdown(void)
 {
-  if (!g_log.initialised)
+  if (!s_sk_log.initialised)
     return;
 
   SK_LOG_INFO(SK_LOG_COMPONENT_GENERAL, "logging shutdown");
 
   /* Signal writer thread to stop */
-  atomic_store(&g_log.running, false);
+  atomic_store(&s_sk_log.running, false);
 
-  pthread_mutex_lock(&g_log.wake_mutex);
-  pthread_cond_signal(&g_log.wake_cond);
-  pthread_mutex_unlock(&g_log.wake_mutex);
+  pthread_mutex_lock(&s_sk_log.wake_mutex);
+  pthread_cond_signal(&s_sk_log.wake_cond);
+  pthread_mutex_unlock(&s_sk_log.wake_mutex);
 
-  pthread_join(g_log.writer_thread, NULL);
-  pthread_mutex_destroy(&g_log.wake_mutex);
-  pthread_cond_destroy(&g_log.wake_cond);
+  pthread_join(s_sk_log.writer_thread, NULL);
+  pthread_mutex_destroy(&s_sk_log.wake_mutex);
+  pthread_cond_destroy(&s_sk_log.wake_cond);
 
-  if (g_log.log_fp)
+  if (s_sk_log.log_fp)
   {
-    fclose(g_log.log_fp);
-    g_log.log_fp = NULL;
+    fclose(s_sk_log.log_fp);
+    s_sk_log.log_fp = NULL;
   }
 
-  free(g_log.log_file_path);
-  g_log.log_file_path = NULL;
-  g_log.initialised = false;
+  free(s_sk_log.log_file_path);
+  s_sk_log.log_file_path = NULL;
+  s_sk_log.initialised = false;
 }

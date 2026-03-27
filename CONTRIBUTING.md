@@ -20,33 +20,40 @@ when you open your first pull request.
 
 ### Prerequisites
 
-- GCC or Clang (C11 support)
-- Meson >= 0.59.0
+- GCC or Clang (C11 + C++17 support)
+- CMake >= 3.22
 - Ninja
 - pkg-config
-- GTK 3 development libraries
-- libvte-2.91 development libraries
+- Qt6 development libraries
 - libssh >= 0.10.0 development libraries
-- libayatana-appindicator3 development libraries
-- libjson-glib development libraries
+- GLib 2.0 development libraries
+- json-glib development libraries
 - cmocka (for unit tests)
 - Docker (for integration tests)
 
-### Install dependencies (Debian/Ubuntu)
+### Install dependencies
+
+**Debian/Ubuntu:**
 
 ```bash
-sudo apt install build-essential meson ninja-build pkg-config \
-  libgtk-3-dev libvte-2.91-dev libssh-dev \
-  libayatana-appindicator3-dev libjson-glib-dev \
+sudo apt install build-essential cmake ninja-build pkg-config \
+  qt6-base-dev libgl-dev libssh-dev \
+  libglib2.0-dev libjson-glib-dev \
   libcmocka-dev clang-format clang-tidy cppcheck \
   gcovr lcov
+```
+
+**macOS:**
+
+```bash
+brew install cmake ninja pkg-config qt@6 libssh glib json-glib cmocka
 ```
 
 ### Build
 
 ```bash
-meson setup build --buildtype=debug -Dtests=true
-meson compile -C build
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DSK_BUILD_TESTS=ON -DSK_BUILD_QT_UI=ON
+cmake --build build
 ```
 
 ### Run
@@ -60,7 +67,7 @@ meson compile -C build
 ### Unit tests
 
 ```bash
-meson test -C build --suite unit --print-errorlogs
+ctest --test-dir build --label-regex unit --output-on-failure
 ```
 
 ### Integration tests
@@ -68,16 +75,13 @@ meson test -C build --suite unit --print-errorlogs
 Integration tests require Docker with an sshd + tmux container:
 
 ```bash
-meson test -C build --suite integration --print-errorlogs
+ctest --test-dir build --label-regex integration --output-on-failure
 ```
 
-### Coverage
+### All tests
 
 ```bash
-meson setup build-cov --buildtype=debug -Db_coverage=true -Dtests=true
-meson test -C build-cov
-ninja -C build-cov coverage-html
-# Open build-cov/meson-logs/coveragereport/index.html
+ctest --test-dir build --output-on-failure
 ```
 
 ## Code Style
@@ -93,8 +97,8 @@ shellkeep follows the GNOME/GTK coding style enforced by `.clang-format`.
 - **Line length:** soft limit of 100 characters
 - **Error handling:** every function that can fail returns a status or
   accepts `GError **`
-- **Threading:** never block the GTK main thread; use `GTask` for blocking
-  operations, `g_io_add_watch()` for SSH I/O
+- **Threading:** never block the UI thread; use `GTask` for blocking
+  operations in the C backend, Qt signals/slots for the UI layer
 
 ### SPDX headers
 
@@ -132,23 +136,25 @@ cppcheck --enable=warning,style,performance,portability -I include/ src/
 shellkeep uses a layered architecture. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 for details. Key dependency rules:
 
-- `ui` never includes `ssh` directly
-- `ssh` never calls GTK functions
-- `state` never calls GTK functions
+- `ui_qt` never includes `ssh` directly
+- `ssh` never calls Qt/UI functions
+- `state` never calls Qt/UI functions
+- The connect layer uses `sk_ui_bridge.h` to communicate with the UI
+  without toolkit-specific headers
 - Each layer uses opaque types and communicates via callbacks
 
 Source layout:
 
 ```
-src/ssh/        -- SSH connections, auth, channels, reconnection (libssh)
-src/session/    -- tmux interaction, create/attach/list
-src/terminal/   -- VTE widgets, I/O routing
-src/state/      -- Persistence, JSON, JSONL, lock
-src/ui/         -- GTK, windows, tabs, tray, dialogs
-src/connect/    -- End-to-end connection flow orchestration
-src/config/     -- INI parsing, defaults, validation
-src/log/        -- Logging, rotation, crash handling
-include/shellkeep/  -- Public headers
+src/ssh/            -- SSH connections, auth, channels, reconnection (libssh)
+src/session/        -- tmux interaction, create/attach/list
+src/terminal_qt/    -- Qt terminal widget, search, dead session, themes
+src/state/          -- Persistence, JSON, JSONL, lock
+src/ui_qt/          -- Qt6 windows, tabs, tray, dialogs, stylesheet
+src/connect/        -- End-to-end connection flow + UI bridge
+src/config/         -- INI parsing, defaults, validation
+src/log/            -- Logging, rotation, crash handling
+include/shellkeep/  -- Public headers (C + C++)
 ```
 
 ## Requirement Traceability
@@ -236,7 +242,7 @@ sudo ./scripts/setup-dev.sh && make build && make test
 
 ## Troubleshooting
 
-### `meson setup` fails with "dependency not found"
+### `cmake` fails with "dependency not found"
 
 Ensure all development libraries are installed. The easiest way is to run
 `sudo ./scripts/setup-dev.sh`, which installs every required package for
@@ -287,8 +293,8 @@ default. If you hit false positives with an older compiler, try a release
 build:
 
 ```bash
-meson setup build-release --buildtype=release -Dtests=true
-meson compile -C build-release
+cmake -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DSK_BUILD_TESTS=ON
+cmake --build build-release
 ```
 
 ### Tests fail with "connection refused"
@@ -298,7 +304,7 @@ sure Docker is running and you have started the test container:
 
 ```bash
 sudo systemctl start docker
-meson test -C build --suite unit --print-errorlogs   # unit tests only
+ctest --test-dir build --label-regex unit --output-on-failure   # unit tests only
 ```
 
 ## Code of Conduct

@@ -18,13 +18,17 @@
 
 #include <dirent.h>
 #include <errno.h>
+#ifdef HAVE_EXECINFO
 #include <execinfo.h>
+#endif
 #include <fcntl.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef HAVE_PRCTL
 #include <sys/prctl.h>
+#endif
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <time.h>
@@ -92,7 +96,8 @@ safe_write(int fd, const char *s)
   size_t len = 0;
   while (s[len] != '\0')
     len++;
-  (void)write(fd, s, len);
+  ssize_t ret = write(fd, s, len);
+  (void)ret;
 }
 
 /**
@@ -308,9 +313,13 @@ sk_crash_signal_handler(int signum)
 
   /* Backtrace — NFR-OBS-09 */
   safe_write(fd, "Backtrace:\n");
+#ifdef HAVE_EXECINFO
   void *frames[SK_CRASH_MAX_FRAMES];
   int nframes = backtrace(frames, SK_CRASH_MAX_FRAMES);
   backtrace_symbols_fd(frames, nframes, fd);
+#else
+  safe_write(fd, "(backtrace not available on this platform)\n");
+#endif
   safe_write(fd, "\n");
 
   close(fd);
@@ -375,7 +384,9 @@ sk_crash_handler_install(void)
   sigaction(SIGFPE, &sa, NULL);
 
   /* Prevent core dump from leaking sensitive memory — NFR-OBS-10 */
+#ifdef HAVE_PRCTL
   prctl(PR_SET_DUMPABLE, 0);
+#endif
 }
 
 bool

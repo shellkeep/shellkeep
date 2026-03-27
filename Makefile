@@ -1,10 +1,10 @@
 # SPDX-FileCopyrightText: 2026 shellkeep contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Makefile — Convenience wrapper around Meson for common tasks.
+# Makefile — Convenience wrapper around CMake for common tasks.
 
 BUILDDIR  ?= build
-BUILDTYPE ?= debug
+BUILDTYPE ?= Debug
 
 .PHONY: build test lint clean format check setup
 
@@ -13,24 +13,24 @@ BUILDTYPE ?= debug
 # --------------------------------------------------------------------------- #
 
 build: setup ## Build the project
-	meson compile -C $(BUILDDIR)
+	cmake --build $(BUILDDIR)
 
 test: build ## Run all tests
-	meson test -C $(BUILDDIR) --print-errorlogs
+	ctest --test-dir $(BUILDDIR) --output-on-failure
 
-lint: ## Run static analysis (cppcheck + clang-tidy)
+lint: ## Run static analysis (cppcheck + clang-format check)
 	cppcheck --enable=warning,style,performance,portability \
 		-I include/ --error-exitcode=1 src/
 	@echo ""
 	@echo "--- clang-format check ---"
-	find src/ include/ tests/ -name '*.c' -o -name '*.h' | \
+	find src/ include/ tests/ -name '*.c' -o -name '*.h' -o -name '*.cpp' | \
 		xargs clang-format --dry-run --Werror
 
 clean: ## Remove build directory
 	rm -rf $(BUILDDIR)
 
 format: ## Auto-format all source files
-	find src/ include/ tests/ -name '*.c' -o -name '*.h' | \
+	find src/ include/ tests/ -name '*.c' -o -name '*.h' -o -name '*.cpp' | \
 		xargs clang-format -i
 	@echo "All source files formatted."
 
@@ -40,9 +40,12 @@ check: lint test ## Run lint + test
 # Internal / setup                                                             #
 # --------------------------------------------------------------------------- #
 
-setup: ## Configure Meson build (idempotent)
+setup: ## Configure CMake build (idempotent)
 	@if [ ! -f $(BUILDDIR)/build.ninja ]; then \
-		meson setup $(BUILDDIR) --buildtype=$(BUILDTYPE) -Dtests=true; \
+		cmake -B $(BUILDDIR) -G Ninja \
+			-DCMAKE_BUILD_TYPE=$(BUILDTYPE) \
+			-DSK_BUILD_TESTS=ON \
+			-DSK_BUILD_QT_UI=ON; \
 	fi
 
 # --------------------------------------------------------------------------- #

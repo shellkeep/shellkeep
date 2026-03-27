@@ -12,16 +12,20 @@ decisions of shellkeep.
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│                       UI Layer                       │
-│   GTK windows, tabs, tray icon, dialogs, menus       │
-│   Header: sk_ui.h                                    │
+│                    Qt6 UI Layer                       │
+│   SkMainWindow, tabs, tray, dialogs, welcome         │
+│   Headers: sk_ui_qt.h, sk_terminal_qt.h              │
 ├──────────────────────────┬──────────────────────────┤
 │     Terminal Layer        │       State Layer         │
-│   VTE widgets, I/O        │   JSON persistence,       │
-│   routing, scrollback     │   JSONL history, lock,    │
-│   Header: sk_terminal.h  │   SFTP sync               │
+│   SkTerminalWidget, I/O   │   JSON persistence,       │
+│   QSocketNotifier, search │   JSONL history, lock,    │
+│   SkTerminalDead          │   SFTP sync               │
 │                           │   Header: sk_state.h      │
 ├──────────────────────────┴──────────────────────────┤
+│                 UI Bridge (sk_ui_bridge.h)            │
+│   Toolkit-agnostic callback vtable                   │
+│   Decouples C backend from Qt6 UI                    │
+├─────────────────────────────────────────────────────┤
 │                    Session Layer                      │
 │   tmux interaction: create, attach, list, destroy     │
 │   Control mode orchestration, session naming          │
@@ -42,7 +46,7 @@ decisions of shellkeep.
 │  End-to-end connect   │  │  Exponential backoff  │
 │  flow: host key,      │  │  with jitter, per-    │
 │  auth, tmux, lock,    │  │  server connection    │
-│  state, restore       │  │  manager, NM D-Bus    │
+│  state, restore       │  │  manager              │
 │  Header: sk_connect.h │  │  Header: sk_reconnect.h│
 └──────────────────────┘  └──────────────────────┘
 ```
@@ -65,14 +69,17 @@ These rules are strictly enforced and verified in code review:
 
 | Rule | Description |
 |---|---|
-| UI does not include SSH | `sk_ui.h` never includes `sk_ssh.h` directly |
-| SSH does not call GTK | SSH layer has no GTK dependencies |
-| State does not call GTK | State layer has no GTK dependencies |
+| UI does not include SSH | `sk_ui_qt.h` never includes `sk_ssh.h` directly |
+| SSH does not call UI | SSH layer has no Qt or GTK dependencies |
+| State does not call UI | State layer has no Qt or GTK dependencies |
+| Backend uses bridge | Connect layer uses `sk_ui_bridge.h` — no toolkit headers |
 | Opaque types | Each layer exposes opaque pointer types (e.g., `SkSshConnection *`) |
-| Callback communication | Layers communicate via function pointers and header-defined interfaces |
+| Callback communication | Backend ↔ UI via bridge vtable function pointers |
 
-This separation enables unit testing per layer, isolated contributions,
-and future extensibility (plugins, alternative frontends, daemon mode).
+This separation enables:
+- Unit testing per layer in isolation
+- Cross-platform UI (bridge implementations for Qt6, future toolkits)
+- Daemon mode without UI
 
 ## Data Flow
 
@@ -82,9 +89,9 @@ and future extensibility (plugins, alternative frontends, daemon mode).
 User input (CLI or GUI)
     │
     ▼
-┌─────────┐   SSH handshake    ┌─────────────┐
-│ UI Layer │ ─────────────────> │  SSH Layer   │
-└─────────┘                     └──────┬──────┘
+┌──────────┐   via UI Bridge    ┌─────────────┐
+│ Qt6 UI   │ ─────────────────> │  SSH Layer   │
+└──────────┘                    └──────┬──────┘
                                        │
                     Authenticated       │
                                        ▼
@@ -103,18 +110,19 @@ User input (CLI or GUI)
           Reconcile with server        │
                                        ▼
                                 ┌──────────────┐
-                                │ UI Layer      │
+                                │ Qt6 UI       │
                                 └──────┬───────┘
                                        │
           Create windows/tabs          │  Restore layout
           per state file               │
                                        ▼
-                                ┌────────────────┐
-                                │ Terminal Layer  │
-                                └────────────────┘
+                                ┌─────────────────┐
+                                │ Terminal Layer   │
+                                │ SkTerminalWidget │
+                                └─────────────────┘
                                        │
           Each tab: independent SSH    │  tmux attach-session
-          connection + VTE widget      │
+          connection + QTermWidget     │
 ```
 
 ### Terminal I/O (per tab)
@@ -123,15 +131,15 @@ User input (CLI or GUI)
 Keyboard Input
     │
     ▼
-┌────────────────┐   write    ┌───────────────┐   SSH channel   ┌────────┐
-│ VTE Terminal   │ ─────────> │ Terminal Layer │ ──────────────> │ Server │
-│ (GTK widget)   │            └───────────────┘                 │ (tmux  │
-│                │                                               │ session│
-│                │   feed     ┌───────────────┐   SSH channel   │        │
-│                │ <───────── │ Terminal Layer │ <────────────── │        │
-└────────────────┘            └───────────────┘                 └────────┘
+┌─────────────────┐  write   ┌───────────────┐  SSH channel  ┌────────┐
+│ SkTerminalWidget│ ───────> │ Terminal Layer │ ────────────> │ Server │
+│ (Qt widget)     │          └───────────────┘               │ (tmux  │
+│                 │                                           │ session│
+│                 │  feed    ┌───────────────┐  SSH channel  │        │
+│                 │ <─────── │ Terminal Layer │ <──────────── │        │
+└─────────────────┘          └───────────────┘               └────────┘
 
-I/O is non-blocking, integrated with GLib main loop via g_io_add_watch().
+I/O is non-blocking, integrated via QSocketNotifier on SSH fd.
 ```
 
 ### State Persistence
@@ -141,7 +149,7 @@ Layout change (tab move, window resize, etc.)
     │
     ▼
 ┌──────────────┐  debounce (2s)   ┌──────────────┐
-│ UI Layer     │ ───────────────> │ State Layer   │
+│ Qt6 UI       │ ───────────────> │ State Layer   │
 └──────────────┘                  └──────┬───────┘
                                          │
                    1. Write to local     │
@@ -159,44 +167,29 @@ Layout change (tab move, window resize, etc.)
                                   └──────────────┘
 ```
 
-### Reconnection
-
-```
-Keepalive timeout detected
-    │
-    ▼
-┌────────────────────┐
-│ Connection Manager │   Per-server, centralized
-└────────┬───────────┘
-         │
-         │  1. Try master connection first
-         │  2. On success, reconnect tabs in batches of 5
-         │  3. Exponential backoff: 2s, 4s, 8s, 16s, 32s, 60s...
-         │  4. Jitter: +/- 25%
-         │
-         ▼
-┌────────────────────┐
-│ Per-tab spinner    │   "Reconnecting... attempt 2/10, next in 4s"
-│ overlay            │
-└────────────────────┘
-```
-
 ## Threading Model
 
 shellkeep uses a hybrid threading model:
 
 | Operation | Thread | Mechanism |
 |---|---|---|
-| GTK rendering, user input | Main thread | GMainLoop |
-| SSH data channel I/O | Main thread | `g_io_add_watch()` on SSH fd |
+| Qt rendering, user input | Main thread | Qt event loop |
+| SSH data channel I/O | Main thread | `QSocketNotifier` on SSH fd |
 | SSH handshake, auth | Worker thread | `GTask` / `g_task_run_in_thread()` |
 | SFTP file operations | Worker thread | `GTask` |
 | tmux commands | Worker thread | `GTask` |
 | State file writes | Worker thread | `GTask` |
 | Log writes | Dedicated thread | Lock-free ring buffer |
 | JSONL history writes | Worker thread | `GTask` |
+| Dialog dispatch | UI thread | `QMetaObject::invokeMethod(Qt::BlockingQueuedConnection)` |
 
-**Invariant:** No blocking I/O ever executes on the GTK main thread.
+**Invariant:** No blocking I/O ever executes on the Qt main thread.
+
+### GLib + Qt Event Loop Integration
+
+- **Linux:** Qt's `QEventDispatcherGlib` handles GLib event loop natively
+- **macOS/Windows:** GLib main context runs on a background `QThread`;
+  cross-thread dispatch via `QMetaObject::invokeMethod`
 
 ## File System Layout
 
@@ -222,7 +215,7 @@ shellkeep uses a hybrid threading model:
     crash-YYYYMMDD-HHMMSS-PID.txt
 
 /run/user/$UID/shellkeep/     (XDG_RUNTIME_DIR)
-  shellkeep.sock                IPC socket
+  shellkeep.sock                IPC socket (single-instance via QLocalServer)
   shellkeep.pid                 PID file
 ```
 
@@ -257,10 +250,22 @@ Isolation: if one tab's connection has issues, other tabs are unaffected.
 This also simplifies the threading model since each connection has its own
 file descriptor in the event loop.
 
-### Why GTK 3 instead of GTK 4?
+### Why Qt6 instead of GTK?
 
-VTE (the terminal widget) had more mature GTK 3 support at the time of
-initial development. Migration to GTK 4 is planned for a future version.
+v0.1 used GTK3+VTE which only works on Linux. Qt6 provides:
+- Cross-platform support (Linux, macOS, Windows) from a single codebase
+- Modern widget toolkit with built-in system tray, dark mode, HiDPI
+- QTermWidget for terminal emulation across all platforms
+- Better C++ integration for the UI layer while backend stays C
+
+### Why the UI Bridge pattern?
+
+The `sk_ui_bridge.h` vtable decouples the C backend from any specific
+toolkit. This means:
+- The connect layer (`sk_connect.c`) never includes Qt headers
+- Future toolkit migrations require only a new bridge implementation
+- The backend can run headlessly (daemon mode) with a stub bridge
+- Testing the backend doesn't require a display server
 
 ## Related Documents
 

@@ -19,8 +19,8 @@
  * 10. Graceful disconnect / shutdown (FR-LOCK-10, INV-LOCK-2)
  *
  * Threading model (INV-IO-1): All blocking SSH/SFTP/tmux operations run in
- * GTask worker threads.  UI callbacks are dispatched to the main thread via
- * g_idle_add().
+ * GTask worker threads.  UI callbacks are dispatched through the SkUiBridge
+ * vtable, which handles thread safety internally.
  *
  * Error handling follows table E-CONN-1 through E-CONN-8.
  */
@@ -32,13 +32,12 @@
 #include "shellkeep/sk_session.h"
 #include "shellkeep/sk_ssh.h"
 #include "shellkeep/sk_state.h"
-#include "shellkeep/sk_terminal.h"
 #include "shellkeep/sk_types.h"
-#include "shellkeep/sk_ui.h"
+#include "shellkeep/sk_ui_bridge.h"
 
-#include <gtk/gtk.h>
-
+#ifndef _WIN32
 #include <glib-unix.h>
+#endif
 #include <glib.h>
 
 #include <signal.h>
@@ -51,8 +50,10 @@
 /* Constants                                                           */
 /* ------------------------------------------------------------------ */
 
-/** Maximum parallel SSH connections during restore (FR-STATE-11). */
-#define SK_RESTORE_BATCH_SIZE 5
+/** Maximum parallel SSH connections during restore (FR-STATE-11).
+ * Serialized (1) to avoid libssh protocol errors when multiple
+ * sessions connect simultaneously to the same host. */
+#define SK_RESTORE_BATCH_SIZE 1
 
 /** Remote state file path template (FR-STATE-01). */
 #define SK_REMOTE_STATE_PATH "~/.terminal-state/%s.json"
@@ -78,9 +79,9 @@ typedef struct
   SkWindow *state_window;      /**< State window (borrowed). */
   SkSshConnection *ssh_conn;   /**< Per-tab SSH connection (owned). */
   SkSshChannel *ssh_channel;   /**< Per-tab SSH channel (owned). */
-  SkTerminalTab *terminal;     /**< Terminal tab widget (owned). */
-  SkAppWindow *app_window;     /**< UI window this tab belongs to. */
-  SkAppTab *app_tab;           /**< UI tab handle. */
+  void *terminal;              /**< SkBridgeTerminal (opaque). */
+  void *app_window;            /**< SkBridgeWindow (opaque). */
+  void *app_tab;               /**< SkBridgeTab (opaque). */
   SkTmuxSession *tmux_session; /**< Tmux session handle (owned). */
   char *session_uuid;          /**< Session UUID (owned). */
   char *tmux_name;             /**< Full tmux session name (owned). */
@@ -96,10 +97,10 @@ struct _SkConnectContext
   int port;
   char *username;
   char *identity_file;
-  char *proxy_jump;         /* FR-PROXY-01 */
-  GtkApplication *app;      /* Borrowed. */
-  GtkWindow *parent_window; /* Borrowed. */
-  SkConfig *config;         /* Borrowed. */
+  char *proxy_jump;       /* FR-PROXY-01 */
+  void *app;              /* Opaque application handle. */
+  void *parent_window;    /* Opaque window handle. */
+  SkConfig *config;       /* Borrowed. */
 
   /* Resolved identifiers. */
   char *client_id;
@@ -119,8 +120,8 @@ struct _SkConnectContext
   SkStateDebounce *debounce; /* Debounced state writer. */
 
   /* UI. */
-  SkConnFeedback *feedback; /* Connection progress overlay. */
-  GPtrArray *app_windows;   /* Array of SkAppWindow* (owned). */
+  void *feedback;           /* Bridge feedback handle. */
+  GPtrArray *app_windows;   /* Array of void* (bridge window handles). */
   GPtrArray *tab_restores;  /* Array of SkTabRestore* (owned). */
 
   /* Reconnection. */
@@ -235,8 +236,16 @@ sk_connect_start(const SkConnectParams *params, SkConfig *config, SkConnectDoneC
   /* FR-CONN-16: show connection feedback overlay. */
   if (ctx->parent_window != NULL)
   {
-    ctx->feedback = sk_conn_feedback_new(ctx->parent_window);
-    sk_conn_feedback_set_phase(ctx->feedback, SK_CONN_PHASE_CONNECTING);
+    const SkUiBridge *bridge = sk_ui_bridge_get();
+    SkUiHandle ui = sk_ui_bridge_get_handle();
+    if (bridge && bridge->feedback_create)
+    {
+      ctx->feedback = bridge->feedback_create(ui);
+      if (ctx->feedback != NULL && bridge->feedback_set_phase)
+      {
+        bridge->feedback_set_phase(ctx->feedback, SK_BRIDGE_PHASE_CONNECTING);
+      }
+    }
   }
 
   /* Install SIGTERM/SIGINT handlers for graceful shutdown. */
@@ -295,12 +304,13 @@ sk_connect_disconnect(SkConnectContext *ctx)
   }
 
   /* 4. Close all tab SSH channels and connections. */
+  const SkUiBridge *bridge = sk_ui_bridge_get();
   for (guint i = 0; i < ctx->tab_restores->len; i++)
   {
     SkTabRestore *tr = g_ptr_array_index(ctx->tab_restores, i);
-    if (tr->terminal != NULL)
+    if (tr->terminal != NULL && bridge && bridge->terminal_disconnect)
     {
-      sk_terminal_tab_disconnect(tr->terminal);
+      bridge->terminal_disconnect(tr->terminal);
     }
     if (tr->ssh_channel != NULL)
     {
@@ -350,7 +360,11 @@ sk_connect_free(SkConnectContext *ctx)
 
   if (ctx->feedback != NULL)
   {
-    sk_conn_feedback_free(ctx->feedback);
+    const SkUiBridge *bridge = sk_ui_bridge_get();
+    if (bridge && bridge->feedback_free)
+    {
+      bridge->feedback_free(ctx->feedback);
+    }
     ctx->feedback = NULL;
   }
 
@@ -379,10 +393,14 @@ sk_connect_free(SkConnectContext *ctx)
   }
 
   /* Free UI windows. */
+  const SkUiBridge *bridge = sk_ui_bridge_get();
   for (guint i = 0; i < ctx->app_windows->len; i++)
   {
-    SkAppWindow *win = g_ptr_array_index(ctx->app_windows, i);
-    sk_app_window_free(win);
+    void *win = g_ptr_array_index(ctx->app_windows, i);
+    if (bridge && bridge->window_free)
+    {
+      bridge->window_free(win);
+    }
   }
   g_ptr_array_free(ctx->app_windows, TRUE);
 
@@ -485,8 +503,8 @@ connect_phase_1_connect(GTask *task, gpointer src G_GNUC_UNUSED, gpointer data,
 
   /* Blocking connect, host key verification, and authentication.
    * The callbacks for TOFU dialog, password dialog etc. will be invoked
-   * on the worker thread and schedule GTK dialogs on the main thread
-   * via g_idle_add(). */
+   * on the worker thread and dispatched through the UI bridge, which
+   * handles thread safety internally. */
   if (!sk_ssh_connection_connect(ctx->control_conn, &error))
   {
     /* Classify the error for the appropriate E-CONN code. */
@@ -552,7 +570,11 @@ on_connect_done(GObject *src G_GNUC_UNUSED, GAsyncResult *res, gpointer data)
    * move to tmux detection. */
   if (ctx->feedback != NULL)
   {
-    sk_conn_feedback_set_phase(ctx->feedback, SK_CONN_PHASE_CHECKING_TMUX);
+    const SkUiBridge *bridge = sk_ui_bridge_get();
+    if (bridge && bridge->feedback_set_phase)
+    {
+      bridge->feedback_set_phase(ctx->feedback, SK_BRIDGE_PHASE_CHECKING_TMUX);
+    }
   }
 
   connect_phase_2_post_auth(ctx);
@@ -576,10 +598,15 @@ connect_phase_2_post_auth(SkConnectContext *ctx)
     g_clear_error(&error);
     if (!ctx->sftp_warned && ctx->parent_window != NULL)
     {
-      sk_dialog_info(ctx->parent_window, "SFTP Unavailable",
-                     "SFTP is not available on this server. "
-                     "Using shell commands as fallback for file "
-                     "operations. Performance may be reduced.");
+      const SkUiBridge *bridge = sk_ui_bridge_get();
+      SkUiHandle ui = sk_ui_bridge_get_handle();
+      if (bridge && bridge->info_dialog)
+      {
+        bridge->info_dialog(ui, "SFTP Unavailable",
+                            "SFTP is not available on this server. "
+                            "Using shell commands as fallback for file "
+                            "operations. Performance may be reduced.");
+      }
       ctx->sftp_warned = true;
     }
   }
@@ -673,13 +700,18 @@ on_tmux_detect_done(GObject *src G_GNUC_UNUSED, GAsyncResult *res, gpointer data
     {
       if (ctx->parent_window != NULL)
       {
-        sk_dialog_error(ctx->parent_window, "tmux Not Found",
-                        "tmux is required on the server but was not found.\n\n"
-                        "Install it using your package manager:\n"
-                        "  Ubuntu/Debian: sudo apt install tmux\n"
-                        "  Fedora/RHEL:   sudo dnf install tmux\n"
-                        "  Arch Linux:    sudo pacman -S tmux\n"
-                        "  macOS:         brew install tmux");
+        const SkUiBridge *bridge = sk_ui_bridge_get();
+        SkUiHandle ui = sk_ui_bridge_get_handle();
+        if (bridge && bridge->error_dialog)
+        {
+          bridge->error_dialog(ui, "tmux Not Found",
+                               "tmux is required on the server but was not found.\n\n"
+                               "Install it using your package manager:\n"
+                               "  Ubuntu/Debian: sudo apt install tmux\n"
+                               "  Fedora/RHEL:   sudo dnf install tmux\n"
+                               "  Arch Linux:    sudo pacman -S tmux\n"
+                               "  macOS:         brew install tmux");
+        }
       }
     }
     flow_fail(ctx, error);
@@ -689,7 +721,11 @@ on_tmux_detect_done(GObject *src G_GNUC_UNUSED, GAsyncResult *res, gpointer data
   /* Move to lock acquisition phase. */
   if (ctx->feedback != NULL)
   {
-    sk_conn_feedback_set_phase(ctx->feedback, SK_CONN_PHASE_LOADING_STATE);
+    const SkUiBridge *bridge = sk_ui_bridge_get();
+    if (bridge && bridge->feedback_set_phase)
+    {
+      bridge->feedback_set_phase(ctx->feedback, SK_BRIDGE_PHASE_LOADING_STATE);
+    }
   }
 
   phase_lock_acquire(ctx);
@@ -802,10 +838,16 @@ on_lock_done(GObject *src G_GNUC_UNUSED, GAsyncResult *res, gpointer data)
     if (error != NULL && error->domain == SK_CONNECT_ERROR && error->code == SK_CONNECT_ERROR_LOCK)
     {
       /* FR-LOCK-05: Show conflict dialog. */
-      /* Extract lock info from error message for dialog. */
       if (ctx->parent_window != NULL)
       {
-        bool takeover = sk_dialog_conflict(ctx->parent_window, "another device", error->message);
+        const SkUiBridge *bridge = sk_ui_bridge_get();
+        SkUiHandle ui = sk_ui_bridge_get_handle();
+        bool takeover = false;
+
+        if (bridge && bridge->conflict_dialog)
+        {
+          takeover = bridge->conflict_dialog(ui, "another device", error->message);
+        }
 
         if (takeover)
         {
@@ -1007,8 +1049,13 @@ phase_env_select(SkConnectContext *ctx)
     char *selected = NULL;
     if (ctx->parent_window != NULL)
     {
-      selected = sk_dialog_environment_select(ctx->parent_window, env_names, n_envs,
+      const SkUiBridge *bridge = sk_ui_bridge_get();
+      SkUiHandle ui = sk_ui_bridge_get_handle();
+      if (bridge && bridge->environment_select)
+      {
+        selected = bridge->environment_select(ui, env_names, n_envs,
                                               ctx->state->last_environment);
+      }
     }
     g_free(env_names);
 
@@ -1031,7 +1078,11 @@ phase_env_select(SkConnectContext *ctx)
   /* FR-CONN-16: Update feedback to restoring phase. */
   if (ctx->feedback != NULL)
   {
-    sk_conn_feedback_set_phase(ctx->feedback, SK_CONN_PHASE_RESTORING);
+    const SkUiBridge *bridge = sk_ui_bridge_get();
+    if (bridge && bridge->feedback_set_phase)
+    {
+      bridge->feedback_set_phase(ctx->feedback, SK_BRIDGE_PHASE_RESTORING);
+    }
   }
 
   /* Phase 7: Restore sessions. */
@@ -1136,21 +1187,27 @@ phase_restore_sessions(SkConnectContext *ctx)
   g_ptr_array_set_size(ctx->tab_restores, 0);
   int restore_index = 0;
 
+  const SkUiBridge *bridge = sk_ui_bridge_get();
+  SkUiHandle ui = sk_ui_bridge_get_handle();
+
   /* FR-STATE-10: Progressive restoration — focused window first. */
   for (int w = 0; w < env->n_windows; w++)
   {
     SkWindow *win = env->windows[w];
 
-    /* Create the UI window. */
-    SkAppWindow *app_win;
-    if (win->geometry.is_set)
+    /* Create the UI window via bridge. */
+    void *app_win = NULL;
+    if (bridge && bridge->window_new)
     {
-      app_win = sk_app_window_new_from_state(ctx->app, win->title, win->geometry.x, win->geometry.y,
-                                             win->geometry.width, win->geometry.height);
-    }
-    else
-    {
-      app_win = sk_app_window_new(ctx->app);
+      if (win->geometry.is_set)
+      {
+        app_win = bridge->window_new(ui, win->title, win->geometry.x, win->geometry.y,
+                                     win->geometry.width, win->geometry.height);
+      }
+      else
+      {
+        app_win = bridge->window_new(ui, NULL, -1, -1, -1, -1);
+      }
     }
 
     if (app_win == NULL)
@@ -1160,7 +1217,10 @@ phase_restore_sessions(SkConnectContext *ctx)
     }
 
     g_ptr_array_add(ctx->app_windows, app_win);
-    sk_app_window_show(app_win);
+    if (bridge && bridge->window_show)
+    {
+      bridge->window_show(app_win);
+    }
 
     /* Create restore contexts for each tab. */
     for (int t = 0; t < win->n_tabs; t++)
@@ -1181,11 +1241,18 @@ phase_restore_sessions(SkConnectContext *ctx)
   if (ctx->tab_restores->len == 0)
   {
     /* No tabs to restore — create a default window/tab. */
-    SkAppWindow *app_win = sk_app_window_new(ctx->app);
+    void *app_win = NULL;
+    if (bridge && bridge->window_new)
+    {
+      app_win = bridge->window_new(ui, NULL, -1, -1, -1, -1);
+    }
     if (app_win != NULL)
     {
       g_ptr_array_add(ctx->app_windows, app_win);
-      sk_app_window_show(app_win);
+      if (bridge && bridge->window_show)
+      {
+        bridge->window_show(app_win);
+      }
 
       SkTabRestore *tr = g_new0(SkTabRestore, 1);
       tr->ctx = ctx;
@@ -1200,7 +1267,10 @@ phase_restore_sessions(SkConnectContext *ctx)
   /* FR-CONN-16: Show progress. */
   if (ctx->feedback != NULL)
   {
-    sk_conn_feedback_set_progress(ctx->feedback, 0, (int)ctx->tab_restores->len);
+    if (bridge && bridge->feedback_set_progress)
+    {
+      bridge->feedback_set_progress(ctx->feedback, 0, (int)ctx->tab_restores->len);
+    }
   }
 
   /* FR-STATE-11: Parallel restoration in batches of 5. */
@@ -1382,42 +1452,46 @@ on_tab_restore_done(GObject *src G_GNUC_UNUSED, GAsyncResult *res, gpointer data
 
   bool success = g_task_propagate_boolean(G_TASK(res), &error);
 
+  const SkUiBridge *bridge = sk_ui_bridge_get();
+  SkUiHandle ui = sk_ui_bridge_get_handle();
+
   if (success)
   {
-    /* Create terminal tab widget. */
-    SkTerminalConfig term_config = {
-      .font_family = ctx->config->font_family,
-      .font_size = ctx->config->font_size,
-      .scrollback_lines = ctx->config->scrollback_lines,
-      .cursor_shape = (SkCursorShape)ctx->config->cursor_shape,
-      .cursor_blink = (ctx->config->cursor_blink == SK_CURSOR_BLINK_ON),
-      .bold_is_bright = ctx->config->bold_is_bright,
-      .allow_hyperlinks = ctx->config->allow_hyperlinks,
-      .word_chars = ctx->config->word_chars,
-      .audible_bell = (ctx->config->bell == SK_BELL_AUDIBLE),
-    };
+    /* Create terminal widget via bridge. */
+    if (bridge && bridge->terminal_new)
+    {
+      tr->terminal = bridge->terminal_new(ui, ctx->config->font_family, ctx->config->font_size,
+                                          ctx->config->scrollback_lines);
+    }
 
-    tr->terminal = sk_terminal_tab_new(&term_config);
     if (tr->terminal != NULL)
     {
-      GError *conn_err = NULL;
-      if (sk_terminal_tab_connect(tr->terminal, tr->ssh_conn, tr->ssh_channel, &conn_err))
+      bool connected = false;
+      if (bridge && bridge->terminal_connect)
       {
-        /* Add tab to window. */
-        const char *title = tr->state_tab != NULL ? tr->state_tab->title : "New Session";
-        tr->app_tab =
-            sk_app_window_add_tab(tr->app_window, tr->terminal, title ? title : "Session");
+        connected = bridge->terminal_connect(tr->terminal,
+                                             sk_ssh_connection_get_fd(tr->ssh_conn),
+                                             tr->ssh_channel);
+      }
 
-        if (tr->app_tab != NULL)
+      if (connected)
+      {
+        /* Add tab to window via bridge. */
+        const char *title = tr->state_tab != NULL ? tr->state_tab->title : "New Session";
+        if (bridge && bridge->window_add_tab)
         {
-          sk_app_tab_set_indicator(tr->app_tab, SK_CONN_INDICATOR_GREEN);
+          tr->app_tab =
+              bridge->window_add_tab(tr->app_window, tr->terminal, title ? title : "Session");
+        }
+
+        if (tr->app_tab != NULL && bridge && bridge->tab_set_indicator)
+        {
+          bridge->tab_set_indicator(tr->app_tab, SK_BRIDGE_INDICATOR_GREEN);
         }
       }
       else
       {
-        SK_LOG_WARN(SK_LOG_COMPONENT_TERMINAL, "failed to connect terminal: %s",
-                    conn_err ? conn_err->message : "unknown");
-        g_clear_error(&conn_err);
+        SK_LOG_WARN(SK_LOG_COMPONENT_TERMINAL, "failed to connect terminal for tab %d", tr->index);
       }
     }
   }
@@ -1429,9 +1503,9 @@ on_tab_restore_done(GObject *src G_GNUC_UNUSED, GAsyncResult *res, gpointer data
   }
 
   /* Update progress (FR-CONN-16). */
-  if (ctx->feedback != NULL)
+  if (ctx->feedback != NULL && bridge && bridge->feedback_set_progress)
   {
-    sk_conn_feedback_set_progress(ctx->feedback, tr->index + 1, (int)ctx->tab_restores->len);
+    bridge->feedback_set_progress(ctx->feedback, tr->index + 1, (int)ctx->tab_restores->len);
   }
 
   /* Check if this batch is complete. */
@@ -1454,6 +1528,9 @@ on_tab_restore_done(GObject *src G_GNUC_UNUSED, GAsyncResult *res, gpointer data
 static void
 handle_dead_sessions(SkConnectContext *ctx, SkReconcileResult *reconcile)
 {
+  const SkUiBridge *bridge = sk_ui_bridge_get();
+  SkUiHandle ui = sk_ui_bridge_get_handle();
+
   for (guint i = 0; i < reconcile->dead->len; i++)
   {
     const char *dead_uuid = g_ptr_array_index(reconcile->dead, i);
@@ -1484,45 +1561,50 @@ handle_dead_sessions(SkConnectContext *ctx, SkReconcileResult *reconcile)
         tr->is_dead = true;
 
         /* FR-UI-07: Dead session will be shown in read-only mode
-         * with history. The terminal setup happens after the
-         * restore batch creates the terminal widgets. We prepare
-         * here. Create the terminal tab immediately for dead
-         * sessions since they don't need SSH. */
-        SkTerminalConfig term_config = {
-          .font_family = ctx->config->font_family,
-          .font_size = ctx->config->font_size,
-          .scrollback_lines = ctx->config->scrollback_lines,
-          .cursor_shape = (SkCursorShape)ctx->config->cursor_shape,
-          .cursor_blink = false,
-          .bold_is_bright = ctx->config->bold_is_bright,
-          .allow_hyperlinks = ctx->config->allow_hyperlinks,
-          .word_chars = ctx->config->word_chars,
-          .audible_bell = false,
-        };
+         * with history. Create the terminal via bridge immediately
+         * for dead sessions since they don't need SSH. */
+        if (bridge && bridge->terminal_new)
+        {
+          tr->terminal = bridge->terminal_new(ui, ctx->config->font_family,
+                                              ctx->config->font_size,
+                                              ctx->config->scrollback_lines);
+        }
 
-        tr->terminal = sk_terminal_tab_new(&term_config);
         if (tr->terminal != NULL)
         {
           /* FR-UI-07: Feed history and show dead overlay.
            * INV-DEAD-1: Dead session never accepts input. */
-          sk_terminal_tab_set_dead(tr->terminal, history_data,
-                                   history_data ? (gssize)history_len : 0,
-                                   "This session was terminated on the server. "
-                                   "Output history is preserved below.");
+          if (bridge && bridge->terminal_set_dead)
+          {
+            bridge->terminal_set_dead(tr->terminal, history_data,
+                                      history_data ? (int)history_len : 0,
+                                      "This session was terminated on the server. "
+                                      "Output history is preserved below.");
+          }
 
           /* FR-UI-08: "Create new session" callback. */
           /* TODO: Wire up new session callback when
            * full UI integration is ready. */
 
-          /* Add to window. */
+          /* Add to window via bridge. */
           const char *title = tr->state_tab != NULL ? tr->state_tab->title : "Dead Session";
-          tr->app_tab =
-              sk_app_window_add_tab(tr->app_window, tr->terminal, title ? title : "Dead Session");
+          if (bridge && bridge->window_add_tab)
+          {
+            tr->app_tab =
+                bridge->window_add_tab(tr->app_window, tr->terminal,
+                                       title ? title : "Dead Session");
+          }
 
           if (tr->app_tab != NULL)
           {
-            sk_app_tab_set_dead(tr->app_tab, true);
-            sk_app_tab_set_indicator(tr->app_tab, SK_CONN_INDICATOR_RED);
+            if (bridge && bridge->tab_set_dead)
+            {
+              bridge->tab_set_dead(tr->app_tab, true);
+            }
+            if (bridge && bridge->tab_set_indicator)
+            {
+              bridge->tab_set_indicator(tr->app_tab, SK_BRIDGE_INDICATOR_RED);
+            }
           }
         }
 
@@ -1552,9 +1634,15 @@ handle_orphaned_sessions(SkConnectContext *ctx, SkReconcileResult *reconcile)
   SK_LOG_INFO(SK_LOG_COMPONENT_UI, "found %u orphaned sessions, creating Ungrouped window",
               reconcile->orphaned->len);
 
-  /* Create "Ungrouped sessions" window. */
-  SkAppWindow *orphan_win =
-      sk_app_window_new_from_state(ctx->app, "Ungrouped sessions", -1, -1, 800, 600);
+  const SkUiBridge *bridge = sk_ui_bridge_get();
+  SkUiHandle ui = sk_ui_bridge_get_handle();
+
+  /* Create "Ungrouped sessions" window via bridge. */
+  void *orphan_win = NULL;
+  if (bridge && bridge->window_new)
+  {
+    orphan_win = bridge->window_new(ui, "Ungrouped sessions", -1, -1, 800, 600);
+  }
 
   if (orphan_win == NULL)
   {
@@ -1563,7 +1651,10 @@ handle_orphaned_sessions(SkConnectContext *ctx, SkReconcileResult *reconcile)
   }
 
   g_ptr_array_add(ctx->app_windows, orphan_win);
-  sk_app_window_show(orphan_win);
+  if (bridge && bridge->window_show)
+  {
+    bridge->window_show(orphan_win);
+  }
 
   /* Add each orphaned session as a tab to restore. */
   for (guint i = 0; i < reconcile->orphaned->len; i++)
@@ -1617,15 +1708,22 @@ flow_complete(SkConnectContext *ctx, bool success, GError *error)
   /* FR-CONN-16: Dismiss feedback overlay. */
   if (ctx->feedback != NULL)
   {
-    if (success)
+    const SkUiBridge *bridge = sk_ui_bridge_get();
+    if (bridge)
     {
-      sk_conn_feedback_set_phase(ctx->feedback, SK_CONN_PHASE_DONE);
+      if (success && bridge->feedback_set_phase)
+      {
+        bridge->feedback_set_phase(ctx->feedback, SK_BRIDGE_PHASE_DONE);
+      }
+      else if (error != NULL && bridge->feedback_set_error)
+      {
+        bridge->feedback_set_error(ctx->feedback, error->message);
+      }
+      if (bridge->feedback_free)
+      {
+        bridge->feedback_free(ctx->feedback);
+      }
     }
-    else if (error != NULL)
-    {
-      sk_conn_feedback_set_error(ctx->feedback, error->message);
-    }
-    sk_conn_feedback_free(ctx->feedback);
     ctx->feedback = NULL;
   }
 
@@ -1678,7 +1776,12 @@ flow_fail(SkConnectContext *ctx, GError *error)
   /* Show error dialog (FR-CONN-17, FR-CONN-18). */
   if (ctx->parent_window != NULL && error != NULL)
   {
-    sk_dialog_error(ctx->parent_window, "Connection Failed", error->message);
+    const SkUiBridge *bridge = sk_ui_bridge_get();
+    SkUiHandle ui = sk_ui_bridge_get_handle();
+    if (bridge && bridge->error_dialog)
+    {
+      bridge->error_dialog(ui, "Connection Failed", error->message);
+    }
   }
 
   flow_complete(ctx, false, error);
@@ -1884,7 +1987,11 @@ tab_restore_free(SkTabRestore *tr)
    * if it was never added. */
   if (tr->terminal != NULL && tr->app_tab == NULL)
   {
-    sk_terminal_tab_free(tr->terminal);
+    const SkUiBridge *bridge = sk_ui_bridge_get();
+    if (bridge && bridge->terminal_free)
+    {
+      bridge->terminal_free(tr->terminal);
+    }
   }
 
   if (tr->tmux_session != NULL)
@@ -1931,8 +2038,10 @@ install_signal_handlers(SkConnectContext *ctx)
 {
   g_signal_ctx = ctx;
   /* Use GLib's signal source for safe main-loop handling. */
+#ifndef _WIN32
   ctx->sigterm_handler_id = g_unix_signal_add(SIGTERM, on_signal_shutdown, ctx);
   ctx->sigint_handler_id = g_unix_signal_add(SIGINT, on_signal_shutdown, ctx);
+#endif
 }
 
 static void
@@ -1955,103 +2064,28 @@ remove_signal_handlers(SkConnectContext *ctx)
 }
 
 /* ------------------------------------------------------------------ */
-/* UI callback adapters — run dialogs on main thread                   */
+/* UI callback adapters — delegate to bridge vtable                    */
 /* ------------------------------------------------------------------ */
 
 /**
- * Data struct for passing dialog calls to the main thread and
- * waiting for the result via a mutex/cond.
+ * The bridge implementations handle thread safety internally
+ * (dispatching to the UI thread and blocking until the user responds),
+ * so these adapters are simple pass-throughs.
  */
-typedef struct
-{
-  GMutex mutex;
-  GCond cond;
-  bool done;
-
-  /* Dialog-specific data. */
-  GtkWindow *parent;
-  const char *hostname;
-  const char *fingerprint;
-  const char *key_type;
-  const char *old_key_type;
-  const char *prompt;
-
-  /* MFA-specific. */
-  const char *mfa_name;
-  const char *mfa_instruction;
-  const char **mfa_prompts;
-  const gboolean *mfa_show_input;
-  int mfa_n_prompts;
-
-  /* Result. */
-  gboolean result_bool;
-  char *result_string;
-  char **result_strings;
-} DialogCallData;
-
-static gboolean
-run_host_key_unknown_dialog(gpointer data)
-{
-  DialogCallData *d = data;
-
-  SkHostKeyDialogResult result =
-      sk_dialog_host_key_unknown(d->parent, d->hostname, d->fingerprint, d->key_type);
-
-  d->result_bool = (result == SK_HOST_KEY_ACCEPT_SAVE || result == SK_HOST_KEY_CONNECT_ONCE);
-
-  g_mutex_lock(&d->mutex);
-  d->done = true;
-  g_cond_signal(&d->cond);
-  g_mutex_unlock(&d->mutex);
-
-  return G_SOURCE_REMOVE;
-}
 
 static gboolean
 ui_host_key_unknown_cb(SkSshConnection *conn G_GNUC_UNUSED, const char *fingerprint,
                        const char *key_type, gpointer user_data)
 {
   SkConnectContext *ctx = user_data;
+  const SkUiBridge *bridge = sk_ui_bridge_get();
+  SkUiHandle ui = sk_ui_bridge_get_handle();
 
-  DialogCallData d = { 0 };
-  g_mutex_init(&d.mutex);
-  g_cond_init(&d.cond);
-  d.parent = ctx->parent_window;
-  d.hostname = ctx->hostname;
-  d.fingerprint = fingerprint;
-  d.key_type = key_type;
+  if (!bridge || !bridge->host_key_unknown)
+    return FALSE;
 
-  g_idle_add(run_host_key_unknown_dialog, &d);
-
-  g_mutex_lock(&d.mutex);
-  while (!d.done)
-  {
-    g_cond_wait(&d.cond, &d.mutex);
-  }
-  g_mutex_unlock(&d.mutex);
-
-  g_mutex_clear(&d.mutex);
-  g_cond_clear(&d.cond);
-
-  return d.result_bool;
-}
-
-static gboolean
-run_host_key_other_dialog(gpointer data)
-{
-  DialogCallData *d = data;
-
-  /* FR-CONN-04: Show warning for different key type. */
-  SkHostKeyDialogResult result =
-      sk_dialog_host_key_unknown(d->parent, d->hostname, d->fingerprint, d->key_type);
-  d->result_bool = (result != SK_HOST_KEY_REJECT);
-
-  g_mutex_lock(&d->mutex);
-  d->done = true;
-  g_cond_signal(&d->cond);
-  g_mutex_unlock(&d->mutex);
-
-  return G_SOURCE_REMOVE;
+  SkBridgeHostKeyResult result = bridge->host_key_unknown(ui, ctx->hostname, fingerprint, key_type);
+  return (result == SK_BRIDGE_HOST_KEY_ACCEPT_SAVE || result == SK_BRIDGE_HOST_KEY_CONNECT_ONCE);
 }
 
 static gboolean
@@ -2059,83 +2093,28 @@ ui_host_key_other_cb(SkSshConnection *conn G_GNUC_UNUSED, const char *fingerprin
                      const char *old_type G_GNUC_UNUSED, const char *new_type, gpointer user_data)
 {
   SkConnectContext *ctx = user_data;
+  const SkUiBridge *bridge = sk_ui_bridge_get();
+  SkUiHandle ui = sk_ui_bridge_get_handle();
 
-  DialogCallData d = { 0 };
-  g_mutex_init(&d.mutex);
-  g_cond_init(&d.cond);
-  d.parent = ctx->parent_window;
-  d.hostname = ctx->hostname;
-  d.fingerprint = fingerprint;
-  d.key_type = new_type;
+  if (!bridge || !bridge->host_key_unknown)
+    return FALSE;
 
-  g_idle_add(run_host_key_other_dialog, &d);
-
-  g_mutex_lock(&d.mutex);
-  while (!d.done)
-  {
-    g_cond_wait(&d.cond, &d.mutex);
-  }
-  g_mutex_unlock(&d.mutex);
-
-  g_mutex_clear(&d.mutex);
-  g_cond_clear(&d.cond);
-
-  return d.result_bool;
-}
-
-static gboolean
-run_password_dialog(gpointer data)
-{
-  DialogCallData *d = data;
-  d->result_string = sk_dialog_auth_password(d->parent, d->prompt);
-
-  g_mutex_lock(&d->mutex);
-  d->done = true;
-  g_cond_signal(&d->cond);
-  g_mutex_unlock(&d->mutex);
-
-  return G_SOURCE_REMOVE;
+  /* FR-CONN-04: Show warning for different key type. */
+  SkBridgeHostKeyResult result = bridge->host_key_unknown(ui, ctx->hostname, fingerprint, new_type);
+  return (result != SK_BRIDGE_HOST_KEY_REJECT);
 }
 
 static char *
 ui_password_cb(SkSshConnection *conn G_GNUC_UNUSED, const char *prompt, gpointer user_data)
 {
-  SkConnectContext *ctx = user_data;
+  SkConnectContext *ctx G_GNUC_UNUSED = user_data;
+  const SkUiBridge *bridge = sk_ui_bridge_get();
+  SkUiHandle ui = sk_ui_bridge_get_handle();
 
-  DialogCallData d = { 0 };
-  g_mutex_init(&d.mutex);
-  g_cond_init(&d.cond);
-  d.parent = ctx->parent_window;
-  d.prompt = prompt;
+  if (!bridge || !bridge->auth_password)
+    return NULL;
 
-  g_idle_add(run_password_dialog, &d);
-
-  g_mutex_lock(&d.mutex);
-  while (!d.done)
-  {
-    g_cond_wait(&d.cond, &d.mutex);
-  }
-  g_mutex_unlock(&d.mutex);
-
-  g_mutex_clear(&d.mutex);
-  g_cond_clear(&d.cond);
-
-  return d.result_string;
-}
-
-static gboolean
-run_mfa_dialog(gpointer data)
-{
-  DialogCallData *d = data;
-  d->result_strings = sk_dialog_auth_mfa(d->parent, d->mfa_name, d->mfa_instruction, d->mfa_prompts,
-                                         d->mfa_show_input, d->mfa_n_prompts);
-
-  g_mutex_lock(&d->mutex);
-  d->done = true;
-  g_cond_signal(&d->cond);
-  g_mutex_unlock(&d->mutex);
-
-  return G_SOURCE_REMOVE;
+  return bridge->auth_password(ui, prompt);
 }
 
 static char **
@@ -2143,72 +2122,25 @@ ui_kbd_interactive_cb(SkSshConnection *conn G_GNUC_UNUSED, const char *name,
                       const char *instruction, const char **prompts, const gboolean *show_input,
                       int n_prompts, gpointer user_data)
 {
-  SkConnectContext *ctx = user_data;
+  SkConnectContext *ctx G_GNUC_UNUSED = user_data;
+  const SkUiBridge *bridge = sk_ui_bridge_get();
+  SkUiHandle ui = sk_ui_bridge_get_handle();
 
-  DialogCallData d = { 0 };
-  g_mutex_init(&d.mutex);
-  g_cond_init(&d.cond);
-  d.parent = ctx->parent_window;
-  d.mfa_name = name;
-  d.mfa_instruction = instruction;
-  d.mfa_prompts = prompts;
-  d.mfa_show_input = show_input;
-  d.mfa_n_prompts = n_prompts;
+  if (!bridge || !bridge->auth_mfa)
+    return NULL;
 
-  g_idle_add(run_mfa_dialog, &d);
-
-  g_mutex_lock(&d.mutex);
-  while (!d.done)
-  {
-    g_cond_wait(&d.cond, &d.mutex);
-  }
-  g_mutex_unlock(&d.mutex);
-
-  g_mutex_clear(&d.mutex);
-  g_cond_clear(&d.cond);
-
-  return d.result_strings;
-}
-
-static gboolean
-run_passphrase_dialog(gpointer data)
-{
-  DialogCallData *d = data;
-  d->result_string = sk_dialog_auth_password(d->parent, d->prompt);
-
-  g_mutex_lock(&d->mutex);
-  d->done = true;
-  g_cond_signal(&d->cond);
-  g_mutex_unlock(&d->mutex);
-
-  return G_SOURCE_REMOVE;
+  return bridge->auth_mfa(ui, name, instruction, prompts, show_input, n_prompts);
 }
 
 static char *
 ui_passphrase_cb(SkSshConnection *conn G_GNUC_UNUSED, const char *key_path, gpointer user_data)
 {
-  SkConnectContext *ctx = user_data;
+  SkConnectContext *ctx G_GNUC_UNUSED = user_data;
+  const SkUiBridge *bridge = sk_ui_bridge_get();
+  SkUiHandle ui = sk_ui_bridge_get_handle();
 
-  char *prompt = g_strdup_printf("Enter passphrase for key '%s':", key_path);
+  if (!bridge || !bridge->auth_passphrase)
+    return NULL;
 
-  DialogCallData d = { 0 };
-  g_mutex_init(&d.mutex);
-  g_cond_init(&d.cond);
-  d.parent = ctx->parent_window;
-  d.prompt = prompt;
-
-  g_idle_add(run_passphrase_dialog, &d);
-
-  g_mutex_lock(&d.mutex);
-  while (!d.done)
-  {
-    g_cond_wait(&d.cond, &d.mutex);
-  }
-  g_mutex_unlock(&d.mutex);
-
-  g_mutex_clear(&d.mutex);
-  g_cond_clear(&d.cond);
-  g_free(prompt);
-
-  return d.result_string;
+  return bridge->auth_passphrase(ui, key_path);
 }

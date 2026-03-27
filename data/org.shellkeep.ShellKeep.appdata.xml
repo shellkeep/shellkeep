@@ -10,7 +10,7 @@
   <summary>Persistent SSH terminal sessions with tmux integration</summary>
   <description>
     <p>
-      ShellKeep is a GTK 3 application that provides persistent SSH terminal
+      ShellKeep is a Qt6 application that provides persistent SSH terminal
       sessions backed by tmux. It automatically saves and restores your session
       layout per device, supports multiple environments (named groups of
       sessions), and reconnects seamlessly after network interruptions.
@@ -33,6 +33,11 @@
   </provides>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.2.0" date="2026-03-26">
+      <description>
+        <p>Migrate UI from GTK3+VTE to Qt6+QTermWidget for a modern look and cross-platform support (Linux, macOS, Windows).</p>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-03-25">
       <description>
         <p>Initial release.</p>

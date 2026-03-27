@@ -92,9 +92,9 @@ test_version_constants(void **state)
   (void)state;
 
   assert_int_equal(SK_VERSION_MAJOR, 0);
-  assert_int_equal(SK_VERSION_MINOR, 1);
+  assert_int_equal(SK_VERSION_MINOR, 2);
   assert_int_equal(SK_VERSION_PATCH, 0);
-  assert_string_equal(SK_VERSION_STRING, "0.1.0");
+  assert_string_equal(SK_VERSION_STRING, "0.2.0");
 }
 
 /* ---- Test: Application constants ---------------------------------------- */
