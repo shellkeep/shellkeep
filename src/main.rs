@@ -101,6 +101,7 @@ struct Tab {
     label: String,
     terminal: Option<iced_term::Terminal>,
     ssh_args: Vec<String>,
+    tmux_session: String,
     dead: bool,
 }
 
@@ -196,6 +197,16 @@ impl ShellKeep {
         let id = self.next_id;
         self.next_id += 1;
 
+        // Build SSH command with tmux session attachment
+        // Each tab gets a unique tmux session: shellkeep-0, shellkeep-1, etc.
+        let tmux_session = format!("shellkeep-{id}");
+        let tmux_cmd = format!("tmux new-session -A -s {tmux_session} || exec $SHELL");
+
+        let mut full_args = Vec::new();
+        full_args.extend_from_slice(ssh_args);
+        full_args.push("-t".to_string());
+        full_args.push(tmux_cmd);
+
         let settings = Settings {
             font: FontSettings {
                 size: self.config.terminal.font_size,
@@ -206,7 +217,7 @@ impl ShellKeep {
             },
             backend: BackendSettings {
                 program: "ssh".to_string(),
-                args: ssh_args.to_vec(),
+                args: full_args,
                 ..Default::default()
             },
         };
@@ -218,6 +229,7 @@ impl ShellKeep {
                     label: label.to_string(),
                     terminal: Some(terminal),
                     ssh_args: ssh_args.to_vec(),
+                    tmux_session: tmux_session.clone(),
                     dead: false,
                 });
                 self.active_tab = self.tabs.len() - 1;
@@ -250,12 +262,20 @@ impl ShellKeep {
 
         let ssh_args = self.tabs[index].ssh_args.clone();
         let label = self.tabs[index].label.clone();
+        let tmux_session = self.tabs[index].tmux_session.clone();
 
-        // Remove old dead tab and open fresh one
+        // Remove old dead tab and open fresh one at same position
         self.tabs.remove(index);
 
         let id = self.next_id;
         self.next_id += 1;
+
+        // Reattach to the same tmux session
+        let tmux_cmd = format!("tmux new-session -A -s {tmux_session} || exec $SHELL");
+        let mut full_args = Vec::new();
+        full_args.extend_from_slice(&ssh_args);
+        full_args.push("-t".to_string());
+        full_args.push(tmux_cmd);
 
         let settings = Settings {
             font: FontSettings {
@@ -267,7 +287,7 @@ impl ShellKeep {
             },
             backend: BackendSettings {
                 program: "ssh".to_string(),
-                args: ssh_args.clone(),
+                args: full_args,
                 ..Default::default()
             },
         };
@@ -281,12 +301,16 @@ impl ShellKeep {
                         label,
                         terminal: Some(terminal),
                         ssh_args,
+                        tmux_session,
                         dead: false,
                     },
                 );
                 self.active_tab = index;
                 self.update_title();
-                tracing::info!("reconnected tab {id}");
+                tracing::info!(
+                    "reconnected tab {id} to tmux session {}",
+                    self.tabs[index].tmux_session
+                );
             }
             Err(e) => {
                 tracing::error!("reconnect failed: {e}");
