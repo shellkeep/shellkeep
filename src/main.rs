@@ -553,7 +553,21 @@ impl ShellKeep {
                     self.host_input = conn.host;
                     self.user_input = conn.user;
                     self.port_input = conn.port;
-                    self.open_tab(&conn.ssh_args, &conn.label);
+
+                    // Check for existing sessions
+                    let existing = ssh::tmux::list_remote_sessions(&conn.ssh_args);
+                    if existing.is_empty() {
+                        self.open_tab(&conn.ssh_args, &conn.label);
+                    } else {
+                        for (i, session_name) in existing.iter().enumerate() {
+                            let tab_label = if i == 0 {
+                                conn.label.clone()
+                            } else {
+                                format!("Session {}", i + 1)
+                            };
+                            self.open_tab_with_tmux(&conn.ssh_args, &tab_label, session_name);
+                        }
+                    }
                     self.show_welcome = false;
                 }
             }
