@@ -68,3 +68,27 @@ jobs:
       - name: Test
         run: cargo test
         continue-on-error: true
+
+      - name: Upload binary (Linux)
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v7
+        with:
+          name: shellkeep-linux-x86_64
+          path: target/release/shellkeep
+          retention-days: 30
+
+      - name: Upload binary (macOS)
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v7
+        with:
+          name: shellkeep-macos-arm64
+          path: target/release/shellkeep
+          retention-days: 30
+
+      - name: Upload binary (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v7
+        with:
+          name: shellkeep-windows-x64
+          path: target/release/shellkeep.exe
+          retention-days: 30
