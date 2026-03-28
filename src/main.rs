@@ -6,17 +6,16 @@
 //! Persistent sessions that survive everything.
 //! Open source. Cross-platform. Zero server setup.
 
-mod config;
-mod ssh;
-mod state;
+mod theme;
 
-use config::Config;
 use iced::keyboard;
 use iced::widget::{Space, button, center, column, container, row, scrollable, text, text_input};
 use iced::{Color, Element, Length, Subscription, Task, Theme};
 use iced_term::ColorPalette;
 use iced_term::settings::{BackendSettings, FontSettings, Settings, ThemeSettings};
-use state::recent::{RecentConnection, RecentConnections};
+use shellkeep::config::Config;
+use shellkeep::ssh;
+use shellkeep::state::recent::{RecentConnection, RecentConnections};
 
 fn main() -> iced::Result {
     let args: Vec<String> = std::env::args().collect();
