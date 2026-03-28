@@ -12,9 +12,7 @@
 #include <QTabWidget>
 #include <QWidget>
 
-extern "C" {
 #include "shellkeep/sk_ui_bridge.h"
-}
 
 /**
  * Custom tab bar supporting rename-on-double-click, context menu,

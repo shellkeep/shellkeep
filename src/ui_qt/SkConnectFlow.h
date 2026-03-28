@@ -21,12 +21,10 @@
 
 #include <atomic>
 
-extern "C" {
 #include "shellkeep/sk_config.h"
 #include "shellkeep/sk_connect.h"
 #include "shellkeep/sk_types.h"
 #include "shellkeep/sk_ui_bridge.h"
-} /* extern "C" */
 
 /**
  * Parameters for starting a connection flow from the Qt side.

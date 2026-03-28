@@ -738,9 +738,7 @@ void SkTerminalWidget::onSearchClosed()
 /* C bridge implementation                                             */
 /* ------------------------------------------------------------------ */
 
-extern "C" {
 #include "shellkeep/sk_terminal_qt.h"
-}
 
 struct SkTerminalQtHandle
 {

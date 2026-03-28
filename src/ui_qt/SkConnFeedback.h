@@ -9,9 +9,7 @@
 #include <QTimer>
 #include <QWidget>
 
-extern "C" {
 #include "shellkeep/sk_ui_bridge.h"
-}
 
 /**
  * Connection feedback overlay widget.

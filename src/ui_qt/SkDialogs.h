@@ -7,9 +7,7 @@
 #include <QStringList>
 #include <QWidget>
 
-extern "C" {
 #include "shellkeep/sk_ui_bridge.h"
-}
 
 /**
  * All modal dialogs for shellkeep.

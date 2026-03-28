@@ -8,9 +8,7 @@
 #include <QHash>
 #include <QObject>
 
-extern "C" {
 #include "shellkeep/sk_ui_bridge.h"
-}
 
 class SkMainWindow;
 class SkTrayIcon;

@@ -17,9 +17,7 @@
 #include <QString>
 #include <array>
 
-extern "C" {
 #include "shellkeep/sk_config.h"
-}
 
 class SkTerminalWidget;
 

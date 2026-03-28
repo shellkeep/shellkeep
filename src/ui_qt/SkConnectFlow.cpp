@@ -23,9 +23,7 @@
 #include <QCoreApplication>
 #include <QMetaObject>
 
-extern "C" {
 #include "shellkeep/sk_log.h"
-} /* extern "C" */
 
 #ifndef _WIN32
 #include <signal.h>

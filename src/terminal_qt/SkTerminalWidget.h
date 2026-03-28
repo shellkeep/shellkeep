@@ -26,11 +26,9 @@
 #endif
 
 /* Include C backend headers. */
-extern "C" {
 #include "shellkeep/sk_config.h"
 #include "shellkeep/sk_ssh.h"
 #include "shellkeep/sk_types.h"
-}
 
 class SkTerminalSearch;
 class SkTerminalDead;

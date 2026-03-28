@@ -41,13 +41,11 @@
 #include <cstring>
 #include <memory>
 
-extern "C" {
 #include "shellkeep/sk_config.h"
 #include "shellkeep/sk_log.h"
 #include "shellkeep/sk_state.h"
 #include "shellkeep/sk_types.h"
 #include "shellkeep/sk_ui_bridge.h"
-} /* extern "C" */
 
 /* Platform headers */
 #ifdef Q_OS_LINUX
