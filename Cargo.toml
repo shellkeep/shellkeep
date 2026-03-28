@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: 2026 shellkeep contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+[package]
+name = "shellkeep"
+version = "0.3.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+description = "SSH terminal manager — persistent sessions that survive everything"
+repository = "https://github.com/shellkeep/shellkeep"
+rust-version = "1.88"
+
+[dependencies]
+# Terminal emulator widget (iced + alacritty_terminal)
+iced_term = "0.8"
+iced = { version = "0.14", features = ["tokio"] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Error handling
+thiserror = "2"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Platform utilities
+whoami = "1"
+
+[profile.release]
+lto = "thin"
+strip = true
