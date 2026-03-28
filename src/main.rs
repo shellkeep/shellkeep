@@ -7,7 +7,7 @@
 //! Open source. Cross-platform. Zero server setup.
 
 use iced::keyboard;
-use iced::widget::{button, center, column, container, row, text, text_input};
+use iced::widget::{Space, button, center, column, container, row, text, text_input};
 use iced::{Color, Element, Length, Subscription, Task, Theme};
 use iced_term::ColorPalette;
 use iced_term::settings::{BackendSettings, FontSettings, Settings, ThemeSettings};
@@ -49,7 +49,9 @@ fn main() -> iced::Result {
 struct Tab {
     id: u64,
     label: String,
-    terminal: iced_term::Terminal,
+    terminal: Option<iced_term::Terminal>,
+    ssh_args: Vec<String>,
+    dead: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -78,27 +80,21 @@ struct ShellKeep {
 
 #[derive(Debug, Clone)]
 enum Message {
-    // Terminal
     TerminalEvent(iced_term::Event),
-
-    // Tab management
     SelectTab(usize),
     CloseTab(usize),
     NewTab,
-
-    // Welcome screen
+    ReconnectTab(usize),
     HostInputChanged(String),
     PortInputChanged(String),
     UserInputChanged(String),
     IdentityInputChanged(String),
     Connect,
-
-    // Keyboard
     KeyEvent(keyboard::Event),
 }
 
 // ---------------------------------------------------------------------------
-// App implementation
+// App
 // ---------------------------------------------------------------------------
 
 impl ShellKeep {
@@ -117,9 +113,8 @@ impl ShellKeep {
             error: None,
         };
 
-        // If launched with CLI args, open a tab immediately
         if let Some(ssh_args) = initial_ssh_args {
-            let label = format!("ssh {}", ssh_args.join(" "));
+            let label = ssh_args.join(" ");
             app.open_tab(&ssh_args, &label);
         }
 
@@ -151,7 +146,9 @@ impl ShellKeep {
                 self.tabs.push(Tab {
                     id,
                     label: label.to_string(),
-                    terminal,
+                    terminal: Some(terminal),
+                    ssh_args: ssh_args.to_vec(),
+                    dead: false,
                 });
                 self.active_tab = self.tabs.len() - 1;
                 self.error = None;
@@ -176,9 +173,63 @@ impl ShellKeep {
         }
     }
 
+    fn reconnect_tab(&mut self, index: usize) {
+        if index >= self.tabs.len() {
+            return;
+        }
+
+        let ssh_args = self.tabs[index].ssh_args.clone();
+        let label = self.tabs[index].label.clone();
+
+        // Remove old dead tab and open fresh one
+        self.tabs.remove(index);
+
+        let id = self.next_id;
+        self.next_id += 1;
+
+        let settings = Settings {
+            font: FontSettings {
+                size: 14.0,
+                ..FontSettings::default()
+            },
+            theme: ThemeSettings {
+                color_pallete: Box::new(catppuccin_mocha()),
+                ..Default::default()
+            },
+            backend: BackendSettings {
+                program: "ssh".to_string(),
+                args: ssh_args.clone(),
+                ..Default::default()
+            },
+        };
+
+        match iced_term::Terminal::new(id, settings) {
+            Ok(terminal) => {
+                self.tabs.insert(
+                    index,
+                    Tab {
+                        id,
+                        label,
+                        terminal: Some(terminal),
+                        ssh_args,
+                        dead: false,
+                    },
+                );
+                self.active_tab = index;
+                self.update_title();
+                tracing::info!("reconnected tab {id}");
+            }
+            Err(e) => {
+                tracing::error!("reconnect failed: {e}");
+                self.error = Some(e.to_string());
+            }
+        }
+    }
+
     fn update_title(&mut self) {
         if let Some(tab) = self.tabs.get(self.active_tab) {
-            self.title_text = format!("shellkeep — {}", tab.label);
+            let status = if tab.dead { " (disconnected)" } else { "" };
+            self.title_text = format!("shellkeep — {}{}", tab.label, status);
         } else {
             self.title_text = "shellkeep".to_string();
         }
@@ -186,17 +237,29 @@ impl ShellKeep {
 
     fn build_ssh_args(&self) -> Vec<String> {
         let mut args = Vec::new();
+        let host = self.host_input.trim();
 
-        if !self.user_input.is_empty() {
-            args.push(format!("{}@{}", self.user_input, self.host_input));
+        // Parse user@host:port from host field
+        let (parsed_user, parsed_host, parsed_port) = parse_host_input(host);
+
+        let user = if !self.user_input.is_empty() {
+            self.user_input.clone()
         } else {
-            args.push(self.host_input.clone());
+            parsed_user.unwrap_or_default()
+        };
+
+        let host = parsed_host;
+        let port = parsed_port.unwrap_or_else(|| self.port_input.trim().to_string());
+
+        if !user.is_empty() {
+            args.push(format!("{user}@{host}"));
+        } else {
+            args.push(host);
         }
 
-        let port = self.port_input.trim();
         if !port.is_empty() && port != "22" {
             args.push("-p".to_string());
-            args.push(port.to_string());
+            args.push(port);
         }
 
         if !self.identity_input.is_empty() {
@@ -207,8 +270,6 @@ impl ShellKeep {
         args
     }
 
-    // -- iced interface --
-
     fn title(&self) -> String {
         self.title_text.clone()
     }
@@ -216,21 +277,27 @@ impl ShellKeep {
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::TerminalEvent(iced_term::Event::BackendCall(id, cmd)) => {
+                let mut needs_title_update = false;
                 if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == id) {
-                    let action = tab.terminal.handle(iced_term::Command::ProxyToBackend(cmd));
-                    match action {
-                        iced_term::actions::Action::ChangeTitle(new_title) => {
-                            tab.label = new_title;
-                            self.update_title();
-                        }
-                        iced_term::actions::Action::Shutdown => {
-                            // Find and remove the tab
-                            if let Some(idx) = self.tabs.iter().position(|t| t.id == id) {
-                                self.close_tab(idx);
+                    if let Some(ref mut terminal) = tab.terminal {
+                        let action = terminal.handle(iced_term::Command::ProxyToBackend(cmd));
+                        match action {
+                            iced_term::actions::Action::ChangeTitle(new_title) => {
+                                tab.label = new_title;
+                                needs_title_update = true;
                             }
+                            iced_term::actions::Action::Shutdown => {
+                                tab.dead = true;
+                                tab.terminal = None;
+                                needs_title_update = true;
+                                tracing::info!("session ended for tab {id}");
+                            }
+                            _ => {}
                         }
-                        _ => {}
                     }
+                }
+                if needs_title_update {
+                    self.update_title();
                 }
             }
 
@@ -250,7 +317,13 @@ impl ShellKeep {
                 self.show_welcome = true;
             }
 
-            Message::HostInputChanged(v) => self.host_input = v,
+            Message::ReconnectTab(index) => {
+                self.reconnect_tab(index);
+            }
+
+            Message::HostInputChanged(v) => {
+                self.host_input = v;
+            }
             Message::PortInputChanged(v) => self.port_input = v,
             Message::UserInputChanged(v) => self.user_input = v,
             Message::IdentityInputChanged(v) => self.identity_input = v,
@@ -260,7 +333,7 @@ impl ShellKeep {
                     return Task::none();
                 }
                 let ssh_args = self.build_ssh_args();
-                let label = format!("ssh {}", ssh_args.join(" "));
+                let label = ssh_args.join(" ");
                 self.open_tab(&ssh_args, &label);
                 self.show_welcome = false;
             }
@@ -278,18 +351,40 @@ impl ShellKeep {
                     if modifiers.control()
                         && modifiers.shift()
                         && key == keyboard::Key::Character("w".into())
+                        && !self.tabs.is_empty()
                     {
-                        if !self.tabs.is_empty() {
-                            self.close_tab(self.active_tab);
-                        }
+                        self.close_tab(self.active_tab);
                     }
                     // Ctrl+Tab — next tab
-                    if modifiers.control() && key == keyboard::Key::Named(keyboard::key::Named::Tab)
+                    if modifiers.control()
+                        && !modifiers.shift()
+                        && key == keyboard::Key::Named(keyboard::key::Named::Tab)
+                        && !self.tabs.is_empty()
                     {
-                        if !self.tabs.is_empty() {
-                            self.active_tab = (self.active_tab + 1) % self.tabs.len();
-                            self.update_title();
+                        self.active_tab = (self.active_tab + 1) % self.tabs.len();
+                        self.show_welcome = false;
+                        self.update_title();
+                    }
+                    // Ctrl+Shift+Tab — previous tab
+                    if modifiers.control()
+                        && modifiers.shift()
+                        && key == keyboard::Key::Named(keyboard::key::Named::Tab)
+                        && !self.tabs.is_empty()
+                    {
+                        if self.active_tab == 0 {
+                            self.active_tab = self.tabs.len() - 1;
+                        } else {
+                            self.active_tab -= 1;
                         }
+                        self.show_welcome = false;
+                        self.update_title();
+                    }
+                    // Escape — cancel welcome, go back to tabs
+                    if key == keyboard::Key::Named(keyboard::key::Named::Escape)
+                        && self.show_welcome
+                        && !self.tabs.is_empty()
+                    {
+                        self.show_welcome = false;
                     }
                 }
             }
@@ -308,29 +403,84 @@ impl ShellKeep {
         }
 
         let tab_bar = self.view_tab_bar();
-        let terminal_view: Element<'_, Message> = if let Some(tab) = self.tabs.get(self.active_tab)
-        {
-            container(iced_term::TerminalView::show(&tab.terminal).map(Message::TerminalEvent))
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into()
+        let content: Element<'_, Message> = if let Some(tab) = self.tabs.get(self.active_tab) {
+            if tab.dead {
+                self.view_dead_tab(tab)
+            } else if let Some(ref terminal) = tab.terminal {
+                container(iced_term::TerminalView::show(terminal).map(Message::TerminalEvent))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .into()
+            } else {
+                center(text("Terminal not available")).into()
+            }
         } else {
             center(text("No active tab")).into()
         };
 
-        column![tab_bar, terminal_view].into()
+        column![tab_bar, content].into()
+    }
+
+    fn view_dead_tab<'a>(&'a self, tab: &'a Tab) -> Element<'a, Message> {
+        let index = self.tabs.iter().position(|t| t.id == tab.id).unwrap_or(0);
+
+        center(
+            column![
+                text("⚠").size(48),
+                text("Session disconnected")
+                    .size(20)
+                    .color(Color::from_rgb8(0xf9, 0xe2, 0xaf)),
+                text(&tab.label)
+                    .size(14)
+                    .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
+                Space::new().height(16),
+                button(
+                    text("Reconnect")
+                        .size(14)
+                        .color(Color::from_rgb8(0x1e, 0x1e, 0x2e))
+                )
+                .on_press(Message::ReconnectTab(index))
+                .padding([10, 24])
+                .style(|_theme, _status| button::Style {
+                    background: Some(iced::Background::Color(Color::from_rgb8(0xa6, 0xe3, 0xa1,))),
+                    text_color: Color::from_rgb8(0x1e, 0x1e, 0x2e),
+                    border: iced::Border {
+                        radius: 6.0.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }),
+                button(text("Close tab").size(12))
+                    .on_press(Message::CloseTab(index))
+                    .padding([6, 16])
+                    .style(|_theme: &Theme, _status| button::Style {
+                        background: None,
+                        text_color: Color::from_rgb8(0x6c, 0x70, 0x86),
+                        ..Default::default()
+                    }),
+            ]
+            .spacing(12)
+            .align_x(iced::Alignment::Center),
+        )
+        .into()
     }
 
     fn view_tab_bar(&self) -> Element<'_, Message> {
         let mut tabs_row: Vec<Element<'_, Message>> = Vec::new();
 
         for (i, tab) in self.tabs.iter().enumerate() {
-            let is_active = i == self.active_tab;
+            let is_active = i == self.active_tab && !self.show_welcome;
 
             let label_text: String = if tab.label.len() > 25 {
                 format!("{}...", &tab.label[..22])
             } else {
                 tab.label.clone()
+            };
+
+            let label_color = if tab.dead {
+                Color::from_rgb8(0xf3, 0x8b, 0xa8) // red for dead tabs
+            } else {
+                Color::from_rgb8(0xcd, 0xd6, 0xf4) // normal text
             };
 
             let close_btn = button(text("×").size(12))
@@ -342,7 +492,7 @@ impl ShellKeep {
                     ..Default::default()
                 });
 
-            let tab_content = row![text(label_text).size(12), close_btn]
+            let tab_content = row![text(label_text).size(12).color(label_color), close_btn]
                 .spacing(6)
                 .align_y(iced::Alignment::Center);
 
@@ -357,7 +507,7 @@ impl ShellKeep {
                 .padding([6, 12])
                 .style(move |_theme: &Theme, _status| button::Style {
                     background: Some(iced::Background::Color(bg)),
-                    text_color: Color::from_rgb8(0xcd, 0xd6, 0xf4),
+                    text_color: label_color,
                     border: iced::Border {
                         radius: 4.0.into(),
                         ..Default::default()
@@ -378,7 +528,7 @@ impl ShellKeep {
                 ..Default::default()
             });
 
-        let bar = row![row(tabs_row).spacing(0), new_tab_btn,]
+        let bar = row![row(tabs_row).spacing(1), new_tab_btn]
             .width(Length::Fill)
             .align_y(iced::Alignment::Center);
 
@@ -395,13 +545,13 @@ impl ShellKeep {
         let logo = text("🐚").size(64);
         let title = text("shellkeep")
             .size(28)
-            .color(Color::from_rgb8(0x89, 0xb4, 0xfa)); // blue
+            .color(Color::from_rgb8(0x89, 0xb4, 0xfa));
 
         let subtitle = text("SSH sessions that survive everything")
             .size(14)
-            .color(Color::from_rgb8(0xa6, 0xad, 0xc8)); // subtext0
+            .color(Color::from_rgb8(0xa6, 0xad, 0xc8));
 
-        let host_field = text_input("hostname or IP", &self.host_input)
+        let host_field = text_input("user@host or just hostname", &self.host_input)
             .on_input(Message::HostInputChanged)
             .on_submit(Message::Connect)
             .size(14)
@@ -454,21 +604,24 @@ impl ShellKeep {
         let user_row = column![text("Username").size(12), user_field].spacing(4);
         let identity_row = column![text("Identity file").size(12), identity_field].spacing(4);
 
-        let error_text = if let Some(ref err) = self.error {
-            text(err).size(12).color(Color::from_rgb8(0xf3, 0x8b, 0xa8))
+        let error_text: Element<'_, Message> = if let Some(ref err) = self.error {
+            text(err)
+                .size(12)
+                .color(Color::from_rgb8(0xf3, 0x8b, 0xa8))
+                .into()
         } else {
-            text("").size(1)
+            Space::new().height(0).into()
         };
 
         let form = column![
             logo,
             title,
             subtitle,
-            column![].height(20),
+            Space::new().height(20),
             host_row,
             user_row,
             identity_row,
-            column![].height(8),
+            Space::new().height(8),
             connect_btn,
             error_text,
         ]
@@ -482,12 +635,12 @@ impl ShellKeep {
     fn subscription(&self) -> Subscription<Message> {
         let mut subs: Vec<Subscription<Message>> = Vec::new();
 
-        // Terminal subscriptions (one per tab)
         for tab in &self.tabs {
-            subs.push(tab.terminal.subscription().map(Message::TerminalEvent));
+            if let Some(ref terminal) = tab.terminal {
+                subs.push(terminal.subscription().map(Message::TerminalEvent));
+            }
         }
 
-        // Global keyboard shortcuts
         subs.push(keyboard::listen().map(Message::KeyEvent));
 
         Subscription::batch(subs)
@@ -496,6 +649,53 @@ impl ShellKeep {
     fn theme(&self) -> Theme {
         Theme::CatppuccinMocha
     }
+}
+
+// ---------------------------------------------------------------------------
+// Host input parsing: supports user@host:port, user@host, host:port, host
+// ---------------------------------------------------------------------------
+
+fn parse_host_input(input: &str) -> (Option<String>, String, Option<String>) {
+    let mut user = None;
+    let mut remaining = input.to_string();
+
+    // Extract user@
+    if let Some(at_pos) = remaining.find('@') {
+        user = Some(remaining[..at_pos].to_string());
+        remaining = remaining[at_pos + 1..].to_string();
+    }
+
+    // Extract :port (but not IPv6 brackets)
+    let port = if remaining.starts_with('[') {
+        // IPv6: [::1]:port
+        if let Some(bracket_end) = remaining.find(']') {
+            let host = remaining[1..bracket_end].to_string();
+            let port = if remaining.len() > bracket_end + 2
+                && remaining.as_bytes()[bracket_end + 1] == b':'
+            {
+                Some(remaining[bracket_end + 2..].to_string())
+            } else {
+                None
+            };
+            remaining = host;
+            port
+        } else {
+            None
+        }
+    } else if let Some(colon_pos) = remaining.rfind(':') {
+        let maybe_port = &remaining[colon_pos + 1..];
+        if maybe_port.parse::<u16>().is_ok() {
+            let port = Some(maybe_port.to_string());
+            remaining = remaining[..colon_pos].to_string();
+            port
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    (user, remaining, port)
 }
 
 // ---------------------------------------------------------------------------
@@ -523,5 +723,54 @@ fn catppuccin_mocha() -> ColorPalette {
         bright_cyan: "#94e2d5".into(),
         bright_white: "#a6adc8".into(),
         ..Default::default()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_host_simple() {
+        let (user, host, port) = parse_host_input("example.com");
+        assert_eq!(user, None);
+        assert_eq!(host, "example.com");
+        assert_eq!(port, None);
+    }
+
+    #[test]
+    fn parse_host_with_user() {
+        let (user, host, port) = parse_host_input("alice@example.com");
+        assert_eq!(user, Some("alice".into()));
+        assert_eq!(host, "example.com");
+        assert_eq!(port, None);
+    }
+
+    #[test]
+    fn parse_host_with_port() {
+        let (user, host, port) = parse_host_input("example.com:2222");
+        assert_eq!(user, None);
+        assert_eq!(host, "example.com");
+        assert_eq!(port, Some("2222".into()));
+    }
+
+    #[test]
+    fn parse_host_full() {
+        let (user, host, port) = parse_host_input("alice@example.com:2222");
+        assert_eq!(user, Some("alice".into()));
+        assert_eq!(host, "example.com");
+        assert_eq!(port, Some("2222".into()));
+    }
+
+    #[test]
+    fn parse_host_ipv6() {
+        let (user, host, port) = parse_host_input("[::1]:2222");
+        assert_eq!(user, None);
+        assert_eq!(host, "::1");
+        assert_eq!(port, Some("2222".into()));
     }
 }
