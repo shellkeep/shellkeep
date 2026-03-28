@@ -7,6 +7,7 @@
 //! Open source. Cross-platform. Zero server setup.
 
 mod config;
+mod ssh;
 mod state;
 
 use config::Config;
@@ -236,6 +237,54 @@ impl ShellKeep {
                 self.error = None;
                 self.update_title();
                 tracing::info!("opened tab {id}: {label}");
+            }
+            Err(e) => {
+                tracing::error!("failed to create terminal: {e}");
+                self.error = Some(e.to_string());
+            }
+        }
+    }
+
+    fn open_tab_with_tmux(&mut self, ssh_args: &[String], label: &str, tmux_session: &str) {
+        let id = self.next_id;
+        self.next_id += 1;
+
+        let tmux_cmd = format!("tmux new-session -A -s {tmux_session} || exec $SHELL");
+
+        let mut full_args = Vec::new();
+        full_args.extend_from_slice(ssh_args);
+        full_args.push("-t".to_string());
+        full_args.push(tmux_cmd);
+
+        let settings = Settings {
+            font: FontSettings {
+                size: self.config.terminal.font_size,
+                ..FontSettings::default()
+            },
+            theme: ThemeSettings {
+                color_pallete: Box::new(catppuccin_mocha()),
+            },
+            backend: BackendSettings {
+                program: "ssh".to_string(),
+                args: full_args,
+                ..Default::default()
+            },
+        };
+
+        match iced_term::Terminal::new(id, settings) {
+            Ok(terminal) => {
+                self.tabs.push(Tab {
+                    id,
+                    label: label.to_string(),
+                    terminal: Some(terminal),
+                    ssh_args: ssh_args.to_vec(),
+                    tmux_session: tmux_session.to_string(),
+                    dead: false,
+                });
+                self.active_tab = self.tabs.len() - 1;
+                self.error = None;
+                self.update_title();
+                tracing::info!("opened tab {id}: {label} (tmux: {tmux_session})");
             }
             Err(e) => {
                 tracing::error!("failed to create terminal: {e}");
@@ -474,7 +523,28 @@ impl ShellKeep {
                     port: self.port_input.clone(),
                 });
                 self.recent.save();
-                self.open_tab(&ssh_args, &label);
+
+                // Check for existing shellkeep tmux sessions on the server
+                let existing = ssh::tmux::list_remote_sessions(&ssh_args);
+                if existing.is_empty() {
+                    // No existing sessions — open one new tab
+                    self.open_tab(&ssh_args, &label);
+                } else {
+                    // Restore all existing sessions as tabs
+                    tracing::info!(
+                        "found {} existing tmux session(s): {:?}",
+                        existing.len(),
+                        existing
+                    );
+                    for (i, session_name) in existing.iter().enumerate() {
+                        let tab_label = if i == 0 {
+                            label.clone()
+                        } else {
+                            format!("Session {}", i + 1)
+                        };
+                        self.open_tab_with_tmux(&ssh_args, &tab_label, session_name);
+                    }
+                }
                 self.show_welcome = false;
             }
 
