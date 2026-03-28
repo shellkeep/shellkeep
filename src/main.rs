@@ -727,10 +727,19 @@ impl ShellKeep {
         let dead_count = self.tabs.iter().filter(|t| t.dead).count();
         let total = self.tabs.len();
 
-        let status_text = if dead_count > 0 {
-            format!("{total} tabs ({active_count} active, {dead_count} disconnected)")
+        let zoom_info = if (self.current_font_size - self.config.terminal.font_size).abs() > 0.1 {
+            format!("  {}pt", self.current_font_size)
         } else {
-            format!("{total} tab{}", if total == 1 { "" } else { "s" })
+            String::new()
+        };
+
+        let status_text = if dead_count > 0 {
+            format!("{total} tabs ({active_count} active, {dead_count} disconnected){zoom_info}")
+        } else {
+            format!(
+                "{total} tab{}{zoom_info}",
+                if total == 1 { "" } else { "s" }
+            )
         };
 
         let active_label = if let Some(tab) = self.tabs.get(self.active_tab) {
