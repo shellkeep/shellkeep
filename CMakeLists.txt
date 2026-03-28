@@ -189,8 +189,18 @@ if(SK_BUILD_QT_UI)
   find_package(Qt6 REQUIRED COMPONENTS Core Widgets Network)
   qt_standard_project_setup()
 
-  # QTermWidget — required for terminal emulation
-  find_package(qtermwidget6 REQUIRED)
+  # QTermWidget — required for terminal emulation on Linux
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    find_package(qtermwidget6 REQUIRED)
+    set(HAVE_QTERMWIDGET TRUE)
+  else()
+    find_package(qtermwidget6 QUIET)
+    if(qtermwidget6_FOUND)
+      set(HAVE_QTERMWIDGET TRUE)
+    else()
+      message(WARNING "QTermWidget not found — building without terminal emulation (TUI apps like htop will not render correctly)")
+    endif()
+  endif()
 
   set(SK_QT_UI_SOURCES
     src/main_qt.cpp
@@ -239,8 +249,10 @@ if(SK_BUILD_QT_UI)
     Qt6::Network
   )
 
-  target_link_libraries(shellkeep PRIVATE qtermwidget6)
-  target_compile_definitions(shellkeep PRIVATE HAVE_QTERMWIDGET=1)
+  if(HAVE_QTERMWIDGET)
+    target_link_libraries(shellkeep PRIVATE qtermwidget6)
+    target_compile_definitions(shellkeep PRIVATE HAVE_QTERMWIDGET=1)
+  endif()
 
   # macOS bundle
   if(APPLE)

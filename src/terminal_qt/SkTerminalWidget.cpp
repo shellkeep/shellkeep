@@ -22,6 +22,7 @@
 #include <QApplication>
 #include <QFontDatabase>
 #include <QKeyEvent>
+#include <QLabel>
 #include <QResizeEvent>
 #include <QScrollBar>
 #include <QVBoxLayout>
@@ -46,7 +47,22 @@ SkTerminalWidget::SkTerminalWidget(QWidget *parent)
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
 
+#ifdef HAVE_QTERMWIDGET
     setupQTermWidget();
+#else
+    /* Show error: QTermWidget is required for terminal emulation */
+    auto *errorLabel = new QLabel(
+        tr("Terminal emulation unavailable.\n\n"
+           "This build was compiled without QTermWidget.\n"
+           "Install libqtermwidget6-2-dev and rebuild,\n"
+           "or use the AppImage which bundles it."),
+        this);
+    errorLabel->setAlignment(Qt::AlignCenter);
+    errorLabel->setStyleSheet(
+        QStringLiteral("QLabel { background-color: #1e1e2e; color: #f38ba8;"
+                       " font-size: 14px; padding: 20px; }"));
+    layout->addWidget(errorLabel);
+#endif
 
     setFocusPolicy(Qt::StrongFocus);
 }
@@ -56,6 +72,7 @@ SkTerminalWidget::~SkTerminalWidget()
     disconnect();
 }
 
+#ifdef HAVE_QTERMWIDGET
 /* ------------------------------------------------------------------ */
 /* QTermWidget setup                                                   */
 /* ------------------------------------------------------------------ */
@@ -72,6 +89,7 @@ void SkTerminalWidget::setupQTermWidget()
 
     layout()->addWidget(m_qtermWidget);
 }
+#endif /* HAVE_QTERMWIDGET */
 
 /* ------------------------------------------------------------------ */
 /* SSH I/O connection                                                   */
@@ -129,11 +147,15 @@ void SkTerminalWidget::disconnect()
 
 void SkTerminalWidget::feed(const char *buf, int len)
 {
-    if (buf == nullptr || len <= 0 || m_qtermWidget == nullptr) {
+    if (buf == nullptr || len <= 0) {
         return;
     }
 
-    m_qtermWidget->sendText(QString::fromUtf8(buf, len));
+#ifdef HAVE_QTERMWIDGET
+    if (m_qtermWidget != nullptr) {
+        m_qtermWidget->sendText(QString::fromUtf8(buf, len));
+    }
+#endif
 }
 
 /* ------------------------------------------------------------------ */
@@ -207,9 +229,11 @@ void SkTerminalWidget::setTerminalFont(const QFont &font)
 {
     m_font = font;
 
+#ifdef HAVE_QTERMWIDGET
     if (m_qtermWidget != nullptr) {
         m_qtermWidget->setTerminalFont(font);
     }
+#endif
 
     recalculateSize();
 }
@@ -218,18 +242,19 @@ void SkTerminalWidget::setScrollbackLines(int lines)
 {
     m_scrollbackLines = lines;
 
+#ifdef HAVE_QTERMWIDGET
     if (m_qtermWidget != nullptr) {
         m_qtermWidget->setHistorySize(lines);
     }
+#endif
 }
 
 void SkTerminalWidget::setCursorShape(int shape)
 {
     m_cursorShape = shape;
 
+#ifdef HAVE_QTERMWIDGET
     if (m_qtermWidget != nullptr) {
-        /* QTermWidget uses Konsole key mode enum:
-         * 0=block, 1=underline, 2=ibeam. Map our values. */
         int konsoleShape = 0;
         switch (shape) {
         case 0: konsoleShape = 0; break; /* block */
@@ -239,6 +264,7 @@ void SkTerminalWidget::setCursorShape(int shape)
         }
         m_qtermWidget->setKeyboardCursorShape(konsoleShape);
     }
+#endif
 }
 
 /* ------------------------------------------------------------------ */
@@ -267,9 +293,11 @@ void SkTerminalWidget::toggleSearch()
         m_searchBar->hide();
         m_searchBar->clear();
 
+#ifdef HAVE_QTERMWIDGET
         if (m_qtermWidget != nullptr) {
             m_qtermWidget->setFocus();
         }
+#endif
     } else {
         m_searchBar->show();
         m_searchBar->raise();
@@ -328,10 +356,12 @@ void SkTerminalWidget::resizeEvent(QResizeEvent *event)
 
 void SkTerminalWidget::recalculateSize()
 {
+#ifdef HAVE_QTERMWIDGET
     if (m_qtermWidget != nullptr) {
         m_cols = m_qtermWidget->screenColumnsCount();
         m_rows = m_qtermWidget->screenLinesCount();
     }
+#endif
 }
 
 /* ------------------------------------------------------------------ */
@@ -477,10 +507,12 @@ void SkTerminalWidget::onSearchRequested(const QString &text)
         return;
     }
 
+#ifdef HAVE_QTERMWIDGET
     if (m_qtermWidget != nullptr) {
         m_qtermWidget->search(text, true, false);
         m_searchBar->setStatusText(tr("Searching..."));
     }
+#endif
 }
 
 void SkTerminalWidget::onSearchNext()
@@ -491,9 +523,11 @@ void SkTerminalWidget::onSearchNext()
         return;
     }
 
+#ifdef HAVE_QTERMWIDGET
     if (m_qtermWidget != nullptr) {
         m_qtermWidget->search(text, true, false);
     }
+#endif
 }
 
 void SkTerminalWidget::onSearchPrev()
@@ -504,9 +538,11 @@ void SkTerminalWidget::onSearchPrev()
         return;
     }
 
+#ifdef HAVE_QTERMWIDGET
     if (m_qtermWidget != nullptr) {
         m_qtermWidget->search(text, false, false);
     }
+#endif
 }
 
 void SkTerminalWidget::onSearchClosed()
@@ -516,9 +552,11 @@ void SkTerminalWidget::onSearchClosed()
         m_searchBar->clear();
     }
 
+#ifdef HAVE_QTERMWIDGET
     if (m_qtermWidget != nullptr) {
         m_qtermWidget->setFocus();
     }
+#endif
 }
 
 /* ------------------------------------------------------------------ */

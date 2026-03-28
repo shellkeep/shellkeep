@@ -20,7 +20,9 @@
 #include <QSocketNotifier>
 #include <QWidget>
 
+#ifdef HAVE_QTERMWIDGET
 #include <qtermwidget.h>
+#endif
 
 /* Include C backend headers. */
 #include "shellkeep/sk_config.h"
@@ -92,12 +94,16 @@ private Q_SLOTS:
 
 private:
     void recalculateSize();
+#ifdef HAVE_QTERMWIDGET
     void setupQTermWidget();
+#endif
     void sendToChannel(const QByteArray &buf);
 
     /* ---- Members ---- */
 
+#ifdef HAVE_QTERMWIDGET
     QTermWidget *m_qtermWidget = nullptr;
+#endif
 
     SkTerminalSearch *m_searchBar = nullptr;
     SkTerminalDead *m_deadOverlay = nullptr;

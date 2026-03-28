@@ -58,9 +58,10 @@ jobs:
             git ca-certificates curl \
             debhelper devscripts fakeroot \
             qt6-base-dev libgl-dev \
-            libqtermwidget6-2-dev qtermwidget6-data \
             libssh-dev libglib2.0-dev libjson-glib-dev libsystemd-dev \
             file libfuse2 patchelf
+          apt-get install -y --no-install-recommends \
+            libqtermwidget6-2-dev qtermwidget6-data 2>/dev/null || true
 
       - uses: actions/checkout@v6
 
@@ -134,7 +135,7 @@ jobs:
 
     steps:
       - name: Install dependencies
-        run: brew install cmake ninja pkg-config qt@6 libssh glib json-glib qtermwidget
+        run: brew install cmake ninja pkg-config qt@6 libssh glib json-glib
 
       - uses: actions/checkout@v6
 
@@ -185,7 +186,6 @@ jobs:
             mingw-w64-ucrt-x86_64-ninja
             mingw-w64-ucrt-x86_64-pkg-config
             mingw-w64-ucrt-x86_64-qt6-base
-            mingw-w64-ucrt-x86_64-qtermwidget
             mingw-w64-ucrt-x86_64-libssh
             mingw-w64-ucrt-x86_64-glib2
             mingw-w64-ucrt-x86_64-json-glib
