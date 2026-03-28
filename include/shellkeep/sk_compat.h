@@ -19,8 +19,10 @@
 #include <io.h>
 #include <time.h>
 
-/* mkdir() on Windows takes only 1 argument (no mode). */
-#define mkdir(path, mode) _mkdir(path)
+/* mkdir() on Windows takes only 1 argument (no mode).
+ * Use sk_mkdir_compat to silence -Wunused-parameter. */
+static inline int sk_mkdir_compat(const char *path, int mode) { (void)mode; return _mkdir(path); }
+#define mkdir(path, mode) sk_mkdir_compat(path, mode)
 
 /* O_CLOEXEC does not exist on Windows; handles are not inherited by default. */
 #ifndef O_CLOEXEC
