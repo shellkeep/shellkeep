@@ -140,10 +140,8 @@ enum Message {
     NewTab,
     ReconnectTab(usize),
     ConnectRecent(usize),
-    StartRenameTab(usize),
     RenameInputChanged(String),
     FinishRename,
-    CancelRename,
     HostInputChanged(String),
     PortInputChanged(String),
     UserInputChanged(String),
@@ -198,7 +196,6 @@ impl ShellKeep {
             },
             theme: ThemeSettings {
                 color_pallete: Box::new(catppuccin_mocha()),
-                ..Default::default()
             },
             backend: BackendSettings {
                 program: "ssh".to_string(),
@@ -260,7 +257,6 @@ impl ShellKeep {
             },
             theme: ThemeSettings {
                 color_pallete: Box::new(catppuccin_mocha()),
-                ..Default::default()
             },
             backend: BackendSettings {
                 program: "ssh".to_string(),
@@ -344,22 +340,22 @@ impl ShellKeep {
         match message {
             Message::TerminalEvent(iced_term::Event::BackendCall(id, cmd)) => {
                 let mut needs_title_update = false;
-                if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == id) {
-                    if let Some(ref mut terminal) = tab.terminal {
-                        let action = terminal.handle(iced_term::Command::ProxyToBackend(cmd));
-                        match action {
-                            iced_term::actions::Action::ChangeTitle(new_title) => {
-                                tab.label = new_title;
-                                needs_title_update = true;
-                            }
-                            iced_term::actions::Action::Shutdown => {
-                                tab.dead = true;
-                                tab.terminal = None;
-                                needs_title_update = true;
-                                tracing::info!("session ended for tab {id}");
-                            }
-                            _ => {}
+                if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == id)
+                    && let Some(ref mut terminal) = tab.terminal
+                {
+                    let action = terminal.handle(iced_term::Command::ProxyToBackend(cmd));
+                    match action {
+                        iced_term::actions::Action::ChangeTitle(new_title) => {
+                            tab.label = new_title;
+                            needs_title_update = true;
                         }
+                        iced_term::actions::Action::Shutdown => {
+                            tab.dead = true;
+                            tab.terminal = None;
+                            needs_title_update = true;
+                            tracing::info!("session ended for tab {id}");
+                        }
+                        _ => {}
                     }
                 }
                 if needs_title_update {
@@ -387,28 +383,18 @@ impl ShellKeep {
                 self.reconnect_tab(index);
             }
 
-            Message::StartRenameTab(index) => {
-                if index < self.tabs.len() {
-                    self.rename_input = self.tabs[index].label.clone();
-                    self.renaming_tab = Some(index);
-                }
-            }
-
             Message::RenameInputChanged(v) => {
                 self.rename_input = v;
             }
 
             Message::FinishRename => {
-                if let Some(index) = self.renaming_tab {
-                    if index < self.tabs.len() && !self.rename_input.trim().is_empty() {
-                        self.tabs[index].label = self.rename_input.trim().to_string();
-                        self.update_title();
-                    }
+                if let Some(index) = self.renaming_tab
+                    && index < self.tabs.len()
+                    && !self.rename_input.trim().is_empty()
+                {
+                    self.tabs[index].label = self.rename_input.trim().to_string();
+                    self.update_title();
                 }
-                self.renaming_tab = None;
-            }
-
-            Message::CancelRename => {
                 self.renaming_tab = None;
             }
 

@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub general: GeneralConfig,
@@ -57,15 +57,7 @@ pub struct SshConfig {
     pub reconnect_backoff_base: f64,
 }
 
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            general: GeneralConfig::default(),
-            terminal: TerminalConfig::default(),
-            ssh: SshConfig::default(),
-        }
-    }
-}
+// Default derived via #[serde(default)] + field-level Default impls
 
 impl Default for GeneralConfig {
     fn default() -> Self {
