@@ -16,19 +16,64 @@ use iced_term::settings::{BackendSettings, FontSettings, Settings, ThemeSettings
 use state::recent::{RecentConnection, RecentConnections};
 
 fn main() -> iced::Result {
+    let args: Vec<String> = std::env::args().collect();
+
+    // Handle --version and --help before initializing anything
+    for arg in &args[1..] {
+        match arg.as_str() {
+            "--version" | "-V" => {
+                println!("shellkeep {}", env!("CARGO_PKG_VERSION"));
+                std::process::exit(0);
+            }
+            "--help" | "-h" => {
+                println!(
+                    "shellkeep {} — SSH sessions that survive everything\n\n\
+                     Usage: shellkeep [user@]host [-p port] [-i identity] [-l user]\n\
+                     \n\
+                     Options:\n  \
+                       -p PORT       SSH port (default: 22)\n  \
+                       -i FILE       Identity file (private key)\n  \
+                       -l USER       Login user name\n  \
+                       --debug       Enable debug logging\n  \
+                       --version     Show version\n  \
+                       --help        Show this help\n\
+                     \n\
+                     Without arguments, opens the welcome screen.\n\
+                     https://github.com/shellkeep/shellkeep",
+                    env!("CARGO_PKG_VERSION")
+                );
+                std::process::exit(0);
+            }
+            _ => {}
+        }
+    }
+
+    let log_level = if args.iter().any(|a| a == "--debug") {
+        "debug"
+    } else {
+        "info"
+    };
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(log_level)),
         )
         .init();
 
-    let args: Vec<String> = std::env::args().collect();
-    let initial_ssh_args: Option<Vec<String>> = if args.len() >= 2 {
-        Some(args[1..].to_vec())
-    } else {
-        None
-    };
+    // Parse SSH args (skip --debug which is shellkeep-specific)
+    let ssh_relevant: Vec<String> = args[1..]
+        .iter()
+        .filter(|a| *a != "--debug")
+        .cloned()
+        .collect();
+
+    let initial_ssh_args: Option<Vec<String>> =
+        if ssh_relevant.is_empty() || ssh_relevant.iter().all(|a| a.starts_with('-')) {
+            None
+        } else {
+            Some(ssh_relevant)
+        };
 
     tracing::info!("shellkeep v{} starting", env!("CARGO_PKG_VERSION"));
 
