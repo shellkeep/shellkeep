@@ -14,10 +14,10 @@
 #     - shellkeep-noble-x86_64.tar.gz     — lightweight, needs system Qt6/GLib/libssh
 #     - shellkeep_0.x.0-1_amd64.deb       — for apt install (handles deps)
 #     (same for bookworm/Debian 12)
-#   macOS (experimental):
+#   macOS:
 #     - shellkeep-macos-arm64.zip          — app bundle
-#   Windows (experimental):
-#     - shellkeep-windows-x64.zip          — binary + Qt6 DLLs
+#   Windows:
+#     - shellkeep-windows-x64.zip          — binary + DLLs
 
 name: Package
 
@@ -143,7 +143,6 @@ jobs:
   macos:
     name: macOS
     runs-on: macos-14
-    continue-on-error: true
 
     steps:
       - name: Install dependencies
@@ -176,43 +175,56 @@ jobs:
           retention-days: 30
 
   # ----------------------------------------------------------------
-  # Windows: .exe + Qt6 DLLs as .zip
+  # Windows: .exe + DLLs as .zip (MSYS2/MinGW)
   # ----------------------------------------------------------------
 
   windows:
     name: Windows
     runs-on: windows-latest
-    continue-on-error: true
+
+    defaults:
+      run:
+        shell: msys2 {0}
 
     steps:
-      - name: Install dependencies
-        run: |
-          choco install cmake ninja -y
-          vcpkg install qt6-base libssh glib json-glib --triplet x64-windows
-        env:
-          VCPKG_ROOT: C:\vcpkg
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-pkg-config
+            mingw-w64-ucrt-x86_64-qt6-base
+            mingw-w64-ucrt-x86_64-libssh
+            mingw-w64-ucrt-x86_64-glib2
+            mingw-w64-ucrt-x86_64-json-glib
 
       - uses: actions/checkout@v6
 
       - name: Build
         run: |
-          cmake -B build -G Ninja `
-            -DCMAKE_BUILD_TYPE=Release `
-            -DSK_BUILD_QT_UI=ON `
-            -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DSK_BUILD_QT_UI=ON \
+            -DSK_BUILD_TESTS=OFF
           cmake --build build
 
       - name: Create .zip
+        shell: pwsh
         run: |
           mkdir dist
           Copy-Item build\shellkeep.exe dist\
-          windeployqt dist\shellkeep.exe 2>$null
+          # Bundle required DLLs
+          $msysRoot = "D:\a\_temp\msys64\ucrt64\bin"
+          $dlls = & ldd build/shellkeep.exe 2>$null | Select-String "ucrt64" | ForEach-Object { ($_ -split '\s+')[2] }
+          foreach ($dll in $dlls) { Copy-Item $dll dist\ -ErrorAction SilentlyContinue }
           Compress-Archive -Path dist\* -DestinationPath dist\shellkeep-windows-x64.zip
-        continue-on-error: true
 
       - name: Upload package
         uses: actions/upload-artifact@v7
         with:
           name: windows
-          path: dist/
+          path: dist/shellkeep-windows-x64.zip
           retention-days: 30

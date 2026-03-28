@@ -169,30 +169,43 @@ jobs:
     name: Windows
     runs-on: windows-latest
 
+    defaults:
+      run:
+        shell: msys2 {0}
+
     steps:
-      - name: Install dependencies
-        run: |
-          choco install cmake ninja -y
-          git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
-          C:\vcpkg\bootstrap-vcpkg.bat
-          C:\vcpkg\vcpkg install qt6-base libssh glib json-glib --triplet x64-windows
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-pkg-config
+            mingw-w64-ucrt-x86_64-qt6-base
+            mingw-w64-ucrt-x86_64-libssh
+            mingw-w64-ucrt-x86_64-glib2
+            mingw-w64-ucrt-x86_64-json-glib
 
       - uses: actions/checkout@v6
 
       - name: Build
         run: |
-          cmake -B build -G Ninja `
-            -DCMAKE_BUILD_TYPE=Release `
-            -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake `
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
             -DSK_BUILD_QT_UI=ON
           cmake --build build
 
       - name: Create .zip
+        shell: pwsh
         run: |
           mkdir dist
           Copy-Item build\shellkeep.exe dist\
-          windeployqt dist\shellkeep.exe 2>$null
-          Compress-Archive -Path dist\* -DestinationPath dist\shellkeep-$env:GITHUB_REF_NAME-windows.zip
+          $msysBin = "D:\a\_temp\msys64\ucrt64\bin"
+          $dlls = & "$msysBin\ldd.exe" build/shellkeep.exe 2>$null | Select-String "ucrt64" | ForEach-Object { ($_ -split '\s+')[2] }
+          foreach ($dll in $dlls) { Copy-Item $dll dist\ -ErrorAction SilentlyContinue }
+          Compress-Archive -Path dist\* -DestinationPath "dist/shellkeep-$env:GITHUB_REF_NAME-windows.zip"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
@@ -207,6 +220,7 @@ jobs:
 
   publish:
     name: Publish GitHub Release
+    if: always()
     needs: [linux, macos, windows]
     runs-on: ubuntu-latest
 

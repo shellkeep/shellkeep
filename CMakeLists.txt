@@ -29,17 +29,23 @@ option(SK_JOURNALD     "Enable journald logging"             OFF)
 # Prevent GLib 'signals' field from conflicting with Qt 'signals' keyword
 add_compile_definitions(QT_NO_KEYWORDS)
 
-add_compile_options(
-  -Wall -Wextra -Werror
-  -Wformat=2 -Wformat-security
-  -Wnull-dereference -Wstack-protector
-  -Wshadow -Wpointer-arith -Wcast-align
-  -Wwrite-strings -Wimplicit-fallthrough
-  -fstack-protector-strong
-  -D_DEFAULT_SOURCE
-)
+if(MSVC)
+  add_compile_options(/W4 /WX)
+else()
+  add_compile_options(
+    -Wall -Wextra -Werror
+    -Wformat=2 -Wformat-security
+    -Wnull-dereference -Wstack-protector
+    -Wshadow -Wpointer-arith -Wcast-align
+    -Wwrite-strings -Wimplicit-fallthrough
+    -fstack-protector-strong
+  )
+  if(NOT APPLE)
+    add_compile_options(-D_DEFAULT_SOURCE)
+  endif()
+endif()
 
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+if(CMAKE_BUILD_TYPE STREQUAL "Debug" AND NOT MSVC)
   add_compile_options(-fsanitize=address -fsanitize=undefined -fno-omit-frame-pointer)
   add_link_options(-fsanitize=address -fsanitize=undefined)
 endif()
@@ -155,9 +161,10 @@ target_link_libraries(shellkeep_core PUBLIC
   PkgConfig::GIO
   PkgConfig::JSON_GLIB
   PkgConfig::LIBSSH
-  m
-  pthread
 )
+if(UNIX)
+  target_link_libraries(shellkeep_core PUBLIC m pthread)
+endif()
 
 if(SYSTEMD_FOUND)
   target_link_libraries(shellkeep_core PUBLIC PkgConfig::SYSTEMD)
