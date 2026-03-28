@@ -160,11 +160,9 @@ private:
     QByteArray m_identityUtf8;
     QByteArray m_proxyUtf8;
 
-    /* Global instance pointer for signal handlers. */
-    static std::atomic<SkConnectFlow *> s_activeFlow;
-#ifndef _WIN32
-    friend void sk_qt_signal_handler(int);
-#endif
+    /* Global instance pointer for signal handlers.
+     * Public so signal/console handlers can access it without friend decls. */
+    public: static std::atomic<SkConnectFlow *> s_activeFlow; private:
 };
 
 #endif /* SK_CONNECT_FLOW_H */
