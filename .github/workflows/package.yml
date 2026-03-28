@@ -9,14 +9,15 @@
 #   Builds downloadable packages for every platform.
 #
 # What it produces (download from Actions tab):
-#   - shellkeep-noble.AppImage        — portable Linux binary, no deps needed
-#   - shellkeep-bookworm.AppImage     — same, built on Debian 12
-#   - shellkeep-noble.tar.gz          — lightweight Linux binary (needs system Qt6/GLib)
-#   - shellkeep-bookworm.tar.gz       — same, built on Debian 12
-#   - shellkeep-noble.deb             — Debian/Ubuntu package (apt handles deps)
-#   - shellkeep-bookworm.deb          — same, for Debian 12
-#   - shellkeep-macos.zip             — macOS app bundle
-#   - shellkeep-windows.zip           — Windows binary + Qt6 DLLs
+#   Linux:
+#     - shellkeep-noble-x86_64.AppImage   — portable, no deps needed (recommended)
+#     - shellkeep-noble-x86_64.tar.gz     — lightweight, needs system Qt6/GLib/libssh
+#     - shellkeep_0.x.0-1_amd64.deb       — for apt install (handles deps)
+#     (same for bookworm/Debian 12)
+#   macOS (experimental):
+#     - shellkeep-macos-arm64.zip          — app bundle
+#   Windows (experimental):
+#     - shellkeep-windows-x64.zip          — binary + Qt6 DLLs
 
 name: Package
 
@@ -79,8 +80,8 @@ jobs:
 
       - name: Build .deb
         run: |
-          dpkg-buildpackage -us -uc -b 2>&1 && cp ../*.deb dist/ 2>/dev/null || true
           mkdir -p dist
+          dpkg-buildpackage -us -uc -b 2>&1 || true
           cp ../*.deb dist/ 2>/dev/null || true
 
       # -- Portable tarball (small, tells you what deps are missing) --
@@ -106,22 +107,20 @@ jobs:
         run: |
           DESTDIR=$(pwd)/AppDir cmake --install build
           ARCH=$(uname -m)
+          mkdir -p dist
 
-          curl -fsSL -o linuxdeploy "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${ARCH}.AppImage"
-          curl -fsSL -o linuxdeploy-plugin-qt "https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-${ARCH}.AppImage"
-          chmod +x linuxdeploy linuxdeploy-plugin-qt
+          # Download linuxdeploy and Qt plugin (static builds, not AppImages)
+          curl -fsSL -o linuxdeploy-${ARCH}.AppImage \
+            "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${ARCH}.AppImage"
+          curl -fsSL -o linuxdeploy-plugin-qt-${ARCH}.AppImage \
+            "https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-${ARCH}.AppImage"
+          chmod +x linuxdeploy-${ARCH}.AppImage linuxdeploy-plugin-qt-${ARCH}.AppImage
 
           # Containers lack FUSE — extract and run directly
-          ./linuxdeploy --appimage-extract >/dev/null 2>&1
-          mv squashfs-root linuxdeploy-extracted
-          ./linuxdeploy-plugin-qt --appimage-extract >/dev/null 2>&1
-          mv squashfs-root linuxdeploy-plugin-qt-extracted
-          export PATH="$(pwd)/linuxdeploy-plugin-qt-extracted/usr/bin:$PATH"
-
-          export QMAKE=$(which qmake6 2>/dev/null || which qmake 2>/dev/null)
-          export OUTPUT="dist/shellkeep-${{ matrix.codename }}-${ARCH}.AppImage"
-
-          ./linuxdeploy-extracted/AppRun \
+          APPIMAGE_EXTRACT_AND_RUN=1 \
+          QMAKE="$(which qmake6 2>/dev/null || which qmake 2>/dev/null)" \
+          OUTPUT="dist/shellkeep-${{ matrix.codename }}-${ARCH}.AppImage" \
+          ./linuxdeploy-${ARCH}.AppImage \
             --appdir AppDir \
             --desktop-file AppDir/usr/share/applications/shellkeep.desktop \
             --icon-file AppDir/usr/share/icons/hicolor/256x256/apps/shellkeep.png \
