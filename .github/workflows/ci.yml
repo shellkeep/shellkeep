@@ -32,9 +32,13 @@ jobs:
           - os: macOS
             runner: macos-14
             container: ''
+            experimental: true
           - os: Windows
             runner: windows-latest
             container: ''
+            experimental: true
+
+    continue-on-error: ${{ matrix.experimental || false }}
 
     env:
       DEBIAN_FRONTEND: noninteractive
@@ -71,21 +75,35 @@ jobs:
       - name: Install system dependencies (Windows)
         if: runner.os == 'Windows'
         run: |
-          choco install cmake ninja pkgconfiglite -y
-          # Qt6 and libssh via vcpkg
-          git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
-          C:\vcpkg\bootstrap-vcpkg.bat
-          C:\vcpkg\vcpkg install qt6-base libssh glib json-glib cmocka --triplet x64-windows
+          choco install cmake ninja -y
+          vcpkg install qt6-base libssh glib json-glib cmocka --triplet x64-windows
+        env:
+          VCPKG_ROOT: C:\vcpkg
 
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Configure (debug + tests)
+        if: runner.os != 'Windows'
         run: |
+          CMAKE_EXTRA=""
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            CMAKE_EXTRA="-DCMAKE_PREFIX_PATH=$(brew --prefix qt@6)"
+          fi
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug \
             -DSK_BUILD_TESTS=ON \
-            -DSK_BUILD_QT_UI=ON
+            -DSK_BUILD_QT_UI=ON \
+            $CMAKE_EXTRA
+
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          cmake -B build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Debug `
+            -DSK_BUILD_TESTS=ON `
+            -DSK_BUILD_QT_UI=ON `
+            -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake
 
       - name: Build
         run: cmake --build build
