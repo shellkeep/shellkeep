@@ -11,6 +11,7 @@
  * These tests are skipped if the SSH server is not reachable.
  */
 
+#include "shellkeep/sk_compat.h"
 #include "shellkeep/sk_log.h"
 #include "shellkeep/sk_session.h"
 #include "shellkeep/sk_ssh.h"
