@@ -990,6 +990,11 @@ impl ShellKeep {
                 .into()
         };
 
+        let shortcuts_hint =
+            text("Ctrl+Shift+T new tab  |  Ctrl+Shift+W close  |  F2 rename  |  Ctrl+=/- zoom")
+                .size(10)
+                .color(Color::from_rgb8(0x58, 0x5b, 0x70));
+
         let form = column![
             logo,
             title,
@@ -1003,6 +1008,8 @@ impl ShellKeep {
             error_text,
             Space::new().height(12),
             recent_section,
+            Space::new().height(20),
+            shortcuts_hint,
         ]
         .spacing(12)
         .align_x(iced::Alignment::Center)
