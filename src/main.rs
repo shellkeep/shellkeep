@@ -178,7 +178,12 @@ impl ShellKeep {
         };
 
         if let Some(ssh_args) = initial_ssh_args {
-            let label = ssh_args.join(" ");
+            // Use just the host part as label (first non-flag arg)
+            let label = ssh_args
+                .iter()
+                .find(|a| !a.starts_with('-'))
+                .cloned()
+                .unwrap_or_else(|| ssh_args.join(" "));
             app.open_tab(&ssh_args, &label);
         }
 
@@ -379,7 +384,8 @@ impl ShellKeep {
                 // Open new session to the same server as the current/last tab
                 if let Some(tab) = self.tabs.last() {
                     let ssh_args = tab.ssh_args.clone();
-                    let label = tab.label.clone();
+                    let n = self.tabs.len() + 1;
+                    let label = format!("Session {n}");
                     self.open_tab(&ssh_args, &label);
                 } else {
                     self.show_welcome = true;
@@ -417,7 +423,10 @@ impl ShellKeep {
                     return Task::none();
                 }
                 let ssh_args = self.build_ssh_args();
-                let label = ssh_args.join(" ");
+                let label = ssh_args
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| ssh_args.join(" "));
                 self.recent.push(RecentConnection {
                     label: label.clone(),
                     ssh_args: ssh_args.clone(),
@@ -449,7 +458,8 @@ impl ShellKeep {
                     {
                         if let Some(tab) = self.tabs.last() {
                             let ssh_args = tab.ssh_args.clone();
-                            let label = tab.label.clone();
+                            let n = self.tabs.len() + 1;
+                            let label = format!("Session {n}");
                             self.open_tab(&ssh_args, &label);
                         } else {
                             self.show_welcome = true;
