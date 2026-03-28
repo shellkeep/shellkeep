@@ -376,7 +376,14 @@ impl ShellKeep {
             }
 
             Message::NewTab => {
-                self.show_welcome = true;
+                // Open new session to the same server as the current/last tab
+                if let Some(tab) = self.tabs.last() {
+                    let ssh_args = tab.ssh_args.clone();
+                    let label = tab.label.clone();
+                    self.open_tab(&ssh_args, &label);
+                } else {
+                    self.show_welcome = true;
+                }
             }
 
             Message::ReconnectTab(index) => {
@@ -435,12 +442,18 @@ impl ShellKeep {
 
             Message::KeyEvent(event) => {
                 if let keyboard::Event::KeyPressed { key, modifiers, .. } = event {
-                    // Ctrl+Shift+T — new tab
+                    // Ctrl+Shift+T — new tab (same server)
                     if modifiers.control()
                         && modifiers.shift()
                         && key == keyboard::Key::Character("t".into())
                     {
-                        self.show_welcome = true;
+                        if let Some(tab) = self.tabs.last() {
+                            let ssh_args = tab.ssh_args.clone();
+                            let label = tab.label.clone();
+                            self.open_tab(&ssh_args, &label);
+                        } else {
+                            self.show_welcome = true;
+                        }
                     }
                     // Ctrl+Shift+W — close current tab
                     if modifiers.control()
