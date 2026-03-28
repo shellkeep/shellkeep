@@ -141,22 +141,22 @@ configure_tcp_socket(int fd)
 
   /* TCP_NODELAY — disable Nagle for low-latency interactive I/O. */
   int flag = 1;
-  setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
+  setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (const char *)&flag, sizeof(flag));
 
   /* TCP keepalive as secondary defense layer. */
-  setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &flag, sizeof(flag));
+  setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, (const char *)&flag, sizeof(flag));
 
 #ifdef TCP_KEEPIDLE
   int idle = 15;
-  setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(idle));
+  setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, (const char *)&idle, sizeof(idle));
 #endif
 #ifdef TCP_KEEPINTVL
   int intvl = 5;
-  setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof(intvl));
+  setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, (const char *)&intvl, sizeof(intvl));
 #endif
 #ifdef TCP_KEEPCNT
   int cnt = 3;
-  setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &cnt, sizeof(cnt));
+  setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, (const char *)&cnt, sizeof(cnt));
 #endif
 }
 

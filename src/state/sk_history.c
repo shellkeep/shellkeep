@@ -31,7 +31,8 @@
 #ifdef _WIN32
 #include <io.h>
 #define fsync(fd) _commit(fd)
-#define fchmod(fd, mode) ((void)(fd), (void)(mode), 0)
+static inline int sk_fchmod_noop(int fd, int mode) { (void)fd; (void)mode; return 0; }
+#define fchmod(fd, mode) sk_fchmod_noop(fd, mode)
 #endif
 
 /* ---- Helpers ------------------------------------------------------------ */

@@ -36,7 +36,8 @@
 #include <unistd.h>
 
 #ifdef _WIN32
-#define fchmod(fd, mode) ((void)(fd), (void)(mode), 0)
+static inline int sk_fchmod_noop(int fd, int mode) { (void)fd; (void)mode; return 0; }
+#define fchmod(fd, mode) sk_fchmod_noop(fd, mode)
 #endif
 
 #ifdef HAVE_SYSTEMD

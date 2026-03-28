@@ -19,8 +19,8 @@
 
 #ifdef _WIN32
 #include <windows.h>
-#define mlock(addr, len) VirtualLock((addr), (len))
-#define munlock(addr, len) VirtualUnlock((addr), (len))
+#define mlock(addr, len) VirtualLock((LPVOID)(addr), (len))
+#define munlock(addr, len) VirtualUnlock((LPVOID)(addr), (len))
 static void explicit_bzero(void *s, size_t n) { SecureZeroMemory(s, n); }
 #else
 #include <sys/mman.h>
