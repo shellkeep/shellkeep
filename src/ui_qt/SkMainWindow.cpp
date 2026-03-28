@@ -363,7 +363,7 @@ void SkMainWindow::removeTab(int index)
 
 int SkMainWindow::tabCount() const
 {
-    return m_tabs->count();
+    return m_tabs ? m_tabs->count() : 0;
 }
 
 int SkMainWindow::activeTab() const

@@ -378,32 +378,39 @@ SkBridgeWindow sk_qt_window_new(SkUiHandle ui, const char *title, int x, int y,
     if (!bridge)
         return nullptr;
 
-    /* Reuse the primary window for the first window request.
-     * This ensures tabs from the connect flow land in the same
-     * window that main() created and showed. */
-    auto *primary = bridge->primaryWindow();
-    auto primaryHandle = static_cast<SkBridgeWindow>(primary);
-    if (!bridge->lookupWindow(primaryHandle) || bridge->lookupWindow(primaryHandle)->tabCount() == 0) {
-        /* Primary window has no tabs yet — reuse it. */
-        if (title)
-            primary->setWindowTitle(QString::fromUtf8(title));
-        if (width > 0 && height > 0)
-            primary->resize(width, height);
-        if (x >= 0 && y >= 0)
-            primary->move(x, y);
-        bridge->registerWindow(primaryHandle, primary);
-        return primaryHandle;
-    }
+    /* Must run on Qt main thread — may be called from GLib async callbacks */
+    SkBridgeWindow result = nullptr;
+    QString windowTitle = title ? QString::fromUtf8(title) : QString();
 
-    /* Primary already in use — create additional window. */
-    auto *win = new SkMainWindow(
-        title ? QString::fromUtf8(title) : QString(),
-        x, y, width, height);
-    win->setStyleSheet(SkStyleSheet::get());
+    runOnMainThread([bridge, windowTitle, x, y, width, height, &result]() {
+        /* Reuse the primary window for the first window request.
+         * This ensures tabs from the connect flow land in the same
+         * window that main() created and showed. */
+        auto *primary = bridge->primaryWindow();
+        auto primaryHandle = static_cast<SkBridgeWindow>(primary);
+        if (!bridge->lookupWindow(primaryHandle) || bridge->lookupWindow(primaryHandle)->tabCount() == 0) {
+            /* Primary window has no tabs yet — reuse it. */
+            if (!windowTitle.isEmpty())
+                primary->setWindowTitle(windowTitle);
+            if (width > 0 && height > 0)
+                primary->resize(width, height);
+            if (x >= 0 && y >= 0)
+                primary->move(x, y);
+            bridge->registerWindow(primaryHandle, primary);
+            result = primaryHandle;
+            return;
+        }
 
-    auto handle = static_cast<SkBridgeWindow>(win);
-    bridge->registerWindow(handle, win);
-    return handle;
+        /* Primary already in use — create additional window. */
+        auto *win = new SkMainWindow(windowTitle, x, y, width, height);
+        win->setStyleSheet(SkStyleSheet::get());
+
+        auto handle = static_cast<SkBridgeWindow>(win);
+        bridge->registerWindow(handle, win);
+        result = handle;
+    });
+
+    return result;
 }
 
 void sk_qt_window_show(SkBridgeWindow win)
@@ -411,12 +418,14 @@ void sk_qt_window_show(SkBridgeWindow win)
     auto *bridge = SkUiBridgeQt::instance();
     if (!bridge)
         return;
-    auto *window = bridge->lookupWindow(win);
-    if (window) {
-        window->show();
-        window->raise();
-        window->activateWindow();
-    }
+    runOnMainThread([bridge, win]() {
+        auto *window = bridge->lookupWindow(win);
+        if (window) {
+            window->show();
+            window->raise();
+            window->activateWindow();
+        }
+    });
 }
 
 void sk_qt_window_free(SkBridgeWindow win)
@@ -424,11 +433,13 @@ void sk_qt_window_free(SkBridgeWindow win)
     auto *bridge = SkUiBridgeQt::instance();
     if (!bridge)
         return;
-    auto *window = bridge->lookupWindow(win);
-    if (window) {
-        bridge->unregisterWindow(win);
-        window->deleteLater();
-    }
+    runOnMainThread([bridge, win]() {
+        auto *window = bridge->lookupWindow(win);
+        if (window) {
+            bridge->unregisterWindow(win);
+            window->deleteLater();
+        }
+    });
 }
 
 SkBridgeTerminal sk_qt_terminal_new(SkUiHandle /*ui*/, const char * /*font_family*/,
@@ -526,18 +537,20 @@ void sk_qt_tab_set_indicator(SkBridgeTab tab, SkBridgeConnIndicator indicator)
     if (!bridge)
         return;
 
-    /* Find the tab index by widget pointer */
-    auto *widget = static_cast<QWidget *>(tab);
-    auto *win = bridge->primaryWindow();
-    if (!win)
-        return;
+    /* Must run on Qt main thread — this is called from GLib async callbacks */
+    runOnMainThread([bridge, tab, indicator]() {
+        auto *widget = static_cast<QWidget *>(tab);
+        auto *win = bridge->primaryWindow();
+        if (!win)
+            return;
 
-    for (int i = 0; i < win->tabCount(); ++i) {
-        if (win->tabWidget(i) == widget) {
-            win->setTabIndicator(i, indicator);
-            break;
+        for (int i = 0; i < win->tabCount(); ++i) {
+            if (win->tabWidget(i) == widget) {
+                win->setTabIndicator(i, indicator);
+                break;
+            }
         }
-    }
+    });
 }
 
 void sk_qt_tab_set_dead(SkBridgeTab tab, bool dead)
@@ -548,17 +561,20 @@ void sk_qt_tab_set_dead(SkBridgeTab tab, bool dead)
     if (!bridge)
         return;
 
-    auto *widget = static_cast<QWidget *>(tab);
-    auto *win = bridge->primaryWindow();
-    if (!win)
-        return;
+    /* Must run on Qt main thread — this is called from GLib async callbacks */
+    runOnMainThread([bridge, tab, dead]() {
+        auto *widget = static_cast<QWidget *>(tab);
+        auto *win = bridge->primaryWindow();
+        if (!win)
+            return;
 
-    for (int i = 0; i < win->tabCount(); ++i) {
-        if (win->tabWidget(i) == widget) {
-            win->setTabDead(i, dead);
-            break;
+        for (int i = 0; i < win->tabCount(); ++i) {
+            if (win->tabWidget(i) == widget) {
+                win->setTabDead(i, dead);
+                break;
+            }
         }
-    }
+    });
 }
 
 /* -- Toast ---------------------------------------------------------- */
