@@ -28,6 +28,12 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#ifdef _WIN32
+#include <io.h>
+#define fsync(fd) _commit(fd)
+#define fchmod(fd, mode) (0) /* no-op on Windows */
+#endif
+
 /* ---- Helpers ------------------------------------------------------------ */
 
 /**
@@ -56,12 +62,20 @@ history_file_path(const char *session_uuid, const char *base_dir)
   char *path = g_build_filename(base_dir, filename, NULL);
 
   /* NFR-SEC-06: verify resolved path is within base_dir. */
+#ifdef _WIN32
+  g_autofree char *real_base = g_strdup(base_dir);
+#else
   g_autofree char *real_base = realpath(base_dir, NULL);
+#endif
   if (real_base != NULL)
   {
     /* The file may not exist yet, so check directory component. */
     g_autofree char *dir_part = g_path_get_dirname(path);
+#ifdef _WIN32
+    g_autofree char *real_dir = g_strdup(dir_part);
+#else
     g_autofree char *real_dir = realpath(dir_part, NULL);
+#endif
     if (real_dir != NULL && strncmp(real_dir, real_base, strlen(real_base)) != 0)
     {
       g_warning("sk_history: path traversal detected for '%s'", session_uuid);

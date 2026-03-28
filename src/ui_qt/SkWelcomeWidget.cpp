@@ -87,6 +87,7 @@ void SkWelcomeWidget::setupUi()
     m_portInput->setValue(22);
     m_portInput->setMinimumHeight(40);
     m_portInput->setFixedWidth(80);
+    m_portInput->setButtonSymbols(QAbstractSpinBox::NoButtons);
     QFont portFont = m_portInput->font();
     portFont.setPointSize(14);
     m_portInput->setFont(portFont);

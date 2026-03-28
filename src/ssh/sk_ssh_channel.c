@@ -181,7 +181,10 @@ int
 sk_ssh_channel_get_exit_status(SkSshChannel *channel)
 {
   g_return_val_if_fail(channel != NULL, -1);
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
   return ssh_channel_get_exit_status(channel->channel);
+#pragma GCC diagnostic pop
 }
 
 /* ------------------------------------------------------------------ */

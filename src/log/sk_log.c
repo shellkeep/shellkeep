@@ -31,6 +31,10 @@
 #include <time.h>
 #include <unistd.h>
 
+#ifdef _WIN32
+#define fchmod(fd, mode) (0) /* no-op on Windows */
+#endif
+
 #ifdef HAVE_SYSTEMD
 #include <syslog.h>
 #include <systemd/sd-journal.h>

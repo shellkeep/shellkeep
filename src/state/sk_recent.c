@@ -27,6 +27,11 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#ifdef _WIN32
+#include <io.h>
+#define fsync(fd) _commit(fd)
+#endif
+
 /* ---- Helpers ------------------------------------------------------------ */
 
 /**

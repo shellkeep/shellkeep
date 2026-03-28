@@ -226,12 +226,19 @@ SkMainWindow::~SkMainWindow()
 void SkMainWindow::init()
 {
     setWindowTitle(QStringLiteral("shellkeep"));
-    setupTabWidget();
     setupShortcuts();
+}
+
+void SkMainWindow::ensureTabWidget()
+{
+    setupTabWidget();
 }
 
 void SkMainWindow::setupTabWidget()
 {
+    if (m_tabs)
+        return;
+
     m_tabBar = new SkTabBar(this);
     m_tabs = new SkTabWidget(this);
     m_tabs->setCustomTabBar(m_tabBar);
@@ -258,6 +265,7 @@ void SkMainWindow::setupShortcuts()
     /* Ctrl+Shift+W: close tab */
     auto *closeTab = new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_W), this);
     connect(closeTab, &QShortcut::activated, this, [this]() {
+        if (!m_tabs) return;
         int idx = m_tabs->currentIndex();
         if (idx >= 0)
             onTabCloseRequested(idx);
@@ -274,6 +282,7 @@ void SkMainWindow::setupShortcuts()
     /* Ctrl+PgUp: previous tab */
     auto *prevTab = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_PageUp), this);
     connect(prevTab, &QShortcut::activated, this, [this]() {
+        if (!m_tabs) return;
         int idx = m_tabs->currentIndex();
         if (idx > 0)
             m_tabs->setCurrentIndex(idx - 1);
@@ -282,6 +291,7 @@ void SkMainWindow::setupShortcuts()
     /* Ctrl+PgDn: next tab */
     auto *nextTab = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_PageDown), this);
     connect(nextTab, &QShortcut::activated, this, [this]() {
+        if (!m_tabs) return;
         int idx = m_tabs->currentIndex();
         if (idx < m_tabs->count() - 1)
             m_tabs->setCurrentIndex(idx + 1);
@@ -290,52 +300,52 @@ void SkMainWindow::setupShortcuts()
     /* Ctrl+Shift+C: copy */
     auto *copy = new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C), this);
     connect(copy, &QShortcut::activated, this, [this]() {
+        if (!m_tabs) return;
         QWidget *w = m_tabs->currentWidget();
-        if (w) {
-            /* Forward to terminal widget's copy method via meta-call */
+        if (w)
             QMetaObject::invokeMethod(w, "copyClipboard", Qt::DirectConnection);
-        }
     });
 
     /* Ctrl+Shift+V: paste */
     auto *paste = new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_V), this);
     connect(paste, &QShortcut::activated, this, [this]() {
+        if (!m_tabs) return;
         QWidget *w = m_tabs->currentWidget();
-        if (w) {
+        if (w)
             QMetaObject::invokeMethod(w, "pasteClipboard", Qt::DirectConnection);
-        }
     });
 
     /* Ctrl+Shift+A: copy all */
     auto *copyAll = new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_A), this);
     connect(copyAll, &QShortcut::activated, this, [this]() {
+        if (!m_tabs) return;
         QWidget *w = m_tabs->currentWidget();
-        if (w) {
+        if (w)
             QMetaObject::invokeMethod(w, "copyAll", Qt::DirectConnection);
-        }
     });
 
     /* Ctrl+=: zoom in */
     auto *zoomIn = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_Equal), this);
     connect(zoomIn, &QShortcut::activated, this, [this]() {
+        if (!m_tabs) return;
         QWidget *w = m_tabs->currentWidget();
-        if (w) {
+        if (w)
             QMetaObject::invokeMethod(w, "zoomIn", Qt::DirectConnection);
-        }
     });
 
     /* Ctrl+-: zoom out */
     auto *zoomOut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_Minus), this);
     connect(zoomOut, &QShortcut::activated, this, [this]() {
+        if (!m_tabs) return;
         QWidget *w = m_tabs->currentWidget();
-        if (w) {
+        if (w)
             QMetaObject::invokeMethod(w, "zoomOut", Qt::DirectConnection);
-        }
     });
 
     /* F2: rename current tab */
     auto *rename = new QShortcut(QKeySequence(Qt::Key_F2), this);
     connect(rename, &QShortcut::activated, this, [this]() {
+        if (!m_tabs || !m_tabBar) return;
         int idx = m_tabs->currentIndex();
         if (idx >= 0)
             m_tabBar->beginRename(idx);
@@ -344,6 +354,7 @@ void SkMainWindow::setupShortcuts()
 
 int SkMainWindow::addTab(QWidget *terminalWidget, const QString &title)
 {
+    ensureTabWidget();
     int index = m_tabs->addTab(terminalWidget, title);
     m_tabs->setCurrentIndex(index);
     return index;

@@ -18,6 +18,11 @@
 #include <string.h>
 #include <sys/mman.h>
 
+/* macOS does not provide explicit_bzero(); use memset_s instead. */
+#ifdef __APPLE__
+#define explicit_bzero(s, n) memset_s((s), (n), 0, (n))
+#endif
+
 /**
  * Securely zero and free a password string.
  * NFR-SEC-09: mlock() prevents swap, explicit_bzero() zeros after use.

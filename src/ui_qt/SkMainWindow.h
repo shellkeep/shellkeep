@@ -145,6 +145,7 @@ protected:
 
 private:
     void init();
+    void ensureTabWidget();
     void setupShortcuts();
     void setupTabWidget();
     void onTabCloseRequested(int index);
