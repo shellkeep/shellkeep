@@ -30,6 +30,11 @@
 #include <time.h>
 #include <unistd.h>
 
+#ifdef _WIN32
+#include <io.h>
+#define fsync(fd) _commit(fd)
+#endif
+
 /* ---- Error Quark -------------------------------------------------------- */
 
 G_DEFINE_QUARK(sk - state - error - quark, sk_state_error)
@@ -911,8 +916,13 @@ sk_state_save_local_cache(const SkStateFile *state, const char *host_fingerprint
 
   /* NFR-SEC-06: verify resolved path is within data directory. */
   g_autofree char *data_dir = sk_paths_data_dir();
+#ifdef _WIN32
+  g_autofree char *real_data = g_strdup(data_dir);
+  g_autofree char *real_cache = g_strdup(cache_dir);
+#else
   g_autofree char *real_data = realpath(data_dir, NULL);
   g_autofree char *real_cache = realpath(cache_dir, NULL);
+#endif
   if (real_data != NULL && real_cache != NULL)
   {
     if (strncmp(real_cache, real_data, strlen(real_data)) != 0)

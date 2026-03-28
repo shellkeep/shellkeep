@@ -40,7 +40,7 @@ else()
     -Wwrite-strings -Wimplicit-fallthrough
     -fstack-protector-strong
   )
-  if(NOT APPLE)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_compile_options(-D_DEFAULT_SOURCE)
   endif()
 endif()

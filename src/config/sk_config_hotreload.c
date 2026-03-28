@@ -11,6 +11,9 @@
  * Uses Linux inotify watching for IN_CLOSE_WRITE events, integrated
  * into the GLib main loop via GIOChannel. A 500ms debounce timer
  * coalesces rapid successive writes.
+ *
+ * On non-Linux platforms, stub implementations are provided that log
+ * a warning and return NULL / no-op.
  */
 
 #include "shellkeep/sk_config.h"
@@ -18,8 +21,17 @@
 
 #include <errno.h>
 #include <string.h>
+
+#ifdef __linux__
 #include <sys/inotify.h>
 #include <unistd.h>
+#endif
+
+#ifdef __linux__
+
+/* ================================================================== */
+/* Linux implementation using inotify                                  */
+/* ================================================================== */
 
 /* ------------------------------------------------------------------ */
 /* Internal watcher state                                              */
@@ -246,3 +258,32 @@ sk_config_watch_stop(SkConfigWatcher *watcher)
 
   SK_LOG_INFO(SK_LOG_COMPONENT_GENERAL, "config: file watcher stopped");
 }
+
+#else /* !__linux__ */
+
+/* ================================================================== */
+/* Non-Linux stub: hot-reload not supported                            */
+/* ================================================================== */
+
+struct _SkConfigWatcher
+{
+  int dummy;
+};
+
+SkConfigWatcher *
+sk_config_watch_start(const char *config_path G_GNUC_UNUSED,
+                      SkConfigReloadCallback callback G_GNUC_UNUSED,
+                      void *user_data G_GNUC_UNUSED,
+                      GError **error G_GNUC_UNUSED)
+{
+  SK_LOG_INFO(SK_LOG_COMPONENT_GENERAL,
+              "config: hot-reload not available on this platform");
+  return NULL;
+}
+
+void
+sk_config_watch_stop(SkConfigWatcher *watcher G_GNUC_UNUSED)
+{
+}
+
+#endif /* __linux__ */
