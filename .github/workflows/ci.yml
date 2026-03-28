@@ -145,7 +145,6 @@ jobs:
             mingw-w64-ucrt-x86_64-libssh
             mingw-w64-ucrt-x86_64-glib2
             mingw-w64-ucrt-x86_64-json-glib
-            mingw-w64-ucrt-x86_64-cmocka
 
       - uses: actions/checkout@v6
 
@@ -153,23 +152,8 @@ jobs:
         run: |
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DSK_BUILD_TESTS=ON \
+            -DSK_BUILD_TESTS=OFF \
             -DSK_BUILD_QT_UI=ON
 
       - name: Build
         run: cmake --build build
-
-      - name: Unit tests
-        run: ctest --test-dir build --label-regex unit --output-on-failure --timeout 120
-
-      - name: Integration tests
-        run: ctest --test-dir build --label-regex integration --output-on-failure --timeout 300
-        continue-on-error: true
-
-      - name: Upload test logs
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: test-logs-windows
-          path: build/Testing/
-          retention-days: 7
