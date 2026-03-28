@@ -162,7 +162,9 @@ private:
 
     /* Global instance pointer for signal handlers. */
     static std::atomic<SkConnectFlow *> s_activeFlow;
+#ifndef _WIN32
     friend void sk_qt_signal_handler(int);
+#endif
 };
 
 #endif /* SK_CONNECT_FLOW_H */
