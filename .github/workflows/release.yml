@@ -11,6 +11,7 @@ on:
 permissions:
   contents: write
 
+
 jobs:
   build-linux:
     name: Build Linux (${{ matrix.codename }})
@@ -41,7 +42,7 @@ jobs:
             file
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Build
         run: |
@@ -63,7 +64,7 @@ jobs:
           fi
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: package-linux-${{ matrix.codename }}
           path: dist/
@@ -78,7 +79,7 @@ jobs:
         run: brew install cmake ninja pkg-config qt@6 libssh glib json-glib
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Build
         run: |
@@ -98,7 +99,7 @@ jobs:
           fi
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: package-macos
           path: dist/
@@ -117,7 +118,7 @@ jobs:
           C:\vcpkg\vcpkg install qt6-base libssh glib json-glib --triplet x64-windows
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Build
         run: |
@@ -135,7 +136,7 @@ jobs:
           Compress-Archive -Path dist\* -DestinationPath dist\shellkeep-$env:GITHUB_REF_NAME-windows.zip
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: package-windows
           path: dist/*.zip
@@ -148,10 +149,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts/
 

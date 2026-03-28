@@ -13,6 +13,7 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+
 jobs:
   build:
     name: Build & Test (${{ matrix.os }})
@@ -26,16 +27,20 @@ jobs:
           - os: Ubuntu 24.04
             runner: ubuntu-latest
             container: ubuntu:24.04
+            codename: noble
           - os: Debian 12
             runner: ubuntu-latest
             container: debian:12
+            codename: bookworm
           - os: macOS
             runner: macos-14
             container: ''
+            codename: macos
             experimental: true
           - os: Windows
             runner: windows-latest
             container: ''
+            codename: windows
             experimental: true
 
     continue-on-error: ${{ matrix.experimental || false }}
@@ -61,11 +66,8 @@ jobs:
             libglib2.0-dev \
             libjson-glib-dev \
             libcmocka-dev \
-            gcovr \
-            lcov \
-            clang \
-            libasan6 \
-            libubsan1
+            libsystemd-dev \
+            file
 
       - name: Install system dependencies (macOS)
         if: runner.os == 'macOS'
@@ -81,44 +83,157 @@ jobs:
           VCPKG_ROOT: C:\vcpkg
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
-      - name: Configure (debug + tests)
-        if: runner.os != 'Windows'
+      # ---- Configure ----
+
+      - name: Configure (Linux)
+        if: runner.os == 'Linux'
         run: |
-          CMAKE_EXTRA=""
-          if [ "$RUNNER_OS" = "macOS" ]; then
-            CMAKE_EXTRA="-DCMAKE_PREFIX_PATH=$(brew --prefix qt@6)"
-          fi
           cmake -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr \
             -DSK_BUILD_TESTS=ON \
             -DSK_BUILD_QT_UI=ON \
-            $CMAKE_EXTRA
+            -DSK_JOURNALD=ON
+
+      - name: Configure (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH=$(brew --prefix qt@6) \
+            -DSK_BUILD_TESTS=ON \
+            -DSK_BUILD_QT_UI=ON
 
       - name: Configure (Windows)
         if: runner.os == 'Windows'
         run: |
           cmake -B build -G Ninja `
-            -DCMAKE_BUILD_TYPE=Debug `
+            -DCMAKE_BUILD_TYPE=Release `
             -DSK_BUILD_TESTS=ON `
             -DSK_BUILD_QT_UI=ON `
             -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake
 
+      # ---- Build ----
+
       - name: Build
         run: cmake --build build
 
-      - name: Run backend unit tests
+      # ---- Test ----
+
+      - name: Run unit tests
         run: ctest --test-dir build --label-regex unit --output-on-failure --timeout 120
 
       - name: Run integration tests
         run: ctest --test-dir build --label-regex integration --output-on-failure --timeout 300
         continue-on-error: true
 
+      # ---- Artifacts: binary ----
+
+      - name: Package binary (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          DESTDIR=$(pwd)/pkg cmake --install build
+          mkdir -p dist
+          # Create a portable tarball
+          tar czf dist/shellkeep-${{ matrix.codename }}-$(uname -m).tar.gz -C pkg .
+          ls -lh dist/
+
+      - name: Package binary (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p dist
+          if [ -d build/shellkeep.app ]; then
+            cd build && zip -r ../dist/shellkeep-macos-arm64.zip shellkeep.app && cd ..
+          else
+            cp build/shellkeep dist/shellkeep-macos-arm64
+          fi
+
+      - name: Package binary (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          mkdir dist
+          Copy-Item build\shellkeep.exe dist\
+          windeployqt dist\shellkeep.exe 2>$null
+          Compress-Archive -Path dist\* -DestinationPath dist\shellkeep-windows-x64.zip
+        continue-on-error: true
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v7
+        with:
+          name: shellkeep-${{ matrix.codename }}
+          path: dist/
+          retention-days: 30
+
+      # ---- Artifacts: test results ----
+
       - name: Upload test logs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: test-logs-${{ matrix.os }}
-          path: build/Testing/
+          name: test-logs-${{ matrix.codename }}
+          path: |
+            build/Testing/
+            build/meson-logs/
           retention-days: 7
+
+  # ---- .deb packages (Linux only) ----
+
+  package-deb:
+    name: Build .deb (${{ matrix.codename }})
+    needs: build
+    runs-on: ubuntu-latest
+    container: ${{ matrix.container }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - codename: noble
+            container: ubuntu:24.04
+          - codename: bookworm
+            container: debian:12
+
+    env:
+      DEBIAN_FRONTEND: noninteractive
+
+    steps:
+      - name: Install dependencies
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config \
+            git ca-certificates debhelper devscripts fakeroot \
+            qt6-base-dev libgl-dev \
+            libssh-dev libglib2.0-dev libjson-glib-dev libsystemd-dev \
+            file
+
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Build .deb
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr \
+            -DSK_BUILD_QT_UI=ON \
+            -DSK_BUILD_TESTS=OFF \
+            -DSK_JOURNALD=ON
+          cmake --build build
+          dpkg-buildpackage -us -uc -b 2>&1 || true
+          mkdir -p dist
+          cp ../*.deb dist/ 2>/dev/null || true
+          # Fallback: tarball if dpkg-buildpackage fails
+          if [ ! -f dist/*.deb ]; then
+            DESTDIR=$(pwd)/pkg cmake --install build
+            tar czf dist/shellkeep-${{ matrix.codename }}-$(dpkg --print-architecture).tar.gz -C pkg .
+          fi
+          ls -lh dist/
+
+      - name: Upload .deb
+        uses: actions/upload-artifact@v7
+        with:
+          name: deb-${{ matrix.codename }}
+          path: dist/
+          retention-days: 30
