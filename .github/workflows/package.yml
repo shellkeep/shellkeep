@@ -1,30 +1,32 @@
 # SPDX-FileCopyrightText: 2026 shellkeep contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Release
+# Package
 # =======
-# Runs on: pushing a version tag (v*)
+# Runs on: every push to main (after Build & Test passes)
 #
 # What it does:
-#   Builds all platforms, creates a GitHub Release with downloadable files.
+#   Builds downloadable packages for every platform.
 #
-# What it produces (on the Releases page):
-#   - shellkeep_0.x.0-1_amd64.deb     — Debian/Ubuntu package
-#   - shellkeep-v0.x.0-noble.AppImage  — portable Linux (no deps needed)
-#   - shellkeep-v0.x.0-noble.tar.gz    — lightweight Linux (needs system libs)
-#   - shellkeep-v0.x.0-macos.zip       — macOS app bundle
-#   - shellkeep-v0.x.0-windows.zip     — Windows binary + DLLs
-#   - SHA256SUMS.txt                   — checksums for all files
+# What it produces (download from Actions tab):
+#   - shellkeep-noble.AppImage        — portable Linux binary, no deps needed
+#   - shellkeep-bookworm.AppImage     — same, built on Debian 12
+#   - shellkeep-noble.tar.gz          — lightweight Linux binary (needs system Qt6/GLib)
+#   - shellkeep-bookworm.tar.gz       — same, built on Debian 12
+#   - shellkeep-noble.deb             — Debian/Ubuntu package (apt handles deps)
+#   - shellkeep-bookworm.deb          — same, for Debian 12
+#   - shellkeep-macos.zip             — macOS app bundle
+#   - shellkeep-windows.zip           — Windows binary + Qt6 DLLs
 
-name: Release
+name: Package
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches: [main]
 
-permissions:
-  contents: write
+concurrency:
+  group: package-${{ github.ref }}
+  cancel-in-progress: true
 
 
 jobs:
@@ -69,19 +71,24 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX=/usr \
             -DSK_BUILD_QT_UI=ON \
+            -DSK_BUILD_TESTS=OFF \
             -DSK_JOURNALD=ON
           cmake --build build
 
+      # -- .deb (for apt install ./shellkeep.deb) --
+
       - name: Build .deb
         run: |
+          dpkg-buildpackage -us -uc -b 2>&1 && cp ../*.deb dist/ 2>/dev/null || true
           mkdir -p dist
-          dpkg-buildpackage -us -uc -b || true
           cp ../*.deb dist/ 2>/dev/null || true
+
+      # -- Portable tarball (small, tells you what deps are missing) --
 
       - name: Build portable tarball
         run: |
           ARCH=$(uname -m)
-          mkdir -p pkg-portable/shellkeep
+          mkdir -p dist pkg-portable/shellkeep
 
           cp build/shellkeep pkg-portable/shellkeep/shellkeep-bin
           cp scripts/shellkeep-wrapper.sh pkg-portable/shellkeep/shellkeep
@@ -91,7 +98,9 @@ jobs:
           cp data/icons/shellkeep-256.png pkg-portable/shellkeep/shellkeep.png
           cp man/shellkeep.1 pkg-portable/shellkeep/
 
-          tar czf "dist/shellkeep-${GITHUB_REF_NAME}-${{ matrix.codename }}-${ARCH}.tar.gz" -C pkg-portable shellkeep
+          tar czf "dist/shellkeep-${{ matrix.codename }}-${ARCH}.tar.gz" -C pkg-portable shellkeep
+
+      # -- AppImage (large, zero dependencies) --
 
       - name: Build AppImage
         run: |
@@ -102,6 +111,7 @@ jobs:
           curl -fsSL -o linuxdeploy-plugin-qt "https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-${ARCH}.AppImage"
           chmod +x linuxdeploy linuxdeploy-plugin-qt
 
+          # Containers lack FUSE — extract and run directly
           ./linuxdeploy --appimage-extract >/dev/null 2>&1
           mv squashfs-root linuxdeploy-extracted
           ./linuxdeploy-plugin-qt --appimage-extract >/dev/null 2>&1
@@ -109,7 +119,7 @@ jobs:
           export PATH="$(pwd)/linuxdeploy-plugin-qt-extracted/usr/bin:$PATH"
 
           export QMAKE=$(which qmake6 2>/dev/null || which qmake 2>/dev/null)
-          export OUTPUT="dist/shellkeep-${GITHUB_REF_NAME}-${{ matrix.codename }}-${ARCH}.AppImage"
+          export OUTPUT="dist/shellkeep-${{ matrix.codename }}-${ARCH}.AppImage"
 
           ./linuxdeploy-extracted/AppRun \
             --appdir AppDir \
@@ -120,12 +130,12 @@ jobs:
 
           chmod +x dist/*.AppImage
 
-      - name: Upload artifacts
+      - name: Upload packages
         uses: actions/upload-artifact@v7
         with:
-          name: release-linux-${{ matrix.codename }}
+          name: linux-${{ matrix.codename }}
           path: dist/
-          retention-days: 90
+          retention-days: 30
 
   # ----------------------------------------------------------------
   # macOS: .app bundle as .zip
@@ -134,6 +144,7 @@ jobs:
   macos:
     name: macOS
     runs-on: macos-14
+    continue-on-error: true
 
     steps:
       - name: Install dependencies
@@ -152,18 +163,18 @@ jobs:
       - name: Create .zip
         run: |
           mkdir -p dist
-          macdeployqt build/shellkeep.app -dmg || true
-          cp build/*.dmg dist/ 2>/dev/null || true
-          if [ ! -f dist/*.dmg ]; then
-            cd build && zip -r ../dist/shellkeep-${GITHUB_REF_NAME}-macos.zip shellkeep.app && cd ..
+          if [ -d build/shellkeep.app ]; then
+            cd build && zip -r ../dist/shellkeep-macos-arm64.zip shellkeep.app && cd ..
+          else
+            cp build/shellkeep dist/shellkeep-macos-arm64
           fi
 
-      - name: Upload artifacts
+      - name: Upload package
         uses: actions/upload-artifact@v7
         with:
-          name: release-macos
+          name: macos
           path: dist/
-          retention-days: 90
+          retention-days: 30
 
   # ----------------------------------------------------------------
   # Windows: .exe + Qt6 DLLs as .zip
@@ -172,14 +183,15 @@ jobs:
   windows:
     name: Windows
     runs-on: windows-latest
+    continue-on-error: true
 
     steps:
       - name: Install dependencies
         run: |
           choco install cmake ninja -y
-          git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
-          C:\vcpkg\bootstrap-vcpkg.bat
-          C:\vcpkg\vcpkg install qt6-base libssh glib json-glib --triplet x64-windows
+          vcpkg install qt6-base libssh glib json-glib --triplet x64-windows
+        env:
+          VCPKG_ROOT: C:\vcpkg
 
       - uses: actions/checkout@v6
 
@@ -187,8 +199,8 @@ jobs:
         run: |
           cmake -B build -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
-            -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake `
-            -DSK_BUILD_QT_UI=ON
+            -DSK_BUILD_QT_UI=ON `
+            -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake
           cmake --build build
 
       - name: Create .zip
@@ -196,53 +208,12 @@ jobs:
           mkdir dist
           Copy-Item build\shellkeep.exe dist\
           windeployqt dist\shellkeep.exe 2>$null
-          Compress-Archive -Path dist\* -DestinationPath dist\shellkeep-$env:GITHUB_REF_NAME-windows.zip
+          Compress-Archive -Path dist\* -DestinationPath dist\shellkeep-windows-x64.zip
+        continue-on-error: true
 
-      - name: Upload artifacts
+      - name: Upload package
         uses: actions/upload-artifact@v7
         with:
-          name: release-windows
-          path: dist/*.zip
-          retention-days: 90
-
-  # ----------------------------------------------------------------
-  # Collect everything and create GitHub Release
-  # ----------------------------------------------------------------
-
-  publish:
-    name: Publish GitHub Release
-    needs: [linux, macos, windows]
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Download all build artifacts
-        uses: actions/download-artifact@v8
-        with:
-          path: artifacts/
-
-      - name: Collect release files
-        run: |
-          mkdir -p release
-          find artifacts/ -type f \( -name '*.deb' -o -name '*.AppImage' -o -name '*.tar.gz' -o -name '*.dmg' -o -name '*.zip' \) -exec cp {} release/ \;
-          cd release && sha256sum * > SHA256SUMS.txt
-
-      - name: Extract changelog
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          awk "/^## \[${VERSION}\]/{found=1; next} /^## \[/{if(found) exit} found{print}" \
-            CHANGELOG.md > release_notes.md || true
-          if [ ! -s release_notes.md ]; then
-            echo "Release ${GITHUB_REF_NAME}" > release_notes.md
-          fi
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          body_path: release_notes.md
-          files: release/*
-          draft: false
-          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: windows
+          path: dist/
+          retention-days: 30

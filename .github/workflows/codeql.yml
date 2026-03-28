@@ -1,7 +1,18 @@
 # SPDX-FileCopyrightText: 2026 shellkeep contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Security Scan
+# =============
+# Runs on: pushes to main, PRs touching C/C++, weekly (Monday 06:00 UTC)
+#
+# What it does:
+#   GitHub CodeQL scans for security vulnerabilities and code quality
+#   issues in C/C++ source. Results appear in the Security tab.
+#
+# What it produces:
+#   - nothing (findings go to GitHub Security tab)
 
-name: CodeQL Security Analysis
+name: Security Scan
 
 on:
   push:
@@ -13,7 +24,6 @@ on:
       - '**.cpp'
       - '**.h'
   schedule:
-    # Weekly scan: Monday at 06:00 UTC
     - cron: '0 6 * * 1'
 
 concurrency:
@@ -22,8 +32,8 @@ concurrency:
 
 
 jobs:
-  analyze:
-    name: CodeQL Analysis
+  codeql:
+    name: CodeQL
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -31,22 +41,15 @@ jobs:
       security-events: write
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
 
       - name: Install build dependencies
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            build-essential \
-            cmake \
-            ninja-build \
-            pkg-config \
-            qt6-base-dev \
-            libgl-dev \
-            libssh-dev \
-            libglib2.0-dev \
-            libjson-glib-dev
+            build-essential cmake ninja-build pkg-config \
+            qt6-base-dev libgl-dev \
+            libssh-dev libglib2.0-dev libjson-glib-dev
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
@@ -59,7 +62,7 @@ jobs:
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DSK_BUILD_QT_UI=ON
           cmake --build build
 
-      - name: Perform CodeQL Analysis
+      - name: Run analysis
         uses: github/codeql-action/analyze@v4
         with:
           category: "/language:c-cpp"

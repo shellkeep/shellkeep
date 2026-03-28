@@ -1,7 +1,19 @@
 # SPDX-FileCopyrightText: 2026 shellkeep contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Build & Test
+# ============
+# Runs on: every push to main, every pull request
+#
+# What it does:
+#   1. Compiles shellkeep on Linux, macOS, and Windows
+#   2. Runs unit and integration tests
+#
+# What it produces:
+#   - nothing (build verification only)
+#   - test logs uploaded on failure
 
-name: CI
+name: Build & Test
 
 on:
   push:
@@ -16,9 +28,10 @@ concurrency:
 
 jobs:
   build:
-    name: Build & Test (${{ matrix.os }})
+    name: ${{ matrix.os }}
     runs-on: ${{ matrix.runner }}
     container: ${{ matrix.container }}
+    continue-on-error: ${{ matrix.experimental || false }}
 
     strategy:
       fail-fast: false
@@ -43,38 +56,27 @@ jobs:
             codename: windows
             experimental: true
 
-    continue-on-error: ${{ matrix.experimental || false }}
-
     env:
       DEBIAN_FRONTEND: noninteractive
 
     steps:
-      - name: Install system dependencies (Linux)
+      - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
           apt-get update -qq
           apt-get install -y --no-install-recommends \
-            build-essential \
-            cmake \
-            ninja-build \
-            pkg-config \
-            git \
-            ca-certificates \
-            qt6-base-dev \
-            libgl-dev \
-            libssh-dev \
-            libglib2.0-dev \
-            libjson-glib-dev \
-            libcmocka-dev \
-            libsystemd-dev \
+            build-essential cmake ninja-build pkg-config \
+            git ca-certificates \
+            qt6-base-dev libgl-dev \
+            libssh-dev libglib2.0-dev libjson-glib-dev \
+            libcmocka-dev libsystemd-dev \
             file
 
-      - name: Install system dependencies (macOS)
+      - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
-        run: |
-          brew install cmake ninja pkg-config qt@6 libssh glib json-glib cmocka
+        run: brew install cmake ninja pkg-config qt@6 libssh glib json-glib cmocka
 
-      - name: Install system dependencies (Windows)
+      - name: Install dependencies (Windows)
         if: runner.os == 'Windows'
         run: |
           choco install cmake ninja -y
@@ -82,10 +84,7 @@ jobs:
         env:
           VCPKG_ROOT: C:\vcpkg
 
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      # ---- Configure ----
+      - uses: actions/checkout@v6
 
       - name: Configure (Linux)
         if: runner.os == 'Linux'
@@ -115,128 +114,20 @@ jobs:
             -DSK_BUILD_QT_UI=ON `
             -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake
 
-      # ---- Build ----
-
       - name: Build
         run: cmake --build build
 
-      # ---- Test ----
-
-      - name: Run unit tests
+      - name: Unit tests
         run: ctest --test-dir build --label-regex unit --output-on-failure --timeout 120
 
-      - name: Run integration tests
+      - name: Integration tests
         run: ctest --test-dir build --label-regex integration --output-on-failure --timeout 300
         continue-on-error: true
-
-      # ---- Artifacts: binary ----
-
-      - name: Package binary (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          DESTDIR=$(pwd)/pkg cmake --install build
-          mkdir -p dist
-          # Create a portable tarball
-          tar czf dist/shellkeep-${{ matrix.codename }}-$(uname -m).tar.gz -C pkg .
-          ls -lh dist/
-
-      - name: Package binary (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          mkdir -p dist
-          if [ -d build/shellkeep.app ]; then
-            cd build && zip -r ../dist/shellkeep-macos-arm64.zip shellkeep.app && cd ..
-          else
-            cp build/shellkeep dist/shellkeep-macos-arm64
-          fi
-
-      - name: Package binary (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          mkdir dist
-          Copy-Item build\shellkeep.exe dist\
-          windeployqt dist\shellkeep.exe 2>$null
-          Compress-Archive -Path dist\* -DestinationPath dist\shellkeep-windows-x64.zip
-        continue-on-error: true
-
-      - name: Upload binary
-        uses: actions/upload-artifact@v7
-        with:
-          name: shellkeep-${{ matrix.codename }}
-          path: dist/
-          retention-days: 30
-
-      # ---- Artifacts: test results ----
 
       - name: Upload test logs
         if: failure()
         uses: actions/upload-artifact@v7
         with:
           name: test-logs-${{ matrix.codename }}
-          path: |
-            build/Testing/
-            build/meson-logs/
+          path: build/Testing/
           retention-days: 7
-
-  # ---- .deb packages (Linux only) ----
-
-  package-deb:
-    name: Build .deb (${{ matrix.codename }})
-    needs: build
-    runs-on: ubuntu-latest
-    container: ${{ matrix.container }}
-
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - codename: noble
-            container: ubuntu:24.04
-          - codename: bookworm
-            container: debian:12
-
-    env:
-      DEBIAN_FRONTEND: noninteractive
-
-    steps:
-      - name: Install dependencies
-        run: |
-          apt-get update -qq
-          apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build pkg-config \
-            git ca-certificates debhelper devscripts fakeroot \
-            qt6-base-dev libgl-dev \
-            libssh-dev libglib2.0-dev libjson-glib-dev libsystemd-dev \
-            file
-
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Build .deb
-        run: |
-          cmake -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INSTALL_PREFIX=/usr \
-            -DSK_BUILD_QT_UI=ON \
-            -DSK_BUILD_TESTS=OFF \
-            -DSK_JOURNALD=ON
-          cmake --build build
-          DESTDIR=$(pwd)/pkg cmake --install build
-          mkdir -p dist
-
-          # Try dpkg-buildpackage first
-          dpkg-buildpackage -us -uc -b 2>&1 && cp ../*.deb dist/ 2>/dev/null || true
-
-          # Fallback: create tarball from installed tree
-          if [ -z "$(ls dist/*.deb 2>/dev/null)" ]; then
-            ARCH=$(dpkg --print-architecture)
-            tar czf "dist/shellkeep-0.2.0-${{ matrix.codename }}-${ARCH}.tar.gz" -C pkg .
-          fi
-          ls -lh dist/
-
-      - name: Upload .deb
-        uses: actions/upload-artifact@v7
-        with:
-          name: deb-${{ matrix.codename }}
-          path: dist/
-          retention-days: 30
