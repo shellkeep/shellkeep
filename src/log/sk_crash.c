@@ -279,9 +279,11 @@ sk_crash_signal_handler(int signum)
   case SIGABRT:
     signame = " (SIGABRT)";
     break;
+#ifdef SIGBUS
   case SIGBUS:
     signame = " (SIGBUS)";
     break;
+#endif
   case SIGFPE:
     signame = " (SIGFPE)";
     break;
@@ -372,6 +374,11 @@ sk_crash_handler_install(void)
   }
 
   /* NFR-OBS-09: install signal handlers */
+#ifdef _WIN32
+  signal(SIGSEGV, sk_crash_signal_handler);
+  signal(SIGABRT, sk_crash_signal_handler);
+  signal(SIGFPE, sk_crash_signal_handler);
+#else
   struct sigaction sa;
   memset(&sa, 0, sizeof(sa));
   sa.sa_handler = sk_crash_signal_handler;
@@ -382,6 +389,7 @@ sk_crash_handler_install(void)
   sigaction(SIGABRT, &sa, NULL);
   sigaction(SIGBUS, &sa, NULL);
   sigaction(SIGFPE, &sa, NULL);
+#endif
 
   /* Prevent core dump from leaking sensitive memory — NFR-OBS-10 */
 #ifdef HAVE_PRCTL

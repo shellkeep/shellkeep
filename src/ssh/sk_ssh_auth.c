@@ -16,11 +16,17 @@
 
 #include "sk_ssh_internal.h"
 #include <string.h>
-#include <sys/mman.h>
 
-/* macOS does not provide explicit_bzero(); use memset_s instead. */
+#ifdef _WIN32
+#include <windows.h>
+#define mlock(addr, len) VirtualLock((addr), (len))
+#define munlock(addr, len) VirtualUnlock((addr), (len))
+static void explicit_bzero(void *s, size_t n) { SecureZeroMemory(s, n); }
+#else
+#include <sys/mman.h>
 #ifdef __APPLE__
 #define explicit_bzero(s, n) memset_s((s), (n), 0, (n))
+#endif
 #endif
 
 /**

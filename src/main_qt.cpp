@@ -172,7 +172,7 @@ int main(int argc, char *argv[])
     }
 
     /* gettext for C backend strings */
-#ifndef Q_OS_WIN
+#ifdef Q_OS_LINUX
     bindtextdomain("shellkeep", LOCALEDIR);
     bind_textdomain_codeset("shellkeep", "UTF-8");
     textdomain("shellkeep");

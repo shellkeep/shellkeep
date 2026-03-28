@@ -31,7 +31,7 @@
 #ifdef _WIN32
 #include <io.h>
 #define fsync(fd) _commit(fd)
-#define fchmod(fd, mode) (0) /* no-op on Windows */
+#define fchmod(fd, mode) ((void)(fd), (void)(mode), 0)
 #endif
 
 /* ---- Helpers ------------------------------------------------------------ */

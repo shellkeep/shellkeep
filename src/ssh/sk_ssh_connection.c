@@ -17,10 +17,15 @@
 
 #include "sk_ssh_internal.h"
 #include <errno.h>
-#include <netinet/tcp.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
+#include <netinet/tcp.h>
 #include <sys/socket.h>
+#endif
 
 /* FR-CONN-21: never invoke ssh binary; everything via libssh. */
 /* INV-CONN-3 */

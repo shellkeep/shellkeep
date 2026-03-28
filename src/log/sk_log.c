@@ -25,14 +25,18 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
 #include <strings.h>
+#else
+#define strcasecmp _stricmp
+#endif
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
 
 #ifdef _WIN32
-#define fchmod(fd, mode) (0) /* no-op on Windows */
+#define fchmod(fd, mode) ((void)(fd), (void)(mode), 0)
 #endif
 
 #ifdef HAVE_SYSTEMD
