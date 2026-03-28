@@ -6,8 +6,10 @@
 //! Persistent sessions that survive everything.
 //! Open source. Cross-platform. Zero server setup.
 
+mod config;
 mod state;
 
+use config::Config;
 use iced::keyboard;
 use iced::widget::{Space, button, center, column, container, row, scrollable, text, text_input};
 use iced::{Color, Element, Length, Subscription, Task, Theme};
@@ -120,6 +122,7 @@ struct ShellKeep {
     user_input: String,
     identity_input: String,
 
+    config: Config,
     recent: RecentConnections,
     title_text: String,
     error: Option<String>,
@@ -156,7 +159,9 @@ enum Message {
 impl ShellKeep {
     fn new(initial_ssh_args: Option<Vec<String>>) -> (Self, Task<Message>) {
         let username = whoami::username();
+        let config = Config::load();
         let recent = RecentConnections::load();
+        let default_port = config.ssh.default_port.to_string();
         let mut app = ShellKeep {
             tabs: Vec::new(),
             active_tab: 0,
@@ -165,9 +170,10 @@ impl ShellKeep {
             renaming_tab: None,
             rename_input: String::new(),
             host_input: String::new(),
-            port_input: "22".to_string(),
+            port_input: default_port,
             user_input: username,
             identity_input: String::new(),
+            config,
             recent,
             title_text: "shellkeep".to_string(),
             error: None,
@@ -187,7 +193,7 @@ impl ShellKeep {
 
         let settings = Settings {
             font: FontSettings {
-                size: 14.0,
+                size: self.config.terminal.font_size,
                 ..FontSettings::default()
             },
             theme: ThemeSettings {
@@ -249,7 +255,7 @@ impl ShellKeep {
 
         let settings = Settings {
             font: FontSettings {
-                size: 14.0,
+                size: self.config.terminal.font_size,
                 ..FontSettings::default()
             },
             theme: ThemeSettings {
