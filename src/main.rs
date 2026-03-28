@@ -194,55 +194,8 @@ impl ShellKeep {
     }
 
     fn open_tab(&mut self, ssh_args: &[String], label: &str) {
-        let id = self.next_id;
-        self.next_id += 1;
-
-        // Build SSH command with tmux session attachment
-        // Each tab gets a unique tmux session: shellkeep-0, shellkeep-1, etc.
-        let tmux_session = format!("shellkeep-{id}");
-        let tmux_cmd =
-            format!("TERM=xterm-256color tmux new-session -A -s {tmux_session} || exec $SHELL");
-
-        let mut full_args = Vec::new();
-        full_args.extend_from_slice(ssh_args);
-        full_args.push("-t".to_string());
-        full_args.push(tmux_cmd);
-
-        let settings = Settings {
-            font: FontSettings {
-                size: self.config.terminal.font_size,
-                ..FontSettings::default()
-            },
-            theme: ThemeSettings {
-                color_pallete: Box::new(catppuccin_mocha()),
-            },
-            backend: BackendSettings {
-                program: "ssh".to_string(),
-                args: full_args,
-                ..Default::default()
-            },
-        };
-
-        match iced_term::Terminal::new(id, settings) {
-            Ok(terminal) => {
-                self.tabs.push(Tab {
-                    id,
-                    label: label.to_string(),
-                    terminal: Some(terminal),
-                    ssh_args: ssh_args.to_vec(),
-                    tmux_session: tmux_session.clone(),
-                    dead: false,
-                });
-                self.active_tab = self.tabs.len() - 1;
-                self.error = None;
-                self.update_title();
-                tracing::info!("opened tab {id}: {label}");
-            }
-            Err(e) => {
-                tracing::error!("failed to create terminal: {e}");
-                self.error = Some(e.to_string());
-            }
-        }
+        let tmux_session = format!("shellkeep-{}", self.next_id);
+        self.open_tab_with_tmux(ssh_args, label, &tmux_session);
     }
 
     fn open_tab_with_tmux(&mut self, ssh_args: &[String], label: &str, tmux_session: &str) {
@@ -314,59 +267,16 @@ impl ShellKeep {
         let label = self.tabs[index].label.clone();
         let tmux_session = self.tabs[index].tmux_session.clone();
 
-        // Remove old dead tab and open fresh one at same position
+        // Remove old dead tab, open fresh one at same position
         self.tabs.remove(index);
+        self.open_tab_with_tmux(&ssh_args, &label, &tmux_session);
 
-        let id = self.next_id;
-        self.next_id += 1;
-
-        // Reattach to the same tmux session
-        let tmux_cmd =
-            format!("TERM=xterm-256color tmux new-session -A -s {tmux_session} || exec $SHELL");
-        let mut full_args = Vec::new();
-        full_args.extend_from_slice(&ssh_args);
-        full_args.push("-t".to_string());
-        full_args.push(tmux_cmd);
-
-        let settings = Settings {
-            font: FontSettings {
-                size: self.config.terminal.font_size,
-                ..FontSettings::default()
-            },
-            theme: ThemeSettings {
-                color_pallete: Box::new(catppuccin_mocha()),
-            },
-            backend: BackendSettings {
-                program: "ssh".to_string(),
-                args: full_args,
-                ..Default::default()
-            },
-        };
-
-        match iced_term::Terminal::new(id, settings) {
-            Ok(terminal) => {
-                self.tabs.insert(
-                    index,
-                    Tab {
-                        id,
-                        label,
-                        terminal: Some(terminal),
-                        ssh_args,
-                        tmux_session,
-                        dead: false,
-                    },
-                );
-                self.active_tab = index;
-                self.update_title();
-                tracing::info!(
-                    "reconnected tab {id} to tmux session {}",
-                    self.tabs[index].tmux_session
-                );
-            }
-            Err(e) => {
-                tracing::error!("reconnect failed: {e}");
-                self.error = Some(e.to_string());
-            }
+        // Move the newly added tab (at end) to the original position
+        if self.tabs.len() > 1 && index < self.tabs.len() - 1 {
+            let tab = self.tabs.pop().unwrap();
+            self.tabs.insert(index, tab);
+            self.active_tab = index;
+            self.update_title();
         }
     }
 
