@@ -8,8 +8,8 @@
 
 use iced::widget::{center, column, container, text};
 use iced::{Element, Length, Subscription, Task, Theme};
-use iced_term::settings::{BackendSettings, FontSettings, Settings, ThemeSettings};
 use iced_term::ColorPalette;
+use iced_term::settings::{BackendSettings, FontSettings, Settings, ThemeSettings};
 
 const TERM_ID: u64 = 0;
 
@@ -114,12 +114,10 @@ impl ShellKeep {
             Message::TerminalEvent(iced_term::Event::BackendCall(id, cmd)) => {
                 if let Some(ref mut terminal) = self.terminal {
                     if id == terminal.id {
-                        let action =
-                            terminal.handle(iced_term::Command::ProxyToBackend(cmd));
+                        let action = terminal.handle(iced_term::Command::ProxyToBackend(cmd));
                         match action {
                             iced_term::actions::Action::ChangeTitle(new_title) => {
-                                self.title_text =
-                                    format!("shellkeep — {new_title}");
+                                self.title_text = format!("shellkeep — {new_title}");
                             }
                             iced_term::actions::Action::Shutdown => {
                                 self.terminal = None;
@@ -136,13 +134,10 @@ impl ShellKeep {
 
     fn view(&self) -> Element<'_, Message> {
         if let Some(ref terminal) = self.terminal {
-            container(
-                iced_term::TerminalView::show(terminal)
-                    .map(Message::TerminalEvent),
-            )
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+            container(iced_term::TerminalView::show(terminal).map(Message::TerminalEvent))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
         } else {
             let msg = self.error.as_deref().unwrap_or("Terminal closed");
             center(
