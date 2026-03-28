@@ -13,11 +13,9 @@ SPDX-License-Identifier: GPL-3.0-or-later
 </p>
 
 <p align="center">
-  <a href="https://github.com/shellkeep/shellkeep/actions/workflows/ci.yml"><img src="https://github.com/shellkeep/shellkeep/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://github.com/shellkeep/shellkeep/actions/workflows/lint.yml"><img src="https://github.com/shellkeep/shellkeep/actions/workflows/lint.yml/badge.svg" alt="Lint"></a>
-  <a href="https://github.com/shellkeep/shellkeep/actions/workflows/codeql.yml"><img src="https://github.com/shellkeep/shellkeep/actions/workflows/codeql.yml/badge.svg" alt="CodeQL"></a>
+  <a href="https://github.com/shellkeep/shellkeep/actions/workflows/ci-rust.yml"><img src="https://github.com/shellkeep/shellkeep/actions/workflows/ci-rust.yml/badge.svg?branch=rust-rewrite" alt="CI"></a>
   <a href="https://www.gnu.org/licenses/gpl-3.0"><img src="https://img.shields.io/badge/License-GPLv3-blue.svg" alt="License: GPL v3"></a>
-  <a href="https://github.com/shellkeep/shellkeep/releases"><img src="https://img.shields.io/badge/version-0.2.0-green.svg" alt="Version"></a>
+  <a href="https://github.com/shellkeep/shellkeep/releases"><img src="https://img.shields.io/badge/version-0.3.0-green.svg" alt="Version"></a>
 </p>
 
 <p align="center">
@@ -62,7 +60,7 @@ You SSH into a server, set up your terminal tabs, get deep into a debugging sess
 
 **Environments** -- Named groups of sessions for context separation. Switch between "Backend", "Frontend", and "DevOps" environments instantly.
 
-**Modern Qt6 UI** -- Native look on Linux, macOS, and Windows. Dark theme by default, fast rendering, crisp text.
+**GPU-accelerated terminal** -- Powered by alacritty_terminal (same engine as Zed and Alacritty). True color, Unicode, hyperlinks, perfect TUI rendering.
 
 **Cross-platform** -- Runs natively on Linux, macOS, and Windows. Same codebase, native feel everywhere.
 
@@ -105,7 +103,7 @@ shellkeep user@server.com
 | Auto-reconnect | &#x2705; | &#x274C; | &#x2705; | &#x2705; | &#x274C; |
 | Dead session recovery | &#x2705; | &#x274C; | &#x274C; | &#x274C; | &#x274C; |
 | Open source | &#x2705; GPL-3.0 | &#x274C; | &#x2705; Apache-2.0 | &#x2705; GPL-3.0 | &#x2705; MIT |
-| Cross-platform native | &#x2705; Qt6 | &#x274C; Electron | &#x2705; CLI only | &#x2705; CLI only | &#x274C; Electron |
+| Cross-platform native | &#x2705; Rust/iced | &#x274C; Electron | &#x2705; CLI only | &#x2705; CLI only | &#x274C; Electron |
 | No server agent required | &#x2705; tmux only | &#x274C; | &#x274C; etserver | &#x274C; mosh-server | N/A |
 | Linux + macOS + Windows | &#x2705; | &#x2705; | &#x274C; Linux only | &#x274C; Unix only | &#x2705; |
 | Zero config / free | &#x2705; | &#x274C; Account req. | &#x274C; Server config | &#x2705; | &#x274C; Plugin setup |
@@ -116,7 +114,7 @@ shellkeep user@server.com
 
 shellkeep is a **client-only** application. The architecture is simple:
 
-1. **Connect** -- shellkeep opens an SSH connection using libssh
+1. **Connect** -- shellkeep opens an SSH connection to the server
 2. **Attach** -- On the server, it creates or reattaches to tmux sessions (one per tab)
 3. **Sync** -- Layout state (tabs, names, positions) is stored as a small JSON file on the server via SFTP, keyed by device ID
 4. **Reconnect** -- When the connection drops, shellkeep retries with exponential backoff and reattaches to the same tmux sessions -- all output is preserved
@@ -160,20 +158,17 @@ Download the installer from the [releases page](https://github.com/shellkeep/she
 ### Build from source
 
 ```bash
-# Install dependencies
-# Debian/Ubuntu:
-sudo apt install build-essential cmake ninja-build pkg-config \
-  qt6-base-dev libgl-dev libssh-dev libglib2.0-dev libjson-glib-dev
+# Install Rust (if not already installed)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
-# macOS:
-brew install cmake ninja pkg-config qt@6 libssh glib json-glib
+# Linux only: install system dependencies
+sudo apt install libxkbcommon-dev libwayland-dev libvulkan-dev libfontconfig1-dev
 
 # Build
 git clone https://github.com/shellkeep/shellkeep.git
 cd shellkeep
-cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSK_BUILD_QT_UI=ON
-cmake --build build
-sudo cmake --install build
+cargo build --release
+# Binary at target/release/shellkeep (~19MB)
 ```
 
 ---
@@ -242,7 +237,7 @@ All shortcuts are customizable in `config.ini`.
 
 ### Client (your machine)
 
-- **Linux**: Qt6, libssh (>= 0.10.0)
+- **Linux**: No dependencies (statically linked, ~19MB binary)
 - **macOS**: macOS 12+ (Monterey or later)
 - **Windows**: Windows 10+ (64-bit)
 
@@ -280,7 +275,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions and guidelines. Ex
 
 **Current (v0.2)**
 
-- Cross-platform Qt6 UI (Linux, macOS, Windows)
+- GPU-accelerated Rust UI with iced + alacritty_terminal (Linux, macOS, Windows)
 - Single-hop SSH with full tmux integration
 - Per-device layout persistence and environments
 - AppImage, .deb, .dmg, and Windows installer
