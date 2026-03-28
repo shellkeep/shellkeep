@@ -221,13 +221,16 @@ jobs:
             -DSK_BUILD_TESTS=OFF \
             -DSK_JOURNALD=ON
           cmake --build build
-          dpkg-buildpackage -us -uc -b 2>&1 || true
+          DESTDIR=$(pwd)/pkg cmake --install build
           mkdir -p dist
-          cp ../*.deb dist/ 2>/dev/null || true
-          # Fallback: tarball if dpkg-buildpackage fails
-          if [ ! -f dist/*.deb ]; then
-            DESTDIR=$(pwd)/pkg cmake --install build
-            tar czf dist/shellkeep-${{ matrix.codename }}-$(dpkg --print-architecture).tar.gz -C pkg .
+
+          # Try dpkg-buildpackage first
+          dpkg-buildpackage -us -uc -b 2>&1 && cp ../*.deb dist/ 2>/dev/null || true
+
+          # Fallback: create tarball from installed tree
+          if [ -z "$(ls dist/*.deb 2>/dev/null)" ]; then
+            ARCH=$(dpkg --print-architecture)
+            tar czf "dist/shellkeep-0.2.0-${{ matrix.codename }}-${ARCH}.tar.gz" -C pkg .
           fi
           ls -lh dist/
 

@@ -1,3 +1,12 @@
+shellkeep (0.2.0-1) unstable; urgency=medium
+
+  * Migrate UI from GTK3+VTE to Qt6
+  * Add cross-platform support (Linux, macOS, Windows)
+  * Add CMake build system (replaces Meson)
+  * Add UI bridge for toolkit-agnostic backend
+
+ -- shellkeep contributors <maintainers@shellkeep.org>  Thu, 27 Mar 2026 00:00:00 +0000
+
 shellkeep (0.1.0-1) unstable; urgency=medium
 
   * Initial release.

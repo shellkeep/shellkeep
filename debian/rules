@@ -6,15 +6,11 @@
 # NFR-DIST-07: Do NOT register as x-terminal-emulator
 
 %:
-	dh $@
+	dh $@ --buildsystem=cmake
 
 override_dh_auto_configure:
-	dh_auto_configure --buildsystem=cmake -- \
+	dh_auto_configure -- \
 		-DCMAKE_BUILD_TYPE=Release \
 		-DSK_BUILD_QT_UI=ON \
 		-DSK_BUILD_TESTS=OFF \
 		-DSK_JOURNALD=ON
-
-# NFR-DIST-07: Explicitly do NOT register as x-terminal-emulator.
-# shellkeep is not a local terminal — registering it would confuse
-# applications that expect a local shell.
