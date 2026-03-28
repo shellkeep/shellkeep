@@ -724,7 +724,11 @@ impl ShellKeep {
             .size(28)
             .color(Color::from_rgb8(0x89, 0xb4, 0xfa));
 
-        let subtitle = text("SSH sessions that survive everything")
+        let version = format!(
+            "v{} — SSH sessions that survive everything",
+            env!("CARGO_PKG_VERSION")
+        );
+        let subtitle = text(version)
             .size(14)
             .color(Color::from_rgb8(0xa6, 0xad, 0xc8));
 
