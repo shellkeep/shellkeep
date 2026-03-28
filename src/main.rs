@@ -115,6 +115,7 @@ struct ShellKeep {
     show_welcome: bool,
     renaming_tab: Option<usize>,
     rename_input: String,
+    current_font_size: f32,
 
     // Welcome screen state
     host_input: String,
@@ -167,6 +168,7 @@ impl ShellKeep {
             show_welcome: false,
             renaming_tab: None,
             rename_input: String::new(),
+            current_font_size: config.terminal.font_size,
             host_input: String::new(),
             port_input: default_port,
             user_input: username,
@@ -291,6 +293,19 @@ impl ShellKeep {
                 self.error = Some(e.to_string());
             }
         }
+    }
+
+    fn apply_font_to_all_tabs(&mut self) {
+        let font_settings = FontSettings {
+            size: self.current_font_size,
+            ..FontSettings::default()
+        };
+        for tab in &mut self.tabs {
+            if let Some(ref mut terminal) = tab.terminal {
+                terminal.handle(iced_term::Command::ChangeFont(font_settings.clone()));
+            }
+        }
+        tracing::debug!("font size: {}", self.current_font_size);
     }
 
     fn update_title(&mut self) {
@@ -504,6 +519,24 @@ impl ShellKeep {
                     {
                         self.rename_input = self.tabs[self.active_tab].label.clone();
                         self.renaming_tab = Some(self.active_tab);
+                    }
+                    // Ctrl+Shift+= or Ctrl+= — zoom in
+                    if modifiers.control()
+                        && (key == keyboard::Key::Character("=".into())
+                            || key == keyboard::Key::Character("+".into()))
+                    {
+                        self.current_font_size = (self.current_font_size + 1.0).min(36.0);
+                        self.apply_font_to_all_tabs();
+                    }
+                    // Ctrl+- — zoom out
+                    if modifiers.control() && key == keyboard::Key::Character("-".into()) {
+                        self.current_font_size = (self.current_font_size - 1.0).max(8.0);
+                        self.apply_font_to_all_tabs();
+                    }
+                    // Ctrl+0 — zoom reset
+                    if modifiers.control() && key == keyboard::Key::Character("0".into()) {
+                        self.current_font_size = self.config.terminal.font_size;
+                        self.apply_font_to_all_tabs();
                     }
                     // Escape — cancel rename or welcome
                     if key == keyboard::Key::Named(keyboard::key::Named::Escape) {
