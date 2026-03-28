@@ -60,6 +60,7 @@ struct ShellKeep {
     tabs: Vec<Tab>,
     active_tab: usize,
     next_id: u64,
+    show_welcome: bool,
 
     // Welcome screen state
     host_input: String,
@@ -107,6 +108,7 @@ impl ShellKeep {
             tabs: Vec::new(),
             active_tab: 0,
             next_id: 0,
+            show_welcome: false,
             host_input: String::new(),
             port_input: "22".to_string(),
             user_input: username,
@@ -235,6 +237,7 @@ impl ShellKeep {
             Message::SelectTab(index) => {
                 if index < self.tabs.len() {
                     self.active_tab = index;
+                    self.show_welcome = false;
                     self.update_title();
                 }
             }
@@ -244,13 +247,7 @@ impl ShellKeep {
             }
 
             Message::NewTab => {
-                // Switch to welcome view (no tabs selected) or
-                // if we have connection info, open a new tab
-                if !self.host_input.is_empty() {
-                    let ssh_args = self.build_ssh_args();
-                    let label = format!("ssh {}", ssh_args.join(" "));
-                    self.open_tab(&ssh_args, &label);
-                }
+                self.show_welcome = true;
             }
 
             Message::HostInputChanged(v) => self.host_input = v,
@@ -265,17 +262,17 @@ impl ShellKeep {
                 let ssh_args = self.build_ssh_args();
                 let label = format!("ssh {}", ssh_args.join(" "));
                 self.open_tab(&ssh_args, &label);
+                self.show_welcome = false;
             }
 
             Message::KeyEvent(event) => {
                 if let keyboard::Event::KeyPressed { key, modifiers, .. } = event {
-                    // Ctrl+Shift+T — new tab (show welcome)
+                    // Ctrl+Shift+T — new tab
                     if modifiers.control()
                         && modifiers.shift()
                         && key == keyboard::Key::Character("t".into())
                     {
-                        // Clear host input to show welcome
-                        // (user will fill in and press Connect)
+                        self.show_welcome = true;
                     }
                     // Ctrl+Shift+W — close current tab
                     if modifiers.control()
@@ -303,6 +300,11 @@ impl ShellKeep {
     fn view(&self) -> Element<'_, Message> {
         if self.tabs.is_empty() {
             return self.view_welcome();
+        }
+
+        if self.show_welcome {
+            let tab_bar = self.view_tab_bar();
+            return column![tab_bar, self.view_welcome()].into();
         }
 
         let tab_bar = self.view_tab_bar();
@@ -368,7 +370,7 @@ impl ShellKeep {
         }
 
         let new_tab_btn = button(text("+").size(14))
-            .on_press(Message::Connect)
+            .on_press(Message::NewTab)
             .padding([6, 10])
             .style(|_theme: &Theme, _status| button::Style {
                 background: None,
