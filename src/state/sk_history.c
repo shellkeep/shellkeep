@@ -14,6 +14,7 @@
  * - File permissions 0600 (NFR-SEC-18)
  */
 
+#include "shellkeep/sk_compat.h"
 #include "shellkeep/sk_state.h"
 
 #include <glib.h>
@@ -28,12 +29,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#ifdef _WIN32
-#include <io.h>
-#define fsync(fd) _commit(fd)
-static inline int sk_fchmod_noop(int fd, int mode) { (void)fd; (void)mode; return 0; }
-#define fchmod(fd, mode) sk_fchmod_noop(fd, mode)
-#endif
+/* fsync/fchmod compat provided by sk_compat.h */
 
 /* ---- Helpers ------------------------------------------------------------ */
 

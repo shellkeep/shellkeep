@@ -14,6 +14,7 @@
 #define _GNU_SOURCE
 #endif
 
+#include "shellkeep/sk_compat.h"
 #include "shellkeep/sk_log.h"
 
 #include <dirent.h>

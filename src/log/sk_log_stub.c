@@ -11,6 +11,7 @@
  * TODO: replace with full implementation when logging layer is ready.
  */
 
+#include "shellkeep/sk_compat.h"
 #include "shellkeep/sk_log.h"
 
 #include <stdarg.h>

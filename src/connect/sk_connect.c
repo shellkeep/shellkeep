@@ -32,6 +32,7 @@
 #include "shellkeep/sk_session.h"
 #include "shellkeep/sk_ssh.h"
 #include "shellkeep/sk_state.h"
+#include "shellkeep/sk_compat.h"
 #include "shellkeep/sk_types.h"
 #include "shellkeep/sk_ui_bridge.h"
 
@@ -2021,6 +2022,7 @@ tab_restore_free(SkTabRestore *tr)
 /** Global context pointer for signal handler (single-instance app). */
 static SkConnectContext *g_signal_ctx = NULL;
 
+#ifndef _WIN32
 static gboolean
 on_signal_shutdown(gpointer user_data G_GNUC_UNUSED)
 {
@@ -2032,12 +2034,12 @@ on_signal_shutdown(gpointer user_data G_GNUC_UNUSED)
   /* Return FALSE to let default handler run (terminate). */
   return FALSE;
 }
+#endif
 
 static void
 install_signal_handlers(SkConnectContext *ctx)
 {
   g_signal_ctx = ctx;
-  /* Use GLib's signal source for safe main-loop handling. */
 #ifndef _WIN32
   ctx->sigterm_handler_id = g_unix_signal_add(SIGTERM, on_signal_shutdown, ctx);
   ctx->sigint_handler_id = g_unix_signal_add(SIGINT, on_signal_shutdown, ctx);

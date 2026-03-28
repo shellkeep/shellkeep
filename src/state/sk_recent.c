@@ -15,6 +15,7 @@
  * Location: $XDG_DATA_HOME/shellkeep/recent_connections.json
  */
 
+#include "shellkeep/sk_compat.h"
 #include "shellkeep/sk_state.h"
 
 #include <glib.h>
@@ -27,10 +28,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#ifdef _WIN32
-#include <io.h>
-#define fsync(fd) _commit(fd)
-#endif
+/* fsync compat provided by sk_compat.h */
 
 /* ---- Helpers ------------------------------------------------------------ */
 

@@ -13,6 +13,7 @@
 #define _GNU_SOURCE /* for prctl, strdup */
 #endif
 
+#include "shellkeep/sk_compat.h"
 #include "shellkeep/sk_log.h"
 
 #include <errno.h>
@@ -25,20 +26,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#ifndef _WIN32
-#include <strings.h>
-#else
+#ifdef _WIN32
 #define strcasecmp _stricmp
+#else
+#include <strings.h>
 #endif
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
 
-#ifdef _WIN32
-static inline int sk_fchmod_noop(int fd, int mode) { (void)fd; (void)mode; return 0; }
-#define fchmod(fd, mode) sk_fchmod_noop(fd, mode)
-#endif
+/* fchmod/fsync/mkdir compat provided by sk_compat.h */
 
 #ifdef HAVE_SYSTEMD
 #include <syslog.h>

@@ -15,6 +15,7 @@
  * - Local cache (FR-STATE-01..02)
  */
 
+#include "shellkeep/sk_compat.h"
 #include "shellkeep/sk_state.h"
 
 #include <glib.h>
@@ -30,10 +31,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#ifdef _WIN32
-#include <io.h>
-#define fsync(fd) _commit(fd)
-#endif
+/* fsync compat provided by sk_compat.h */
 
 /* ---- Error Quark -------------------------------------------------------- */
 
