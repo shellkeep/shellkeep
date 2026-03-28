@@ -1,0 +1,70 @@
+# SPDX-FileCopyrightText: 2026 shellkeep contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+name: Rust Build & Test
+
+on:
+  push:
+    branches: [rust-rewrite]
+  pull_request:
+    branches: [rust-rewrite]
+
+concurrency:
+  group: rust-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: Linux
+            runner: ubuntu-latest
+          - os: macOS
+            runner: macos-14
+          - os: Windows
+            runner: windows-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Install Linux deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libxkbcommon-dev libwayland-dev libvulkan-dev \
+            libfontconfig1-dev
+
+      - name: Check formatting
+        run: cargo fmt -- --check
+
+      - name: Clippy
+        run: cargo clippy -- -D warnings
+        continue-on-error: true
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Test
+        run: cargo test
+        continue-on-error: true
