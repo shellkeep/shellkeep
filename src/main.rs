@@ -200,7 +200,8 @@ impl ShellKeep {
         // Build SSH command with tmux session attachment
         // Each tab gets a unique tmux session: shellkeep-0, shellkeep-1, etc.
         let tmux_session = format!("shellkeep-{id}");
-        let tmux_cmd = format!("tmux new-session -A -s {tmux_session} || exec $SHELL");
+        let tmux_cmd =
+            format!("TERM=xterm-256color tmux new-session -A -s {tmux_session} || exec $SHELL");
 
         let mut full_args = Vec::new();
         full_args.extend_from_slice(ssh_args);
@@ -248,7 +249,8 @@ impl ShellKeep {
         let id = self.next_id;
         self.next_id += 1;
 
-        let tmux_cmd = format!("tmux new-session -A -s {tmux_session} || exec $SHELL");
+        let tmux_cmd =
+            format!("TERM=xterm-256color tmux new-session -A -s {tmux_session} || exec $SHELL");
 
         let mut full_args = Vec::new();
         full_args.extend_from_slice(ssh_args);
@@ -319,7 +321,8 @@ impl ShellKeep {
         self.next_id += 1;
 
         // Reattach to the same tmux session
-        let tmux_cmd = format!("tmux new-session -A -s {tmux_session} || exec $SHELL");
+        let tmux_cmd =
+            format!("TERM=xterm-256color tmux new-session -A -s {tmux_session} || exec $SHELL");
         let mut full_args = Vec::new();
         full_args.extend_from_slice(&ssh_args);
         full_args.push("-t".to_string());
