@@ -111,6 +111,8 @@ struct ShellKeep {
     active_tab: usize,
     next_id: u64,
     show_welcome: bool,
+    renaming_tab: Option<usize>,
+    rename_input: String,
 
     // Welcome screen state
     host_input: String,
@@ -135,6 +137,10 @@ enum Message {
     NewTab,
     ReconnectTab(usize),
     ConnectRecent(usize),
+    StartRenameTab(usize),
+    RenameInputChanged(String),
+    FinishRename,
+    CancelRename,
     HostInputChanged(String),
     PortInputChanged(String),
     UserInputChanged(String),
@@ -156,6 +162,8 @@ impl ShellKeep {
             active_tab: 0,
             next_id: 0,
             show_welcome: false,
+            renaming_tab: None,
+            rename_input: String::new(),
             host_input: String::new(),
             port_input: "22".to_string(),
             user_input: username,
@@ -373,6 +381,31 @@ impl ShellKeep {
                 self.reconnect_tab(index);
             }
 
+            Message::StartRenameTab(index) => {
+                if index < self.tabs.len() {
+                    self.rename_input = self.tabs[index].label.clone();
+                    self.renaming_tab = Some(index);
+                }
+            }
+
+            Message::RenameInputChanged(v) => {
+                self.rename_input = v;
+            }
+
+            Message::FinishRename => {
+                if let Some(index) = self.renaming_tab {
+                    if index < self.tabs.len() && !self.rename_input.trim().is_empty() {
+                        self.tabs[index].label = self.rename_input.trim().to_string();
+                        self.update_title();
+                    }
+                }
+                self.renaming_tab = None;
+            }
+
+            Message::CancelRename => {
+                self.renaming_tab = None;
+            }
+
             Message::HostInputChanged(v) => {
                 self.host_input = v;
             }
@@ -449,12 +482,21 @@ impl ShellKeep {
                         self.show_welcome = false;
                         self.update_title();
                     }
-                    // Escape — cancel welcome, go back to tabs
-                    if key == keyboard::Key::Named(keyboard::key::Named::Escape)
-                        && self.show_welcome
+                    // F2 — rename current tab
+                    if key == keyboard::Key::Named(keyboard::key::Named::F2)
                         && !self.tabs.is_empty()
+                        && self.renaming_tab.is_none()
                     {
-                        self.show_welcome = false;
+                        self.rename_input = self.tabs[self.active_tab].label.clone();
+                        self.renaming_tab = Some(self.active_tab);
+                    }
+                    // Escape — cancel rename or welcome
+                    if key == keyboard::Key::Named(keyboard::key::Named::Escape) {
+                        if self.renaming_tab.is_some() {
+                            self.renaming_tab = None;
+                        } else if self.show_welcome && !self.tabs.is_empty() {
+                            self.show_welcome = false;
+                        }
                     }
                 }
             }
@@ -542,31 +584,7 @@ impl ShellKeep {
 
         for (i, tab) in self.tabs.iter().enumerate() {
             let is_active = i == self.active_tab && !self.show_welcome;
-
-            let label_text: String = if tab.label.len() > 25 {
-                format!("{}...", &tab.label[..22])
-            } else {
-                tab.label.clone()
-            };
-
-            let label_color = if tab.dead {
-                Color::from_rgb8(0xf3, 0x8b, 0xa8) // red for dead tabs
-            } else {
-                Color::from_rgb8(0xcd, 0xd6, 0xf4) // normal text
-            };
-
-            let close_btn = button(text("×").size(12))
-                .on_press(Message::CloseTab(i))
-                .padding([0, 4])
-                .style(|_theme: &Theme, _status| button::Style {
-                    background: None,
-                    text_color: Color::from_rgb8(0x6c, 0x70, 0x86),
-                    ..Default::default()
-                });
-
-            let tab_content = row![text(label_text).size(12).color(label_color), close_btn]
-                .spacing(6)
-                .align_y(iced::Alignment::Center);
+            let is_renaming = self.renaming_tab == Some(i);
 
             let bg = if is_active {
                 Color::from_rgb8(0x31, 0x32, 0x44)
@@ -574,19 +592,62 @@ impl ShellKeep {
                 Color::from_rgb8(0x1e, 0x1e, 0x2e)
             };
 
-            let tab_btn: Element<'_, Message> = button(tab_content)
-                .on_press(Message::SelectTab(i))
-                .padding([6, 12])
-                .style(move |_theme: &Theme, _status| button::Style {
+            let tab_btn: Element<'_, Message> = if is_renaming {
+                // Show inline text input for renaming
+                container(
+                    text_input("tab name", &self.rename_input)
+                        .on_input(Message::RenameInputChanged)
+                        .on_submit(Message::FinishRename)
+                        .size(12)
+                        .padding([4, 8])
+                        .width(150),
+                )
+                .padding([2, 4])
+                .style(move |_theme: &Theme| container::Style {
                     background: Some(iced::Background::Color(bg)),
-                    text_color: label_color,
-                    border: iced::Border {
-                        radius: 4.0.into(),
-                        ..Default::default()
-                    },
                     ..Default::default()
                 })
-                .into();
+                .into()
+            } else {
+                let label_text: String = if tab.label.len() > 25 {
+                    format!("{}...", &tab.label[..22])
+                } else {
+                    tab.label.clone()
+                };
+
+                let label_color = if tab.dead {
+                    Color::from_rgb8(0xf3, 0x8b, 0xa8)
+                } else {
+                    Color::from_rgb8(0xcd, 0xd6, 0xf4)
+                };
+
+                let close_btn = button(text("×").size(12))
+                    .on_press(Message::CloseTab(i))
+                    .padding([0, 4])
+                    .style(|_theme: &Theme, _status| button::Style {
+                        background: None,
+                        text_color: Color::from_rgb8(0x6c, 0x70, 0x86),
+                        ..Default::default()
+                    });
+
+                let tab_content = row![text(label_text).size(12).color(label_color), close_btn]
+                    .spacing(6)
+                    .align_y(iced::Alignment::Center);
+
+                button(tab_content)
+                    .on_press(Message::SelectTab(i))
+                    .padding([6, 12])
+                    .style(move |_theme: &Theme, _status| button::Style {
+                        background: Some(iced::Background::Color(bg)),
+                        text_color: label_color,
+                        border: iced::Border {
+                            radius: 4.0.into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    })
+                    .into()
+            };
 
             tabs_row.push(tab_btn);
         }
