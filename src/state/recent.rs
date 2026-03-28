@@ -1,0 +1,116 @@
+// SPDX-FileCopyrightText: 2026 shellkeep contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+//! Recent connections persistence.
+//!
+//! Stores the last 20 SSH connections in a JSON file at
+//! `$XDG_DATA_HOME/shellkeep/recent.json`.
+
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::PathBuf;
+
+const MAX_RECENT: usize = 20;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecentConnection {
+    pub label: String,
+    pub ssh_args: Vec<String>,
+    pub host: String,
+    pub user: String,
+    pub port: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RecentConnections {
+    pub connections: Vec<RecentConnection>,
+}
+
+impl RecentConnections {
+    /// Load recent connections from disk.
+    pub fn load() -> Self {
+        let path = Self::file_path();
+        match fs::read_to_string(&path) {
+            Ok(data) => serde_json::from_str(&data).unwrap_or_default(),
+            Err(_) => Self::default(),
+        }
+    }
+
+    /// Save recent connections to disk.
+    pub fn save(&self) {
+        let path = Self::file_path();
+        if let Some(parent) = path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        if let Ok(data) = serde_json::to_string_pretty(self) {
+            let _ = fs::write(&path, data);
+        }
+    }
+
+    /// Add a connection to the front of the list, deduplicating by label.
+    pub fn push(&mut self, conn: RecentConnection) {
+        // Remove existing entry with same label
+        self.connections.retain(|c| c.label != conn.label);
+        // Add to front
+        self.connections.insert(0, conn);
+        // Trim to max
+        self.connections.truncate(MAX_RECENT);
+    }
+
+    fn file_path() -> PathBuf {
+        dirs::data_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("shellkeep")
+            .join("recent.json")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn push_deduplicates() {
+        let mut recent = RecentConnections::default();
+        recent.push(RecentConnection {
+            label: "alice@example.com".into(),
+            ssh_args: vec!["alice@example.com".into()],
+            host: "example.com".into(),
+            user: "alice".into(),
+            port: "22".into(),
+        });
+        recent.push(RecentConnection {
+            label: "bob@other.com".into(),
+            ssh_args: vec!["bob@other.com".into()],
+            host: "other.com".into(),
+            user: "bob".into(),
+            port: "22".into(),
+        });
+        // Push duplicate — should move to front
+        recent.push(RecentConnection {
+            label: "alice@example.com".into(),
+            ssh_args: vec!["alice@example.com".into()],
+            host: "example.com".into(),
+            user: "alice".into(),
+            port: "22".into(),
+        });
+        assert_eq!(recent.connections.len(), 2);
+        assert_eq!(recent.connections[0].label, "alice@example.com");
+    }
+
+    #[test]
+    fn truncates_at_max() {
+        let mut recent = RecentConnections::default();
+        for i in 0..25 {
+            recent.push(RecentConnection {
+                label: format!("host-{i}"),
+                ssh_args: vec![format!("host-{i}")],
+                host: format!("host-{i}"),
+                user: "user".into(),
+                port: "22".into(),
+            });
+        }
+        assert_eq!(recent.connections.len(), MAX_RECENT);
+        assert_eq!(recent.connections[0].label, "host-24"); // most recent
+    }
+}

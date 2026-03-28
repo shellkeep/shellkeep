@@ -6,11 +6,14 @@
 //! Persistent sessions that survive everything.
 //! Open source. Cross-platform. Zero server setup.
 
+mod state;
+
 use iced::keyboard;
-use iced::widget::{Space, button, center, column, container, row, text, text_input};
+use iced::widget::{Space, button, center, column, container, row, scrollable, text, text_input};
 use iced::{Color, Element, Length, Subscription, Task, Theme};
 use iced_term::ColorPalette;
 use iced_term::settings::{BackendSettings, FontSettings, Settings, ThemeSettings};
+use state::recent::{RecentConnection, RecentConnections};
 
 fn main() -> iced::Result {
     tracing_subscriber::fmt()
@@ -70,6 +73,7 @@ struct ShellKeep {
     user_input: String,
     identity_input: String,
 
+    recent: RecentConnections,
     title_text: String,
     error: Option<String>,
 }
@@ -85,6 +89,7 @@ enum Message {
     CloseTab(usize),
     NewTab,
     ReconnectTab(usize),
+    ConnectRecent(usize),
     HostInputChanged(String),
     PortInputChanged(String),
     UserInputChanged(String),
@@ -100,6 +105,7 @@ enum Message {
 impl ShellKeep {
     fn new(initial_ssh_args: Option<Vec<String>>) -> (Self, Task<Message>) {
         let username = whoami::username();
+        let recent = RecentConnections::load();
         let mut app = ShellKeep {
             tabs: Vec::new(),
             active_tab: 0,
@@ -109,6 +115,7 @@ impl ShellKeep {
             port_input: "22".to_string(),
             user_input: username,
             identity_input: String::new(),
+            recent,
             title_text: "shellkeep".to_string(),
             error: None,
         };
@@ -334,8 +341,26 @@ impl ShellKeep {
                 }
                 let ssh_args = self.build_ssh_args();
                 let label = ssh_args.join(" ");
+                self.recent.push(RecentConnection {
+                    label: label.clone(),
+                    ssh_args: ssh_args.clone(),
+                    host: self.host_input.clone(),
+                    user: self.user_input.clone(),
+                    port: self.port_input.clone(),
+                });
+                self.recent.save();
                 self.open_tab(&ssh_args, &label);
                 self.show_welcome = false;
+            }
+
+            Message::ConnectRecent(index) => {
+                if let Some(conn) = self.recent.connections.get(index).cloned() {
+                    self.host_input = conn.host;
+                    self.user_input = conn.user;
+                    self.port_input = conn.port;
+                    self.open_tab(&conn.ssh_args, &conn.label);
+                    self.show_welcome = false;
+                }
             }
 
             Message::KeyEvent(event) => {
@@ -613,6 +638,43 @@ impl ShellKeep {
             Space::new().height(0).into()
         };
 
+        // Recent connections list
+        let recent_section: Element<'_, Message> = if self.recent.connections.is_empty() {
+            Space::new().height(0).into()
+        } else {
+            let mut recent_items: Vec<Element<'_, Message>> = Vec::new();
+            recent_items.push(
+                text("Recent connections")
+                    .size(12)
+                    .color(Color::from_rgb8(0x6c, 0x70, 0x86))
+                    .into(),
+            );
+            for (i, conn) in self.recent.connections.iter().enumerate() {
+                let item: Element<'_, Message> = button(
+                    text(&conn.label)
+                        .size(13)
+                        .color(Color::from_rgb8(0xcd, 0xd6, 0xf4)),
+                )
+                .on_press(Message::ConnectRecent(i))
+                .padding([6, 12])
+                .width(Length::Fill)
+                .style(|_theme: &Theme, _status| button::Style {
+                    background: Some(iced::Background::Color(Color::from_rgb8(0x31, 0x32, 0x44))),
+                    text_color: Color::from_rgb8(0xcd, 0xd6, 0xf4),
+                    border: iced::Border {
+                        radius: 4.0.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                })
+                .into();
+                recent_items.push(item);
+            }
+            scrollable(column(recent_items).spacing(4))
+                .height(Length::Shrink)
+                .into()
+        };
+
         let form = column![
             logo,
             title,
@@ -624,6 +686,8 @@ impl ShellKeep {
             Space::new().height(8),
             connect_btn,
             error_text,
+            Space::new().height(12),
+            recent_section,
         ]
         .spacing(12)
         .align_x(iced::Alignment::Center)
