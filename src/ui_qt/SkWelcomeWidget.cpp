@@ -6,6 +6,7 @@
 #include <QFont>
 #include <QHBoxLayout>
 #include <QKeyEvent>
+#include <QLabel>
 #include <QRegularExpression>
 #include <QVBoxLayout>
 
@@ -63,7 +64,7 @@ void SkWelcomeWidget::setupUi()
     /* Spacer */
     layout->addSpacing(16);
 
-    /* Host input + connect button */
+    /* Host input + port + connect button */
     auto *inputRow = new QHBoxLayout();
     inputRow->setSpacing(8);
 
@@ -74,6 +75,22 @@ void SkWelcomeWidget::setupUi()
     inputFont.setPointSize(14);
     m_hostInput->setFont(inputFont);
     inputRow->addWidget(m_hostInput, 1);
+
+    /* Port label + spinbox */
+    auto *portLabel = new QLabel(tr("Port:"), this);
+    portLabel->setStyleSheet(
+        QStringLiteral("color: %1; font-size: 13px;").arg(SkStyleSheet::kSubtext0));
+    inputRow->addWidget(portLabel);
+
+    m_portInput = new QSpinBox(this);
+    m_portInput->setRange(1, 65535);
+    m_portInput->setValue(22);
+    m_portInput->setMinimumHeight(40);
+    m_portInput->setFixedWidth(80);
+    QFont portFont = m_portInput->font();
+    portFont.setPointSize(14);
+    m_portInput->setFont(portFont);
+    inputRow->addWidget(m_portInput);
 
     m_connectButton = new QPushButton(tr("Connect"), this);
     m_connectButton->setMinimumHeight(40);
@@ -94,9 +111,14 @@ void SkWelcomeWidget::setupUi()
             "}"
             "QPushButton:pressed {"
             "  background-color: %4;"
+            "}"
+            "QPushButton:disabled {"
+            "  background-color: %5;"
+            "  color: %6;"
             "}")
             .arg(SkStyleSheet::kBlue, SkStyleSheet::kCrust,
-                 SkStyleSheet::kLavender, SkStyleSheet::kMauve));
+                 SkStyleSheet::kLavender, SkStyleSheet::kMauve,
+                 SkStyleSheet::kSurface1, SkStyleSheet::kOverlay1));
     inputRow->addWidget(m_connectButton);
 
     layout->addLayout(inputRow);
@@ -175,10 +197,32 @@ void SkWelcomeWidget::reset()
 {
     m_hostInput->clear();
     m_hostInput->setFocus();
+    setConnecting(false);
+}
+
+void SkWelcomeWidget::setConnecting(bool connecting)
+{
+    m_connecting = connecting;
+    m_hostInput->setEnabled(!connecting);
+    m_portInput->setEnabled(!connecting);
+    m_recentList->setEnabled(!connecting);
+
+    if (connecting) {
+        m_connectButton->setText(tr("Cancel"));
+        m_connectButton->setEnabled(true);
+    } else {
+        m_connectButton->setText(tr("Connect"));
+        m_connectButton->setEnabled(true);
+    }
 }
 
 void SkWelcomeWidget::onConnectClicked()
 {
+    if (m_connecting) {
+        Q_EMIT cancelRequested();
+        return;
+    }
+
     QString input = m_hostInput->text().trimmed();
     if (input.isEmpty())
         return;
@@ -186,12 +230,17 @@ void SkWelcomeWidget::onConnectClicked()
     QString host, user;
     int port = 0;
     parseHostInput(input, host, user, port);
+
+    /* Use the port spinbox value if the address didn't contain an explicit port */
+    if (port == 0)
+        port = m_portInput->value();
+
     Q_EMIT connectRequested(host, user, port);
 }
 
 void SkWelcomeWidget::onRecentItemDoubleClicked(QListWidgetItem *item)
 {
-    if (!item)
+    if (!item || m_connecting)
         return;
 
     QString text = item->text().trimmed();
@@ -201,6 +250,10 @@ void SkWelcomeWidget::onRecentItemDoubleClicked(QListWidgetItem *item)
     QString host, user;
     int port = 0;
     parseHostInput(text, host, user, port);
+
+    if (port == 0)
+        port = m_portInput->value();
+
     Q_EMIT connectRequested(host, user, port);
 }
 

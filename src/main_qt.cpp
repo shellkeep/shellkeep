@@ -16,9 +16,11 @@
  *               NFR-ARCH-09
  */
 
+#include "ui_qt/SkConnFeedback.h"
 #include "ui_qt/SkConnectFlow.h"
 #include "ui_qt/SkMainWindow.h"
 #include "ui_qt/SkStyleSheet.h"
+#include "ui_qt/SkTrayIcon.h"
 #include "ui_qt/SkUiBridgeQt.h"
 #include "ui_qt/SkWelcomeWidget.h"
 
@@ -28,6 +30,7 @@
 #include <QLibraryInfo>
 #include <QLocalServer>
 #include <QLocalSocket>
+#include <QPointer>
 #include <QLockFile>
 #include <QStandardPaths>
 #include <QTimer>
@@ -438,6 +441,18 @@ int main(int argc, char *argv[])
         mainWindow->show();
     }
 
+    /* -------------------------------------------------------------- */
+    /* System tray icon                                                */
+    /* -------------------------------------------------------------- */
+
+    if (SkTrayIcon::isAvailable()) {
+        auto *tray = bridgeQt->trayIcon();
+        tray->show();
+        SK_LOG_INFO(SK_LOG_COMPONENT_UI, "system tray icon shown");
+    } else {
+        SK_LOG_INFO(SK_LOG_COMPONENT_UI, "system tray not available, skipping");
+    }
+
     std::unique_ptr<SkConnectFlow> connectFlow;
 
     if (!hostArg.isEmpty()) {
@@ -477,17 +492,78 @@ int main(int argc, char *argv[])
         SK_LOG_INFO(SK_LOG_COMPONENT_UI, "no host specified, showing welcome");
         auto *welcome = new SkWelcomeWidget();
         mainWindow->setCentralWidget(welcome);
+
+        /* Helper to clean up feedback overlay */
+        QPointer<SkConnFeedback> feedbackPtr;
+
+        auto cleanupFeedback = [&feedbackPtr]() {
+            if (feedbackPtr) {
+                feedbackPtr->hide();
+                feedbackPtr->deleteLater();
+            }
+        };
+
         QObject::connect(welcome, &SkWelcomeWidget::connectRequested,
-                         [&](const QString &host, const QString &user, int p) {
-            SK_LOG_INFO(SK_LOG_COMPONENT_UI, "welcome: connect to %s",
-                        qPrintable(host));
+                         [&, welcome, mainWindow, cleanupFeedback](const QString &host, const QString &user, int p) {
+            /* Guard: ignore if already connecting */
+            if (connectFlow) {
+                SK_LOG_WARN(SK_LOG_COMPONENT_UI,
+                            "connect requested while already connecting, ignoring");
+                return;
+            }
+
+            SK_LOG_INFO(SK_LOG_COMPONENT_UI, "welcome: connect to %s:%d",
+                        qPrintable(host), p);
+
+            welcome->setConnecting(true);
+
+            /* Show feedback overlay */
+            cleanupFeedback();
+            auto *fb = new SkConnFeedback(mainWindow);
+            feedbackPtr = fb;
+            fb->setPhase(SK_BRIDGE_PHASE_CONNECTING);
+
             SkConnectFlowParams wp;
             wp.hostname = host;
             wp.username = user;
             wp.port = p;
             wp.identityFile = identityFile;
             connectFlow = std::make_unique<SkConnectFlow>(config);
+
+            QObject::connect(connectFlow.get(), &SkConnectFlow::phaseChanged,
+                             fb, [fb](int phase) {
+                fb->setPhase(static_cast<SkBridgeConnPhase>(phase));
+            });
+
+            QObject::connect(connectFlow.get(), &SkConnectFlow::connected,
+                             [&, welcome, cleanupFeedback]() {
+                SK_LOG_INFO(SK_LOG_COMPONENT_UI, "connection established");
+                cleanupFeedback();
+                welcome->setConnecting(false);
+            });
+
+            QObject::connect(connectFlow.get(), &SkConnectFlow::error,
+                             fb, [&, welcome, fb, cleanupFeedback](const QString &msg) {
+                SK_LOG_ERROR(SK_LOG_COMPONENT_UI, "connection error: %s",
+                             qPrintable(msg));
+                fb->setError(msg);
+                /* Auto-hide feedback after 5 seconds on error */
+                QTimer::singleShot(5000, fb, [&, welcome, cleanupFeedback]() {
+                    cleanupFeedback();
+                    connectFlow.reset();
+                    welcome->setConnecting(false);
+                });
+            });
+
             connectFlow->start(wp);
+        });
+
+        QObject::connect(welcome, &SkWelcomeWidget::cancelRequested,
+                         [&, welcome, cleanupFeedback]() {
+            SK_LOG_INFO(SK_LOG_COMPONENT_UI, "connection cancelled by user");
+            cleanupFeedback();
+            connectFlow.reset();
+            welcome->setConnecting(false);
         });
     }
 

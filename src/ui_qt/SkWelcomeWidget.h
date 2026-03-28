@@ -8,13 +8,15 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QPushButton>
+#include <QSpinBox>
 #include <QWidget>
 
 /**
  * Welcome screen shown when no connection is active.
  *
- * Displays the shellkeep logo, a host input field, recent connections,
- * and a connect button. On first use, shows a brief welcome message.
+ * Displays the shellkeep logo, a host input field, port field,
+ * recent connections, and a connect button. On first use, shows
+ * a brief welcome message.
  *
  * FR-UI-01..04
  */
@@ -37,6 +39,9 @@ public:
     /** Clear input and reset state. */
     void reset();
 
+    /** Set the connecting state — disables input, shows cancel. */
+    void setConnecting(bool connecting);
+
 Q_SIGNALS:
     /**
      * Emitted when the user requests a connection.
@@ -45,6 +50,9 @@ Q_SIGNALS:
      * @param port  Port number (0 = default 22).
      */
     void connectRequested(const QString &host, const QString &user, int port);
+
+    /** Emitted when the user cancels a connection in progress. */
+    void cancelRequested();
 
 private Q_SLOTS:
     void onConnectClicked();
@@ -58,10 +66,12 @@ private:
     QLabel *m_titleLabel = nullptr;
     QLabel *m_firstUseLabel = nullptr;
     QLineEdit *m_hostInput = nullptr;
+    QSpinBox *m_portInput = nullptr;
     QPushButton *m_connectButton = nullptr;
     QListWidget *m_recentList = nullptr;
     QLabel *m_recentLabel = nullptr;
     bool m_firstUse = false;
+    bool m_connecting = false;
 };
 
 #endif /* SK_WELCOME_WIDGET_H */
