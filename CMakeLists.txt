@@ -189,8 +189,8 @@ if(SK_BUILD_QT_UI)
   find_package(Qt6 REQUIRED COMPONENTS Core Widgets Network)
   qt_standard_project_setup()
 
-  # QTermWidget — find or use bundled
-  find_package(QTermWidget6 QUIET)
+  # QTermWidget — required for terminal emulation
+  find_package(qtermwidget6 REQUIRED)
 
   set(SK_QT_UI_SOURCES
     src/main_qt.cpp
@@ -239,10 +239,8 @@ if(SK_BUILD_QT_UI)
     Qt6::Network
   )
 
-  if(QTermWidget6_FOUND)
-    target_link_libraries(shellkeep PRIVATE QTermWidget6::QTermWidget6)
-    target_compile_definitions(shellkeep PRIVATE HAVE_QTERMWIDGET=1)
-  endif()
+  target_link_libraries(shellkeep PRIVATE qtermwidget6)
+  target_compile_definitions(shellkeep PRIVATE HAVE_QTERMWIDGET=1)
 
   # macOS bundle
   if(APPLE)

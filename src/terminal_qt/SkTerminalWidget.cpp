@@ -5,6 +5,7 @@
  * @file SkTerminalWidget.cpp
  * @brief Qt6 terminal widget with SSH I/O routing.
  *
+ * Wraps QTermWidget for full VT100/xterm terminal emulation.
  * Routes SSH channel data via QSocketNotifier on the SSH file descriptor.
  * Key input is forwarded to the SSH channel via sk_ssh_channel_write().
  * PTY resize via sk_ssh_channel_resize_pty() on resizeEvent.
@@ -22,7 +23,6 @@
 #include <QFontDatabase>
 #include <QKeyEvent>
 #include <QResizeEvent>
-#include <QRegularExpression>
 #include <QScrollBar>
 #include <QVBoxLayout>
 
@@ -46,11 +46,7 @@ SkTerminalWidget::SkTerminalWidget(QWidget *parent)
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
 
-#ifdef HAVE_QTERMWIDGET
     setupQTermWidget();
-#else
-    setupFallbackTerminal();
-#endif
 
     setFocusPolicy(Qt::StrongFocus);
 }
@@ -60,38 +56,6 @@ SkTerminalWidget::~SkTerminalWidget()
     disconnect();
 }
 
-/* ------------------------------------------------------------------ */
-/* Fallback terminal setup (QPlainTextEdit-based)                      */
-/* ------------------------------------------------------------------ */
-
-void SkTerminalWidget::setupFallbackTerminal()
-{
-    m_fallbackTerminal = new QPlainTextEdit(this);
-    m_fallbackTerminal->setReadOnly(false);
-    m_fallbackTerminal->setFont(m_font);
-    m_fallbackTerminal->setMaximumBlockCount(m_scrollbackLines);
-    m_fallbackTerminal->setLineWrapMode(QPlainTextEdit::NoWrap);
-    m_fallbackTerminal->setUndoRedoEnabled(false);
-    m_fallbackTerminal->setTabChangesFocus(false);
-
-    /* Dark background defaults (Catppuccin Mocha inspired). */
-    m_fallbackTerminal->setStyleSheet(
-        QStringLiteral("QPlainTextEdit {"
-                        "  background-color: #1e1e2e;"
-                        "  color: #cdd6f4;"
-                        "  selection-background-color: #45475a;"
-                        "  selection-color: #cdd6f4;"
-                        "  border: none;"
-                        "}"));
-
-    /* Install event filter to capture key presses for SSH forwarding. */
-    m_fallbackTerminal->installEventFilter(this);
-    m_fallbackTerminal->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
-
-    layout()->addWidget(m_fallbackTerminal);
-}
-
-#ifdef HAVE_QTERMWIDGET
 /* ------------------------------------------------------------------ */
 /* QTermWidget setup                                                   */
 /* ------------------------------------------------------------------ */
@@ -108,7 +72,6 @@ void SkTerminalWidget::setupQTermWidget()
 
     layout()->addWidget(m_qtermWidget);
 }
-#endif
 
 /* ------------------------------------------------------------------ */
 /* SSH I/O connection                                                   */
@@ -166,53 +129,11 @@ void SkTerminalWidget::disconnect()
 
 void SkTerminalWidget::feed(const char *buf, int len)
 {
-    if (buf == nullptr || len <= 0) {
+    if (buf == nullptr || len <= 0 || m_qtermWidget == nullptr) {
         return;
     }
 
-#ifdef HAVE_QTERMWIDGET
-    if (m_qtermWidget != nullptr) {
-        /* QTermWidget expects data via its sendText or direct feed. */
-        m_qtermWidget->sendText(QString::fromUtf8(buf, len));
-        return;
-    }
-#endif
-
-    if (m_fallbackTerminal != nullptr) {
-        /* Feed data to the plain text fallback.
-         * Strip ANSI escape sequences for readability. */
-        QString text = QString::fromUtf8(buf, len);
-
-        /* Remove ANSI CSI sequences: ESC [ ... final_byte.
-         * Use QChar(0x1b) for the actual ESC byte. */
-        static const QRegularExpression ansiRe(
-            QStringLiteral("\x1b\\[[0-9;?]*[A-Za-z]"));
-        text.remove(ansiRe);
-
-        /* Remove OSC sequences: ESC ] ... BEL or ESC \  */
-        static const QRegularExpression oscRe(
-            QStringLiteral("\x1b\\][^\x07\x1b]*(?:\x07|\x1b\\\\)"));
-        text.remove(oscRe);
-
-        /* Remove bare ESC + single char (e.g. ESC(B, ESC=, ESC>) */
-        static const QRegularExpression escSingle(
-            QStringLiteral("\x1b[()][A-Z0-9]|\x1b[=>]"));
-        text.remove(escSingle);
-
-        /* Handle carriage return for line overwriting. */
-        text.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
-        text.remove(QChar('\r'));
-
-        QScrollBar *scrollbar = m_fallbackTerminal->verticalScrollBar();
-        bool atBottom = scrollbar->value() >= scrollbar->maximum() - 1;
-
-        m_fallbackTerminal->moveCursor(QTextCursor::End);
-        m_fallbackTerminal->insertPlainText(text);
-
-        if (atBottom) {
-            scrollbar->setValue(scrollbar->maximum());
-        }
-    }
+    m_qtermWidget->sendText(QString::fromUtf8(buf, len));
 }
 
 /* ------------------------------------------------------------------ */
@@ -228,7 +149,6 @@ void SkTerminalWidget::setDead(const char *history, int len,
 
     /* Feed history data to reconstruct the session display. */
     if (history != nullptr && len > 0) {
-        /* Feed in chunks to avoid overwhelming the widget. */
         static constexpr int CHUNK_SIZE = 65536;
         int offset = 0;
         while (offset < len) {
@@ -239,14 +159,6 @@ void SkTerminalWidget::setDead(const char *history, int len,
     }
 
     m_dead = true;
-
-    /* Make the terminal read-only. */
-#ifdef HAVE_QTERMWIDGET
-    /* QTermWidget: remove event filter to stop forwarding keys. */
-#endif
-    if (m_fallbackTerminal != nullptr) {
-        m_fallbackTerminal->setReadOnly(true);
-    }
 
     /* Remove existing dead overlay if any. */
     if (m_deadOverlay != nullptr) {
@@ -295,14 +207,8 @@ void SkTerminalWidget::setTerminalFont(const QFont &font)
 {
     m_font = font;
 
-#ifdef HAVE_QTERMWIDGET
     if (m_qtermWidget != nullptr) {
         m_qtermWidget->setTerminalFont(font);
-    }
-#endif
-
-    if (m_fallbackTerminal != nullptr) {
-        m_fallbackTerminal->setFont(font);
     }
 
     recalculateSize();
@@ -312,14 +218,8 @@ void SkTerminalWidget::setScrollbackLines(int lines)
 {
     m_scrollbackLines = lines;
 
-#ifdef HAVE_QTERMWIDGET
     if (m_qtermWidget != nullptr) {
         m_qtermWidget->setHistorySize(lines);
-    }
-#endif
-
-    if (m_fallbackTerminal != nullptr) {
-        m_fallbackTerminal->setMaximumBlockCount(lines > 0 ? lines : 0);
     }
 }
 
@@ -327,11 +227,6 @@ void SkTerminalWidget::setCursorShape(int shape)
 {
     m_cursorShape = shape;
 
-    /* Cursor shape mapping:
-     * 0 = block, 1 = ibeam, 2 = underline.
-     * QTermWidget supports these natively. For the fallback we just
-     * change the cursor width hint. */
-#ifdef HAVE_QTERMWIDGET
     if (m_qtermWidget != nullptr) {
         /* QTermWidget uses Konsole key mode enum:
          * 0=block, 1=underline, 2=ibeam. Map our values. */
@@ -343,22 +238,6 @@ void SkTerminalWidget::setCursorShape(int shape)
         default: break;
         }
         m_qtermWidget->setKeyboardCursorShape(konsoleShape);
-    }
-#endif
-
-    if (m_fallbackTerminal != nullptr) {
-        switch (shape) {
-        case 1: /* ibeam */
-            m_fallbackTerminal->setCursorWidth(2);
-            break;
-        case 2: /* underline */
-            m_fallbackTerminal->setCursorWidth(1);
-            break;
-        default: /* block */
-            m_fallbackTerminal->setCursorWidth(
-                QFontMetrics(m_font).averageCharWidth());
-            break;
-        }
     }
 }
 
@@ -380,7 +259,6 @@ void SkTerminalWidget::toggleSearch()
         QObject::connect(m_searchBar, &SkTerminalSearch::closed,
                          this, &SkTerminalWidget::onSearchClosed);
 
-        /* Position at top of widget. */
         m_searchBar->setFixedWidth(width());
         m_searchBar->move(0, 0);
     }
@@ -389,14 +267,8 @@ void SkTerminalWidget::toggleSearch()
         m_searchBar->hide();
         m_searchBar->clear();
 
-        /* Return focus to terminal. */
-#ifdef HAVE_QTERMWIDGET
         if (m_qtermWidget != nullptr) {
             m_qtermWidget->setFocus();
-        }
-#endif
-        if (m_fallbackTerminal != nullptr) {
-            m_fallbackTerminal->setFocus();
         }
     } else {
         m_searchBar->show();
@@ -435,17 +307,14 @@ void SkTerminalWidget::resizeEvent(QResizeEvent *event)
     int oldRows = m_rows;
     recalculateSize();
 
-    /* Resize the search bar if visible. */
     if (m_searchBar != nullptr) {
         m_searchBar->setFixedWidth(width());
     }
 
-    /* Resize the dead overlay if visible. */
     if (m_deadOverlay != nullptr) {
         m_deadOverlay->resize(size());
     }
 
-    /* Notify the SSH channel of the new PTY size. */
     if (m_connected && m_channel != nullptr &&
         (m_cols != oldCols || m_rows != oldRows)) {
         GError *err = nullptr;
@@ -459,28 +328,9 @@ void SkTerminalWidget::resizeEvent(QResizeEvent *event)
 
 void SkTerminalWidget::recalculateSize()
 {
-#ifdef HAVE_QTERMWIDGET
     if (m_qtermWidget != nullptr) {
-        /* QTermWidget tracks its own size internally. */
         m_cols = m_qtermWidget->screenColumnsCount();
         m_rows = m_qtermWidget->screenLinesCount();
-        return;
-    }
-#endif
-
-    if (m_fallbackTerminal != nullptr) {
-        QFontMetrics fm(m_font);
-        int charWidth = fm.averageCharWidth();
-        int charHeight = fm.height();
-
-        if (charWidth > 0 && charHeight > 0) {
-            /* Account for scrollbar width. */
-            int viewWidth = m_fallbackTerminal->viewport()->width();
-            int viewHeight = m_fallbackTerminal->viewport()->height();
-
-            m_cols = std::max(1, viewWidth / charWidth);
-            m_rows = std::max(1, viewHeight / charHeight);
-        }
     }
 }
 
@@ -493,10 +343,8 @@ bool SkTerminalWidget::eventFilter(QObject *obj, QEvent *event)
     if (event->type() == QEvent::KeyPress && m_connected && !m_dead) {
         auto *keyEvent = static_cast<QKeyEvent *>(event);
 
-        /* Build the byte sequence to send to the SSH channel. */
         QByteArray rawData;
 
-        /* Handle special keys. */
         switch (keyEvent->key()) {
         case Qt::Key_Return:
         case Qt::Key_Enter:
@@ -554,14 +402,12 @@ bool SkTerminalWidget::eventFilter(QObject *obj, QEvent *event)
         case Qt::Key_F11: rawData = QByteArray("\x1b[23~", 5); break;
         case Qt::Key_F12: rawData = QByteArray("\x1b[24~", 5); break;
         default:
-            /* Ctrl+letter generates control codes. */
             if (keyEvent->modifiers() & Qt::ControlModifier &&
                 keyEvent->key() >= Qt::Key_A &&
                 keyEvent->key() <= Qt::Key_Z) {
                 char ctrl = static_cast<char>(keyEvent->key() - Qt::Key_A + 1);
                 rawData = QByteArray(&ctrl, 1);
             } else {
-                /* Regular text input. */
                 QString text = keyEvent->text();
                 if (!text.isEmpty()) {
                     rawData = text.toUtf8();
@@ -572,12 +418,6 @@ bool SkTerminalWidget::eventFilter(QObject *obj, QEvent *event)
 
         if (!rawData.isEmpty()) {
             sendToChannel(rawData);
-
-            /* For the fallback terminal, don't let QPlainTextEdit handle
-             * the key -- we manage display via feed() from SSH data. */
-            if (obj == m_fallbackTerminal) {
-                return true;
-            }
         }
     }
 
@@ -603,10 +443,8 @@ void SkTerminalWidget::onSshDataAvailable()
             feed(buf, nbytes);
             Q_EMIT dataReceived();
         } else if (nbytes == 0) {
-            /* No more data available right now. */
             break;
         } else {
-            /* Error or EOF -- channel is dead. */
             disconnect();
             break;
         }
@@ -622,7 +460,6 @@ void SkTerminalWidget::sendToChannel(const QByteArray &buf)
     int written = sk_ssh_channel_write(m_channel, buf.constData(),
                                         static_cast<size_t>(buf.size()));
     if (written < 0) {
-        /* Write error -- channel is likely dead. */
         disconnect();
     }
 }
@@ -640,26 +477,9 @@ void SkTerminalWidget::onSearchRequested(const QString &text)
         return;
     }
 
-#ifdef HAVE_QTERMWIDGET
     if (m_qtermWidget != nullptr) {
         m_qtermWidget->search(text, true, false);
         m_searchBar->setStatusText(tr("Searching..."));
-        return;
-    }
-#endif
-
-    if (m_fallbackTerminal != nullptr) {
-        /* Simple plaintext search in the fallback terminal. */
-        QTextCursor cursor = m_fallbackTerminal->textCursor();
-        cursor.movePosition(QTextCursor::Start);
-        m_fallbackTerminal->setTextCursor(cursor);
-
-        bool found = m_fallbackTerminal->find(text);
-        if (found) {
-            m_searchBar->setStatusText(tr("Found"));
-        } else {
-            m_searchBar->setStatusText(tr("No matches"));
-        }
     }
 }
 
@@ -671,21 +491,8 @@ void SkTerminalWidget::onSearchNext()
         return;
     }
 
-#ifdef HAVE_QTERMWIDGET
     if (m_qtermWidget != nullptr) {
         m_qtermWidget->search(text, true, false);
-        return;
-    }
-#endif
-
-    if (m_fallbackTerminal != nullptr) {
-        if (!m_fallbackTerminal->find(text)) {
-            /* Wrap around to the beginning. */
-            QTextCursor cursor = m_fallbackTerminal->textCursor();
-            cursor.movePosition(QTextCursor::Start);
-            m_fallbackTerminal->setTextCursor(cursor);
-            m_fallbackTerminal->find(text);
-        }
     }
 }
 
@@ -697,21 +504,8 @@ void SkTerminalWidget::onSearchPrev()
         return;
     }
 
-#ifdef HAVE_QTERMWIDGET
     if (m_qtermWidget != nullptr) {
         m_qtermWidget->search(text, false, false);
-        return;
-    }
-#endif
-
-    if (m_fallbackTerminal != nullptr) {
-        if (!m_fallbackTerminal->find(text, QTextDocument::FindBackward)) {
-            /* Wrap around to the end. */
-            QTextCursor cursor = m_fallbackTerminal->textCursor();
-            cursor.movePosition(QTextCursor::End);
-            m_fallbackTerminal->setTextCursor(cursor);
-            m_fallbackTerminal->find(text, QTextDocument::FindBackward);
-        }
     }
 }
 
@@ -722,15 +516,8 @@ void SkTerminalWidget::onSearchClosed()
         m_searchBar->clear();
     }
 
-    /* Return focus to terminal. */
-#ifdef HAVE_QTERMWIDGET
     if (m_qtermWidget != nullptr) {
         m_qtermWidget->setFocus();
-        return;
-    }
-#endif
-    if (m_fallbackTerminal != nullptr) {
-        m_fallbackTerminal->setFocus();
     }
 }
 
@@ -754,7 +541,6 @@ SkTerminalQtHandle *sk_terminal_qt_new(void)
     handle->newSessionCb = nullptr;
     handle->newSessionData = nullptr;
 
-    /* Wire up the new session signal to the C callback. */
     QObject::connect(handle->widget, &SkTerminalWidget::newSessionRequested,
                      [handle]() {
                          if (handle->newSessionCb != nullptr) {
