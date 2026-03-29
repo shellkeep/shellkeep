@@ -205,8 +205,9 @@ impl ShellKeep {
         let id = self.next_id;
         self.next_id += 1;
 
-        let tmux_cmd =
-            format!("TERM=xterm-256color tmux new-session -A -s {tmux_session} || exec $SHELL");
+        let tmux_cmd = format!(
+            "TERM=xterm-256color tmux new-session -A -s {tmux_session} \\; set status off || exec $SHELL"
+        );
 
         let mut full_args = Vec::new();
         full_args.extend_from_slice(ssh_args);
