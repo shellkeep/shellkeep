@@ -14,6 +14,7 @@ rust-version = "1.88"
 # Terminal emulator widget (forked for shellkeep customizations)
 iced_term = { path = "crates/iced_term" }
 iced = { version = "0.14", features = ["tokio"] }
+iced_runtime = "0.14"
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }

@@ -19,6 +19,8 @@ use shellkeep::config::Config;
 use shellkeep::ssh;
 use shellkeep::state::recent::{RecentConnection, RecentConnections};
 
+const RENAME_INPUT_ID: &str = "rename-tab-input";
+
 fn main() -> iced::Result {
     let args: Vec<String> = std::env::args().collect();
 
@@ -219,7 +221,7 @@ impl ShellKeep {
         self.next_id += 1;
 
         let tmux_cmd = format!(
-            "TERM=xterm-256color tmux new-session -A -s {tmux_session} \\; set status off \\; set mouse on || exec $SHELL"
+            "TERM=xterm-256color tmux new-session -A -s {tmux_session} \\; set status off || exec $SHELL"
         );
 
         let mut full_args = Vec::new();
@@ -405,6 +407,10 @@ impl ShellKeep {
                     self.active_tab = index;
                     self.rename_input = self.tabs[index].label.clone();
                     self.renaming_tab = Some(index);
+                    return Task::batch([
+                        iced_runtime::widget::operation::focus(RENAME_INPUT_ID),
+                        iced_runtime::widget::operation::select_all(RENAME_INPUT_ID),
+                    ]);
                 }
             }
 
@@ -666,6 +672,7 @@ impl ShellKeep {
                     {
                         self.rename_input = self.tabs[self.active_tab].label.clone();
                         self.renaming_tab = Some(self.active_tab);
+                        return iced_runtime::widget::operation::focus(RENAME_INPUT_ID);
                     }
                     // Ctrl+Shift+= or Ctrl+= — zoom in
                     if modifiers.control()
@@ -975,6 +982,7 @@ impl ShellKeep {
                 // Show inline text input for renaming
                 container(
                     text_input("tab name", &self.rename_input)
+                        .id(RENAME_INPUT_ID)
                         .on_input(Message::RenameInputChanged)
                         .on_submit(Message::FinishRename)
                         .size(12)
