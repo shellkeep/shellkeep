@@ -17,11 +17,13 @@ use iced::widget::{
 use iced::{Color, Element, Length, Subscription, Task, Theme};
 use iced_term::ColorPalette;
 use iced_term::settings::{BackendSettings, FontSettings, Settings, ThemeSettings};
+use iced_term::{AlacrittyPoint, RegexSearch, SearchMatch};
 use shellkeep::config::Config;
 use shellkeep::ssh;
 use shellkeep::ssh::manager::{ConnKey, ConnectionManager};
 use shellkeep::state::recent::{RecentConnection, RecentConnections};
 use shellkeep::state::state_file::{StateFile, TabState};
+use shellkeep::tray::{Tray, TrayAction};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -122,6 +124,8 @@ fn main() -> iced::Result {
     let _ = std::fs::create_dir_all(&log_dir);
     let log_path = log_dir.join("shellkeep.log");
 
+    // NFR-OBS-04: rotate log if it exceeds 10 MB
+    rotate_logs(&log_path);
     if let Ok(file) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -198,6 +202,8 @@ struct ConnParams {
 struct Tab {
     id: u64,
     label: String,
+    /// FR-SESSION-07: stable UUID for state persistence
+    session_uuid: String,
     terminal: Option<iced_term::Terminal>,
     /// Legacy: system ssh args (kept for compatibility during transition)
     ssh_args: Vec<String>,
@@ -206,6 +212,8 @@ struct Tab {
     dead: bool,
     reconnect_attempts: u32,
     auto_reconnect: bool,
+    /// FR-RECONNECT-06: current reconnect delay in milliseconds (0 = use base)
+    reconnect_delay_ms: u64,
     /// Whether this tab uses russh (true) or system ssh (false)
     uses_russh: bool,
     // russh channel holder — taken by the subscription on first run
@@ -221,6 +229,8 @@ struct Tab {
     /// Holder for a channel being established by the async task.
     /// Moved to ssh_channel_holder when SshConnected(Ok) arrives.
     pending_channel: Option<ChannelHolder>,
+    /// FR-CONN-16: connection phase text, shared with async task
+    connection_phase: Option<Arc<std::sync::Mutex<String>>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -245,6 +255,12 @@ struct ShellKeep {
     client_id: String,
     /// Shared SSH connection manager
     conn_manager: Arc<Mutex<ConnectionManager>>,
+    /// Whether we've already listed existing sessions after first connect
+    sessions_listed: bool,
+    /// Debounce: time of last state flush
+    last_state_save: Option<std::time::Instant>,
+    /// Debounce: state has unsaved changes
+    state_dirty: bool,
 
     // Welcome screen state
     host_input: String,
@@ -256,6 +272,15 @@ struct ShellKeep {
     recent: RecentConnections,
     title_text: String,
     error: Option<String>,
+
+    /// System tray icon (FR-TRAY-01)
+    tray: Option<Tray>,
+
+    // Scrollback search state (FR-TABS-09, FR-TERMINAL-07)
+    search_active: bool,
+    search_input: String,
+    search_regex: Option<RegexSearch>,
+    search_last_match: Option<SearchMatch>,
 }
 
 // ---------------------------------------------------------------------------
@@ -270,6 +295,7 @@ enum Message {
     SshData(u64, Vec<u8>),
     SshDisconnected(u64, String),
     SshConnected(u64, Result<(), String>),
+    ExistingSessionsFound(Result<Vec<String>, String>),
     #[allow(dead_code)]
     SshSessionsListed(Result<(), String>),
     SelectTab(usize),
@@ -288,12 +314,22 @@ enum Message {
     RenameInputChanged(String),
     FinishRename,
     ToastDismiss,
+    FlushState,
     HostInputChanged(String),
     PortInputChanged(String),
     UserInputChanged(String),
     IdentityInputChanged(String),
     Connect,
     KeyEvent(keyboard::Event),
+    ConnectionPhaseTick,
+    /// FR-TRAY-01: poll tray menu events
+    TrayPoll,
+    // FR-TABS-09: scrollback search
+    SearchToggle,
+    SearchInputChanged(String),
+    SearchNext,
+    SearchPrev,
+    SearchClose,
 }
 
 // ---------------------------------------------------------------------------
@@ -401,6 +437,8 @@ async fn establish_ssh_session(
     tmux_session: String,
     cols: u32,
     rows: u32,
+    keepalive_secs: u32,
+    phase: Arc<std::sync::Mutex<String>>,
 ) -> Result<russh::Channel<russh::client::Msg>, String> {
     let conn_key = ConnKey {
         host: conn.host.clone(),
@@ -408,16 +446,40 @@ async fn establish_ssh_session(
         username: conn.username.clone(),
     };
 
+    *phase.lock().unwrap() = "Authenticating...".to_string();
+
     let handle_arc = {
         let mut mgr = conn_manager.lock().await;
-        mgr.get_or_connect(&conn_key, conn.identity_file.as_deref())
+        mgr.get_or_connect(&conn_key, conn.identity_file.as_deref(), keepalive_secs)
             .await
             .map_err(|e| e.to_string())?
     };
 
     let handle = handle_arc.lock().await;
 
+    // FR-CONN-13..15: check tmux availability and version
+    *phase.lock().unwrap() = "Checking tmux...".to_string();
+
+    let tmux_version_output =
+        ssh::connection::exec_command(&handle, "tmux -V 2>/dev/null || echo 'NOT_FOUND'")
+            .await
+            .unwrap_or_else(|_| "NOT_FOUND".to_string());
+
+    if tmux_version_output.contains("NOT_FOUND") || tmux_version_output.trim().is_empty() {
+        return Err("tmux not found on server — install tmux >= 3.0 to use shellkeep".to_string());
+    }
+
+    if let Some(ver_str) = tmux_version_output.trim().strip_prefix("tmux ") {
+        if let Ok(major) = ver_str.split('.').next().unwrap_or("0").parse::<u32>() {
+            if major < 3 {
+                tracing::warn!("tmux version {ver_str} < 3.0 — some features may not work");
+            }
+        }
+    }
+
     // Create tmux session (idempotent — no error if already exists)
+    *phase.lock().unwrap() = "Opening session...".to_string();
+
     ssh::tmux::create_session_russh(&handle, &tmux_session)
         .await
         .map_err(|e| e.to_string())?;
@@ -470,6 +532,9 @@ impl ShellKeep {
             current_conn: None,
             client_id: shellkeep::state::client_id::resolve(config.general.client_id.as_deref()),
             conn_manager: Arc::new(Mutex::new(ConnectionManager::new())),
+            sessions_listed: false,
+            last_state_save: None,
+            state_dirty: false,
             host_input: String::new(),
             port_input: default_port,
             user_input: username,
@@ -478,8 +543,18 @@ impl ShellKeep {
             recent,
             title_text: "shellkeep".to_string(),
             error: None,
+            tray: None,
+            search_active: false,
+            search_input: String::new(),
+            search_regex: None,
+            search_last_match: None,
         };
 
+        // FR-TRAY-01: initialize system tray icon
+        app.tray = Tray::new(app.config.tray.enabled);
+
+        // FR-STATE-07: clean up orphaned .tmp files from interrupted saves
+        cleanup_tmp_files(&app.client_id);
         if let Some(ssh_args) = initial_ssh_args {
             // Parse connection params from CLI args
             let host_arg = ssh_args
@@ -515,41 +590,29 @@ impl ShellKeep {
                 identity_file: cli_identity,
             });
 
-            // CLI launch: use system ssh for immediate feedback
-            // (russh is used for interactive Connect button flow)
-            let ssh_args_vec = app.build_ssh_args_from_conn(app.current_conn.as_ref().unwrap());
-            let existing = ssh::tmux::list_remote_sessions(&ssh_args_vec);
-            let saved_state = StateFile::load_local(&StateFile::local_cache_path(&app.client_id));
-
-            if existing.is_empty() {
-                app.open_tab_with_tmux(&ssh_args_vec, &label);
-            } else {
-                tracing::info!(
-                    "found {} existing tmux session(s): {:?}",
-                    existing.len(),
-                    existing
-                );
-                for (i, session_name) in existing.iter().enumerate() {
-                    let tab_label = saved_state
-                        .as_ref()
-                        .and_then(|s| {
-                            s.tabs
-                                .iter()
-                                .find(|t| t.tmux_session_name == *session_name)
-                                .map(|t| t.title.clone())
-                        })
-                        .unwrap_or_else(|| {
-                            if i == 0 {
-                                label.clone()
-                            } else {
-                                format!("Session {}", i + 1)
-                            }
-                        });
-                    app.open_tab_with_tmux_session(&ssh_args_vec, &tab_label, session_name);
-                }
-            }
+            // FR-CONN-21: CLI launch via russh (async, non-blocking)
+            // Opens one tab immediately; existing sessions discovered after connect
+            let tmux_session = app.next_tmux_session();
+            let task = app.open_tab_russh(&label, &tmux_session);
+            return (app, task);
         } else {
             app.show_welcome = true;
+        }
+
+        // NFR-OBS-11: check for previous crash dumps
+        let crash_dir = shellkeep::crash::crash_dir();
+        if crash_dir.exists() {
+            if let Ok(entries) = std::fs::read_dir(&crash_dir) {
+                let count = entries.filter_map(|e| e.ok()).count();
+                if count > 0 {
+                    app.toast = Some((
+                        format!(
+                            "Previous crash detected ({count} dump(s)). Run shellkeep --crash-report for details."
+                        ),
+                        std::time::Instant::now(),
+                    ));
+                }
+            }
         }
 
         (app, Task::none())
@@ -632,6 +695,7 @@ impl ShellKeep {
         let writer_rx_holder = Arc::new(Mutex::new(Some(ssh_writer_rx)));
         let resize_rx_holder = Arc::new(Mutex::new(Some(resize_rx)));
         let channel_holder: ChannelHolder = Arc::new(Mutex::new(None));
+        let phase = Arc::new(std::sync::Mutex::new("Connecting...".to_string()));
 
         let ssh_args = self
             .current_conn
@@ -642,6 +706,7 @@ impl ShellKeep {
         self.tabs.push(Tab {
             id,
             label: label.to_string(),
+            session_uuid: uuid::Uuid::new_v4().to_string(),
             terminal: Some(terminal),
             ssh_args,
             conn_params: self.current_conn.clone(),
@@ -650,12 +715,14 @@ impl ShellKeep {
             reconnect_attempts: 0,
             auto_reconnect: true,
             uses_russh: true,
+            reconnect_delay_ms: 0,
             ssh_channel_holder: None, // set when SshConnected(Ok) arrives
             ssh_writer_rx_holder: Some(writer_rx_holder),
             ssh_resize_tx: Some(resize_tx),
             ssh_resize_rx_holder: Some(resize_rx_holder),
             conn_key: None,
             pending_channel: Some(channel_holder.clone()),
+            connection_phase: Some(phase.clone()),
         });
         self.active_tab = self.tabs.len() - 1;
         self.error = None;
@@ -667,9 +734,11 @@ impl ShellKeep {
         let mgr = self.conn_manager.clone();
         let tmux = tmux_session.to_string();
         let holder = channel_holder;
+        let keepalive = self.config.ssh.keepalive_interval;
+        let phase_clone = phase;
         Task::perform(
             async move {
-                match establish_ssh_session(mgr, conn, tmux, 80, 24).await {
+                match establish_ssh_session(mgr, conn, tmux, 80, 24, keepalive, phase_clone).await {
                     Ok(channel) => {
                         *holder.lock().await = Some(channel);
                         Ok(())
@@ -734,6 +803,7 @@ impl ShellKeep {
                     ssh_resize_rx_holder: None,
                     conn_key: None,
                     pending_channel: None,
+                    connection_phase: None,
                 });
                 self.active_tab = self.tabs.len() - 1;
                 self.error = None;
@@ -801,7 +871,9 @@ impl ShellKeep {
                     tab.ssh_writer_rx_holder = Some(Arc::new(Mutex::new(Some(ssh_writer_rx))));
                     tab.ssh_resize_tx = Some(resize_tx);
                     tab.ssh_resize_rx_holder = Some(Arc::new(Mutex::new(Some(resize_rx))));
+                    let phase = Arc::new(std::sync::Mutex::new("Reconnecting...".to_string()));
                     tab.pending_channel = Some(channel_holder.clone());
+                    tab.connection_phase = Some(phase.clone());
                     tab.dead = false;
 
                     let conn = match &tab.conn_params {
@@ -812,11 +884,23 @@ impl ShellKeep {
                     let mgr = self.conn_manager.clone();
                     let tab_id = tab.id;
                     let holder = channel_holder;
+                    let keepalive = self.config.ssh.keepalive_interval;
+                    let phase_clone = phase;
                     self.update_title();
 
                     Task::perform(
                         async move {
-                            match establish_ssh_session(mgr, conn, tmux, 80, 24).await {
+                            match establish_ssh_session(
+                                mgr,
+                                conn,
+                                tmux,
+                                80,
+                                24,
+                                keepalive,
+                                phase_clone,
+                            )
+                            .await
+                            {
                                 Ok(channel) => {
                                     *holder.lock().await = Some(channel);
                                     Ok(())
@@ -864,7 +948,22 @@ impl ShellKeep {
         tracing::debug!("font size: {}", self.current_font_size);
     }
 
-    fn save_state(&self) {
+    fn save_state(&mut self) {
+        self.state_dirty = true;
+        if let Some(last) = self.last_state_save {
+            if last.elapsed() < std::time::Duration::from_secs(2) {
+                return; // debounced — will be saved by FlushState timer
+            }
+        }
+        self.flush_state();
+    }
+
+    fn flush_state(&mut self) {
+        if !self.state_dirty {
+            return;
+        }
+        self.state_dirty = false;
+        self.last_state_save = Some(std::time::Instant::now());
         let mut state = StateFile::new(&self.client_id);
         for (i, tab) in self.tabs.iter().enumerate() {
             state.tabs.push(TabState {
@@ -945,7 +1044,15 @@ impl ShellKeep {
                     // Clear channel state so subscription stops
                     tab.ssh_channel_holder = None;
                     tab.ssh_resize_tx = None;
-                    if tab.auto_reconnect
+                    tab.connection_phase = None;
+
+                    // FR-RECONNECT-07: classify error
+                    if ssh::errors::is_permanent(&reason) {
+                        tab.terminal = None;
+                        tab.dead = true;
+                        tab.auto_reconnect = false;
+                        tracing::error!("permanent error for tab {tab_id}: {reason}");
+                    } else if tab.auto_reconnect
                         && tab.reconnect_attempts < self.config.ssh.reconnect_max_attempts
                     {
                         tab.reconnect_attempts += 1;
@@ -970,20 +1077,95 @@ impl ShellKeep {
                             && let Some(holder) = tab.pending_channel.take()
                         {
                             tab.ssh_channel_holder = Some(holder);
+                            tab.connection_phase = None;
                             tracing::info!("SSH tab {tab_id}: connected, channel ready");
+                        }
+
+                        // After first successful connect, list existing tmux sessions
+                        if !self.sessions_listed && self.current_conn.is_some() {
+                            self.sessions_listed = true;
+                            let mgr = self.conn_manager.clone();
+                            let conn = self.current_conn.clone().unwrap();
+                            let conn_key = ConnKey {
+                                host: conn.host.clone(),
+                                port: conn.port,
+                                username: conn.username.clone(),
+                            };
+                            return Task::perform(
+                                async move {
+                                    let handle_arc = {
+                                        let mut m = mgr.lock().await;
+                                        m.get_or_connect(
+                                            &conn_key,
+                                            conn.identity_file.as_deref(),
+                                            15,
+                                        )
+                                        .await
+                                        .map_err(|e| e.to_string())?
+                                    };
+                                    let handle = handle_arc.lock().await;
+                                    Ok(ssh::tmux::list_sessions_russh(&handle).await)
+                                },
+                                |result: Result<Vec<String>, String>| {
+                                    Message::ExistingSessionsFound(result)
+                                },
+                            );
                         }
                     }
                     Err(e) => {
                         tracing::error!("SSH tab {tab_id}: connection failed: {e}");
                         if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
                             tab.pending_channel = None;
+                            tab.connection_phase = None;
                             tab.terminal = None;
-                            tab.dead = true;
-                            tab.auto_reconnect = true;
-                            tab.reconnect_attempts += 1;
+                            // FR-RECONNECT-07: classify error
+                            if ssh::errors::is_permanent(&e) {
+                                tab.dead = true;
+                                tab.auto_reconnect = false;
+                            } else {
+                                tab.dead = true;
+                                tab.auto_reconnect = true;
+                                tab.reconnect_attempts += 1;
+                            }
                         }
                         self.error = Some(format!("Connection failed: {e}"));
                         self.update_title();
+                    }
+                }
+            }
+
+            Message::ExistingSessionsFound(result) => {
+                if let Ok(sessions) = result {
+                    // Filter out sessions we already have a tab for
+                    let existing_tmux: Vec<String> =
+                        self.tabs.iter().map(|t| t.tmux_session.clone()).collect();
+                    let new_sessions: Vec<String> = sessions
+                        .into_iter()
+                        .filter(|s| !existing_tmux.contains(s))
+                        .collect();
+
+                    if !new_sessions.is_empty() {
+                        tracing::info!(
+                            "found {} additional tmux session(s): {:?}",
+                            new_sessions.len(),
+                            new_sessions
+                        );
+                        let saved_state =
+                            StateFile::load_local(&StateFile::local_cache_path(&self.client_id));
+                        let mut tasks = Vec::new();
+                        for (i, session_name) in new_sessions.iter().enumerate() {
+                            let tab_label = saved_state
+                                .as_ref()
+                                .and_then(|s| {
+                                    s.tabs
+                                        .iter()
+                                        .find(|t| t.tmux_session_name == *session_name)
+                                        .map(|t| t.title.clone())
+                                })
+                                .unwrap_or_else(|| format!("Session {}", i + 2));
+                            tasks.push(self.open_tab_russh(&tab_label, session_name));
+                        }
+                        return Task::batch(tasks);
                     }
                 }
             }
@@ -1017,6 +1199,10 @@ impl ShellKeep {
 
             Message::ToastDismiss => {
                 self.toast = None;
+            }
+
+            Message::FlushState => {
+                self.flush_state();
             }
 
             Message::ContextMenuDismiss => {
@@ -1278,6 +1464,10 @@ impl ShellKeep {
                 }
             }
 
+            Message::ConnectionPhaseTick => {
+                // Just triggers a redraw to update connection phase text
+            }
+
             Message::KeyEvent(event) => {
                 if let keyboard::Event::KeyPressed { key, modifiers, .. } = event {
                     // Ctrl+Shift+T — new tab (same server)
@@ -1399,6 +1589,11 @@ impl ShellKeep {
             } else if let Some(ref terminal) = tab.terminal {
                 // Show "Connecting..." overlay if russh tab without channel yet
                 if tab.uses_russh && tab.ssh_channel_holder.is_none() {
+                    let phase_text = tab
+                        .connection_phase
+                        .as_ref()
+                        .map(|p| p.lock().unwrap().clone())
+                        .unwrap_or_else(|| "Connecting...".to_string());
                     stack![
                         container(
                             iced_term::TerminalView::show(terminal).map(Message::TerminalEvent)
@@ -1406,7 +1601,7 @@ impl ShellKeep {
                         .width(Length::Fill)
                         .height(Length::Fill),
                         center(
-                            text("Connecting...")
+                            text(phase_text)
                                 .size(16)
                                 .color(Color::from_rgb8(0xf9, 0xe2, 0xaf))
                         ),
@@ -2031,6 +2226,14 @@ impl ShellKeep {
             }
         }
 
+        // FR-CONN-16: poll for connection phase updates
+        if self.tabs.iter().any(|t| t.connection_phase.is_some()) {
+            subs.push(
+                iced::time::every(std::time::Duration::from_millis(200))
+                    .map(|_| Message::ConnectionPhaseTick),
+            );
+        }
+
         subs.push(keyboard::listen().map(Message::KeyEvent));
 
         // Auto-reconnect timer — check every 3 seconds for tabs needing reconnection
@@ -2042,6 +2245,13 @@ impl ShellKeep {
             subs.push(
                 iced::time::every(std::time::Duration::from_secs(3))
                     .map(|_| Message::AutoReconnectTick),
+            );
+        }
+
+        // State debounce flush — FR-STATE-03
+        if self.state_dirty {
+            subs.push(
+                iced::time::every(std::time::Duration::from_secs(2)).map(|_| Message::FlushState),
             );
         }
 
@@ -2113,6 +2323,40 @@ fn parse_host_input(input: &str) -> (Option<String>, String, Option<String>) {
 // ---------------------------------------------------------------------------
 // Theme
 // ---------------------------------------------------------------------------
+
+/// FR-STATE-07: remove orphaned .tmp files from state directory.
+/// NFR-OBS-04: rotate log files when they exceed 10 MB.
+fn rotate_logs(log_path: &std::path::Path) {
+    const MAX_SIZE: u64 = 10 * 1024 * 1024;
+    const MAX_FILES: u32 = 5;
+
+    if let Ok(metadata) = std::fs::metadata(log_path) {
+        if metadata.len() > MAX_SIZE {
+            for i in (1..MAX_FILES).rev() {
+                let from = log_path.with_extension(format!("log.{i}"));
+                let to = log_path.with_extension(format!("log.{}", i + 1));
+                let _ = std::fs::rename(&from, &to);
+            }
+            let rotated = log_path.with_extension("log.1");
+            let _ = std::fs::rename(log_path, &rotated);
+        }
+    }
+}
+
+fn cleanup_tmp_files(client_id: &str) {
+    let state_path = StateFile::local_cache_path(client_id);
+    if let Some(dir) = state_path.parent() {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().is_some_and(|e| e == "tmp") {
+                    tracing::info!("cleaning orphaned tmp file: {}", path.display());
+                    let _ = std::fs::remove_file(&path);
+                }
+            }
+        }
+    }
+}
 
 fn catppuccin_mocha() -> ColorPalette {
     ColorPalette {

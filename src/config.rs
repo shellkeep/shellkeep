@@ -125,7 +125,7 @@ impl Default for SshConfig {
         Self {
             default_port: 22,
             connect_timeout: 10,
-            keepalive_interval: 30,
+            keepalive_interval: 15,
             reconnect_max_attempts: 10,
             reconnect_backoff_base: 2.0,
         }
@@ -173,7 +173,7 @@ impl Config {
     /// Load config from disk, falling back to defaults on any error.
     pub fn load() -> Self {
         let path = Self::file_path();
-        match fs::read_to_string(&path) {
+        let mut config = match fs::read_to_string(&path) {
             Ok(data) => match toml::from_str(&data) {
                 Ok(config) => {
                     tracing::info!("loaded config from {}", path.display());
@@ -188,6 +188,38 @@ impl Config {
                 tracing::debug!("no config file found, using defaults");
                 Self::default()
             }
+        };
+        config.validate();
+        config
+    }
+
+    /// FR-CONFIG-03: clamp configuration values to safe ranges.
+    fn validate(&mut self) {
+        if self.ssh.keepalive_interval < 5 {
+            tracing::warn!(
+                "keepalive_interval {} too low, clamping to 5",
+                self.ssh.keepalive_interval
+            );
+            self.ssh.keepalive_interval = 5;
+        }
+        if self.ssh.keepalive_interval > 300 {
+            tracing::warn!(
+                "keepalive_interval {} too high, clamping to 300",
+                self.ssh.keepalive_interval
+            );
+            self.ssh.keepalive_interval = 300;
+        }
+        if self.ssh.reconnect_max_attempts > 100 {
+            self.ssh.reconnect_max_attempts = 100;
+        }
+        if self.terminal.font_size < 6.0 {
+            self.terminal.font_size = 6.0;
+        }
+        if self.terminal.font_size > 72.0 {
+            self.terminal.font_size = 72.0;
+        }
+        if self.terminal.scrollback_lines > 1_000_000 {
+            self.terminal.scrollback_lines = 1_000_000;
         }
     }
 
@@ -236,5 +268,19 @@ mod tests {
     fn parse_empty_toml() {
         let config: Config = toml::from_str("").unwrap();
         assert_eq!(config.terminal.font_size, 14.0);
+    }
+
+    #[test]
+    fn validate_clamps_values() {
+        let mut config = Config::default();
+        config.ssh.keepalive_interval = 1;
+        config.ssh.reconnect_max_attempts = 999;
+        config.terminal.font_size = 2.0;
+        config.terminal.scrollback_lines = 5_000_000;
+        config.validate();
+        assert_eq!(config.ssh.keepalive_interval, 5);
+        assert_eq!(config.ssh.reconnect_max_attempts, 100);
+        assert_eq!(config.terminal.font_size, 6.0);
+        assert_eq!(config.terminal.scrollback_lines, 1_000_000);
     }
 }

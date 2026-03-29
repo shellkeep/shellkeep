@@ -52,10 +52,27 @@ impl StateFile {
         Ok(())
     }
 
-    /// Load state from a local file.
+    /// Load state from a local file. Renames corrupt files instead of silently ignoring them.
     pub fn load_local(path: &std::path::Path) -> Option<Self> {
-        let data = fs::read_to_string(path).ok()?;
-        serde_json::from_str(&data).ok()
+        let content = fs::read_to_string(path).ok()?;
+        match serde_json::from_str::<StateFile>(&content) {
+            Ok(state) => Some(state),
+            Err(e) => {
+                tracing::warn!("corrupt state file {}: {e}", path.display());
+                // FR-CONN-19: rename to .corrupt.<timestamp> for diagnosis
+                let timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                let corrupt_path = path.with_extension(format!("corrupt.{timestamp}"));
+                if let Err(rename_err) = fs::rename(path, &corrupt_path) {
+                    tracing::error!("failed to rename corrupt file: {rename_err}");
+                } else {
+                    tracing::info!("renamed corrupt state to {}", corrupt_path.display());
+                }
+                None
+            }
+        }
     }
 
     /// Get the local cache path for a given client_id.
