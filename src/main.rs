@@ -213,7 +213,7 @@ impl ShellKeep {
         self.next_id += 1;
 
         let tmux_cmd = format!(
-            "TERM=xterm-256color tmux new-session -A -s {tmux_session} \\; set status off || exec $SHELL"
+            "TERM=xterm-256color tmux new-session -A -s {tmux_session} \\; set status off \\; set mouse on || exec $SHELL"
         );
 
         let mut full_args = Vec::new();
