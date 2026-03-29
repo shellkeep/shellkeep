@@ -100,11 +100,21 @@ fn main() -> iced::Result {
 // Tab
 // ---------------------------------------------------------------------------
 
+/// Connection parameters parsed from user input.
+#[derive(Clone)]
+struct ConnParams {
+    host: String,
+    port: u16,
+    username: String,
+    identity_file: Option<String>,
+}
+
 struct Tab {
     id: u64,
     label: String,
     terminal: Option<iced_term::Terminal>,
     ssh_args: Vec<String>,
+    conn_params: Option<ConnParams>,
     tmux_session: String,
     dead: bool,
     reconnect_attempts: u32,
@@ -123,8 +133,10 @@ struct ShellKeep {
     renaming_tab: Option<usize>,
     rename_input: String,
     current_font_size: f32,
-    context_menu: Option<(f32, f32)>, // terminal right-click menu
-    tab_context_menu: Option<(usize, f32, f32)>, // tab right-click menu (index, x, y)
+    context_menu: Option<(f32, f32)>,
+    tab_context_menu: Option<(usize, f32, f32)>,
+    /// Current connection params (for russh control connection)
+    current_conn: Option<ConnParams>,
 
     // Welcome screen state
     host_input: String,
@@ -188,6 +200,7 @@ impl ShellKeep {
             current_font_size: config.terminal.font_size,
             context_menu: None,
             tab_context_menu: None,
+            current_conn: None,
             host_input: String::new(),
             port_input: default_port,
             user_input: username,
@@ -251,6 +264,7 @@ impl ShellKeep {
                     label: label.to_string(),
                     terminal: Some(terminal),
                     ssh_args: ssh_args.to_vec(),
+                    conn_params: self.current_conn.clone(),
                     tmux_session: tmux_session.to_string(),
                     dead: false,
                     reconnect_attempts: 0,
@@ -560,6 +574,27 @@ impl ShellKeep {
                     .first()
                     .cloned()
                     .unwrap_or_else(|| ssh_args.join(" "));
+
+                // Store connection params for russh control channel
+                let (parsed_user, parsed_host, parsed_port) =
+                    parse_host_input(self.host_input.trim());
+                self.current_conn = Some(ConnParams {
+                    host: parsed_host,
+                    port: parsed_port
+                        .and_then(|p| p.parse().ok())
+                        .unwrap_or(self.port_input.trim().parse().unwrap_or(22)),
+                    username: if !self.user_input.is_empty() {
+                        self.user_input.clone()
+                    } else {
+                        parsed_user.unwrap_or_else(whoami::username)
+                    },
+                    identity_file: if self.identity_input.is_empty() {
+                        None
+                    } else {
+                        Some(self.identity_input.clone())
+                    },
+                });
+
                 self.recent.push(RecentConnection {
                     label: label.clone(),
                     ssh_args: ssh_args.clone(),
