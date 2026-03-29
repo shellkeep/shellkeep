@@ -212,12 +212,7 @@ impl Config {
         if self.ssh.reconnect_max_attempts > 100 {
             self.ssh.reconnect_max_attempts = 100;
         }
-        if self.terminal.font_size < 6.0 {
-            self.terminal.font_size = 6.0;
-        }
-        if self.terminal.font_size > 72.0 {
-            self.terminal.font_size = 72.0;
-        }
+        self.terminal.font_size = self.terminal.font_size.clamp(6.0, 72.0);
         if self.terminal.scrollback_lines > 1_000_000 {
             self.terminal.scrollback_lines = 1_000_000;
         }

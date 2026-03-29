@@ -125,10 +125,8 @@ async fn authenticate(
     identity_file: Option<&str>,
 ) -> Result<(), SshError> {
     // 1. Try ssh-agent first /* FR-CONN-07 */
-    if std::env::var("SSH_AUTH_SOCK").is_ok() {
-        if try_agent_auth(handle, username).await? {
-            return Ok(());
-        }
+    if std::env::var("SSH_AUTH_SOCK").is_ok() && try_agent_auth(handle, username).await? {
+        return Ok(());
     }
 
     // 2. Try explicit identity file

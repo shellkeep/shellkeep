@@ -469,12 +469,11 @@ async fn establish_ssh_session(
         return Err("tmux not found on server — install tmux >= 3.0 to use shellkeep".to_string());
     }
 
-    if let Some(ver_str) = tmux_version_output.trim().strip_prefix("tmux ") {
-        if let Ok(major) = ver_str.split('.').next().unwrap_or("0").parse::<u32>() {
-            if major < 3 {
-                tracing::warn!("tmux version {ver_str} < 3.0 — some features may not work");
-            }
-        }
+    if let Some(ver_str) = tmux_version_output.trim().strip_prefix("tmux ")
+        && let Ok(major) = ver_str.split('.').next().unwrap_or("0").parse::<u32>()
+        && major < 3
+    {
+        tracing::warn!("tmux version {ver_str} < 3.0 — some features may not work");
     }
 
     // Create tmux session (idempotent — no error if already exists)
@@ -601,17 +600,17 @@ impl ShellKeep {
 
         // NFR-OBS-11: check for previous crash dumps
         let crash_dir = shellkeep::crash::crash_dir();
-        if crash_dir.exists() {
-            if let Ok(entries) = std::fs::read_dir(&crash_dir) {
-                let count = entries.filter_map(|e| e.ok()).count();
-                if count > 0 {
-                    app.toast = Some((
-                        format!(
-                            "Previous crash detected ({count} dump(s)). Run shellkeep --crash-report for details."
-                        ),
-                        std::time::Instant::now(),
-                    ));
-                }
+        if crash_dir.exists()
+            && let Ok(entries) = std::fs::read_dir(&crash_dir)
+        {
+            let count = entries.filter_map(|e| e.ok()).count();
+            if count > 0 {
+                app.toast = Some((
+                    format!(
+                        "Previous crash detected ({count} dump(s)). Run shellkeep --crash-report for details."
+                    ),
+                    std::time::Instant::now(),
+                ));
             }
         }
 
@@ -943,10 +942,10 @@ impl ShellKeep {
 
     fn save_state(&mut self) {
         self.state_dirty = true;
-        if let Some(last) = self.last_state_save {
-            if last.elapsed() < std::time::Duration::from_secs(2) {
-                return; // debounced — will be saved by FlushState timer
-            }
+        if let Some(last) = self.last_state_save
+            && last.elapsed() < std::time::Duration::from_secs(2)
+        {
+            return; // debounced — will be saved by FlushState timer
         }
         self.flush_state();
     }
@@ -2588,29 +2587,29 @@ fn rotate_logs(log_path: &std::path::Path) {
     const MAX_SIZE: u64 = 10 * 1024 * 1024;
     const MAX_FILES: u32 = 5;
 
-    if let Ok(metadata) = std::fs::metadata(log_path) {
-        if metadata.len() > MAX_SIZE {
-            for i in (1..MAX_FILES).rev() {
-                let from = log_path.with_extension(format!("log.{i}"));
-                let to = log_path.with_extension(format!("log.{}", i + 1));
-                let _ = std::fs::rename(&from, &to);
-            }
-            let rotated = log_path.with_extension("log.1");
-            let _ = std::fs::rename(log_path, &rotated);
+    if let Ok(metadata) = std::fs::metadata(log_path)
+        && metadata.len() > MAX_SIZE
+    {
+        for i in (1..MAX_FILES).rev() {
+            let from = log_path.with_extension(format!("log.{i}"));
+            let to = log_path.with_extension(format!("log.{}", i + 1));
+            let _ = std::fs::rename(&from, &to);
         }
+        let rotated = log_path.with_extension("log.1");
+        let _ = std::fs::rename(log_path, &rotated);
     }
 }
 
 fn cleanup_tmp_files(client_id: &str) {
     let state_path = StateFile::local_cache_path(client_id);
-    if let Some(dir) = state_path.parent() {
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().is_some_and(|e| e == "tmp") {
-                    tracing::info!("cleaning orphaned tmp file: {}", path.display());
-                    let _ = std::fs::remove_file(&path);
-                }
+    if let Some(dir) = state_path.parent()
+        && let Ok(entries) = std::fs::read_dir(dir)
+    {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|e| e == "tmp") {
+                tracing::info!("cleaning orphaned tmp file: {}", path.display());
+                let _ = std::fs::remove_file(&path);
             }
         }
     }

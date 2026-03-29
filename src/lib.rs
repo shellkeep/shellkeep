@@ -8,3 +8,4 @@ pub mod crash;
 pub mod i18n;
 pub mod ssh;
 pub mod state;
+pub mod tray;

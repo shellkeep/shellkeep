@@ -134,7 +134,7 @@ pub fn add_host_key(host: &str, port: u16, server_key: &PublicKey) -> Result<(),
     let hostname = format_host(host, port);
     let openssh_str = server_key
         .to_openssh()
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
     // openssh format: "key-type base64-data [comment]"
     // We want: "hostname key-type base64-data\n"
     let parts: Vec<&str> = openssh_str.split_whitespace().collect();
