@@ -6,6 +6,7 @@
 use std::sync::Arc;
 
 use russh::keys::PrivateKeyWithHashAlg;
+#[cfg(unix)]
 use russh::keys::agent::client::AgentClient;
 use russh::keys::ssh_key;
 use ssh_key::Algorithm;
@@ -125,6 +126,7 @@ async fn authenticate(
     identity_file: Option<&str>,
 ) -> Result<(), SshError> {
     // 1. Try ssh-agent first /* FR-CONN-07 */
+    #[cfg(unix)]
     if std::env::var("SSH_AUTH_SOCK").is_ok() && try_agent_auth(handle, username).await? {
         return Ok(());
     }
@@ -153,6 +155,7 @@ async fn authenticate(
 }
 
 /// Try authentication via ssh-agent. /* FR-CONN-07 */
+#[cfg(unix)]
 async fn try_agent_auth(
     handle: &mut russh::client::Handle<SshHandler>,
     username: &str,
