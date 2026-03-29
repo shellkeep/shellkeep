@@ -17,7 +17,7 @@ use iced::widget::{
 use iced::{Color, Element, Length, Subscription, Task, Theme};
 use iced_term::ColorPalette;
 use iced_term::settings::{BackendSettings, FontSettings, Settings, ThemeSettings};
-use iced_term::{AlacrittyPoint, RegexSearch, SearchMatch};
+use iced_term::{AlacrittyColumn, AlacrittyLine, AlacrittyPoint, RegexSearch, SearchMatch};
 use shellkeep::config::Config;
 use shellkeep::ssh;
 use shellkeep::ssh::manager::{ConnKey, ConnectionManager};
@@ -1693,10 +1693,7 @@ impl ShellKeep {
                             p.column.0 += 1;
                             p
                         })
-                        .unwrap_or(AlacrittyPoint::new(
-                            alacritty_terminal::index::Line(0),
-                            alacritty_terminal::index::Column(0),
-                        ));
+                        .unwrap_or(AlacrittyPoint::new(AlacrittyLine(0), AlacrittyColumn(0)));
                     self.search_last_match = terminal.search_next(regex, origin);
                 }
             }
@@ -1718,10 +1715,7 @@ impl ShellKeep {
                             }
                             p
                         })
-                        .unwrap_or(AlacrittyPoint::new(
-                            alacritty_terminal::index::Line(0),
-                            alacritty_terminal::index::Column(0),
-                        ));
+                        .unwrap_or(AlacrittyPoint::new(AlacrittyLine(0), AlacrittyColumn(0)));
                     self.search_last_match = terminal.search_prev(regex, origin);
                 }
             }
