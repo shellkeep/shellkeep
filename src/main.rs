@@ -95,12 +95,40 @@ fn main() -> iced::Result {
         "info"
     };
 
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(log_level)),
-        )
-        .init();
+    // Set up logging — stderr + optional file
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(log_level));
+
+    // Try to also log to file
+    let log_dir = dirs::state_dir()
+        .or_else(dirs::data_dir)
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("shellkeep")
+        .join("logs");
+    let _ = std::fs::create_dir_all(&log_dir);
+    let log_path = log_dir.join("shellkeep.log");
+
+    if let Ok(file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+    {
+        use tracing_subscriber::layer::SubscriberExt;
+        use tracing_subscriber::util::SubscriberInitExt;
+
+        let file_layer = tracing_subscriber::fmt::layer()
+            .with_writer(std::sync::Mutex::new(file))
+            .with_ansi(false);
+        let stderr_layer = tracing_subscriber::fmt::layer().with_writer(std::io::stderr);
+
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(file_layer)
+            .with(stderr_layer)
+            .init();
+    } else {
+        tracing_subscriber::fmt().with_env_filter(filter).init();
+    }
 
     // Parse SSH args (skip --debug which is shellkeep-specific)
     let ssh_relevant: Vec<String> = args[1..]
