@@ -89,7 +89,9 @@ fn main() -> iced::Result {
         }
     }
 
-    let log_level = if args.iter().any(|a| a == "--debug") {
+    let log_level = if args.iter().any(|a| a == "--trace") {
+        "trace"
+    } else if args.iter().any(|a| a == "--debug") {
         "debug"
     } else {
         "info"
@@ -133,7 +135,7 @@ fn main() -> iced::Result {
     // Parse SSH args (skip --debug which is shellkeep-specific)
     let ssh_relevant: Vec<String> = args[1..]
         .iter()
-        .filter(|a| *a != "--debug")
+        .filter(|a| *a != "--debug" && *a != "--trace")
         .cloned()
         .collect();
 
