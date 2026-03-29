@@ -349,6 +349,12 @@ impl ShellKeep {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::TerminalEvent(iced_term::Event::ContextMenu(_id, _x, _y)) => {
+                // TODO: show context menu overlay with Copy, Paste, Select All
+                // For now, this event is received but not yet rendered
+                tracing::debug!("context menu requested at ({_x}, {_y})");
+            }
+
             Message::TerminalEvent(iced_term::Event::BackendCall(id, cmd)) => {
                 let mut needs_title_update = false;
                 if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == id)

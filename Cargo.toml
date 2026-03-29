@@ -11,8 +11,8 @@ repository = "https://github.com/shellkeep/shellkeep"
 rust-version = "1.88"
 
 [dependencies]
-# Terminal emulator widget (iced + alacritty_terminal)
-iced_term = "0.8"
+# Terminal emulator widget (forked for shellkeep customizations)
+iced_term = { path = "crates/iced_term" }
 iced = { version = "0.14", features = ["tokio"] }
 
 # Async runtime
