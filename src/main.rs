@@ -295,12 +295,45 @@ impl ShellKeep {
         };
 
         if let Some(ssh_args) = initial_ssh_args {
-            // Use just the host part as label (first non-flag arg)
             let label = ssh_args
                 .iter()
                 .find(|a| !a.starts_with('-'))
                 .cloned()
                 .unwrap_or_else(|| ssh_args.join(" "));
+
+            // Parse connection params from CLI args for russh control
+            let host_arg = ssh_args
+                .iter()
+                .find(|a| !a.starts_with('-'))
+                .cloned()
+                .unwrap_or_default();
+            let (parsed_user, parsed_host, parsed_port) = parse_host_input(&host_arg);
+            let mut cli_port = "22".to_string();
+            let mut cli_identity = None;
+            let mut i = 0;
+            while i < ssh_args.len() {
+                match ssh_args[i].as_str() {
+                    "-p" if i + 1 < ssh_args.len() => {
+                        cli_port = ssh_args[i + 1].clone();
+                        i += 1;
+                    }
+                    "-i" if i + 1 < ssh_args.len() => {
+                        cli_identity = Some(ssh_args[i + 1].clone());
+                        i += 1;
+                    }
+                    _ => {}
+                }
+                i += 1;
+            }
+            app.current_conn = Some(ConnParams {
+                host: parsed_host,
+                port: parsed_port
+                    .and_then(|p| p.parse().ok())
+                    .unwrap_or(cli_port.parse().unwrap_or(22)),
+                username: parsed_user.unwrap_or_else(whoami::username),
+                identity_file: cli_identity,
+            });
+
             app.open_tab(&ssh_args, &label);
         }
 
@@ -774,9 +807,15 @@ impl ShellKeep {
 
             Message::ConnectRecent(index) => {
                 if let Some(conn) = self.recent.connections.get(index).cloned() {
-                    self.host_input = conn.host;
-                    self.user_input = conn.user;
-                    self.port_input = conn.port;
+                    self.host_input = conn.host.clone();
+                    self.user_input = conn.user.clone();
+                    self.port_input = conn.port.clone();
+                    self.current_conn = Some(ConnParams {
+                        host: conn.host,
+                        port: conn.port.parse().unwrap_or(22),
+                        username: conn.user,
+                        identity_file: None,
+                    });
 
                     let existing = ssh::tmux::list_remote_sessions(&conn.ssh_args);
                     let saved_state =
