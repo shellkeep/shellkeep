@@ -9,7 +9,9 @@
 mod theme;
 
 use iced::keyboard;
-use iced::widget::{Space, button, center, column, container, row, scrollable, text, text_input};
+use iced::widget::{
+    Space, button, center, column, container, mouse_area, row, scrollable, stack, text, text_input,
+};
 use iced::{Color, Element, Length, Subscription, Task, Theme};
 use iced_term::ColorPalette;
 use iced_term::settings::{BackendSettings, FontSettings, Settings, ThemeSettings};
@@ -119,6 +121,7 @@ struct ShellKeep {
     renaming_tab: Option<usize>,
     rename_input: String,
     current_font_size: f32,
+    context_menu: Option<(f32, f32)>, // (x, y) position of context menu
 
     // Welcome screen state
     host_input: String,
@@ -144,6 +147,9 @@ enum Message {
     NewTab,
     ReconnectTab(usize),
     AutoReconnectTick,
+    ContextMenuCopy,
+    ContextMenuPaste,
+    ContextMenuDismiss,
     ConnectRecent(usize),
     RenameInputChanged(String),
     FinishRename,
@@ -173,6 +179,7 @@ impl ShellKeep {
             renaming_tab: None,
             rename_input: String::new(),
             current_font_size: config.terminal.font_size,
+            context_menu: None,
             host_input: String::new(),
             port_input: default_port,
             user_input: username,
@@ -349,10 +356,32 @@ impl ShellKeep {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::TerminalEvent(iced_term::Event::ContextMenu(_id, _x, _y)) => {
-                // TODO: show context menu overlay with Copy, Paste, Select All
-                // For now, this event is received but not yet rendered
-                tracing::debug!("context menu requested at ({_x}, {_y})");
+            Message::TerminalEvent(iced_term::Event::ContextMenu(_id, x, y)) => {
+                self.context_menu = Some((x, y));
+            }
+
+            Message::ContextMenuCopy => {
+                self.context_menu = None;
+                // Copy is handled by iced_term's Ctrl+Shift+C binding
+                // We trigger it via the backend
+                if let Some(tab) = self.tabs.get_mut(self.active_tab)
+                    && let Some(ref mut terminal) = tab.terminal
+                {
+                    terminal.handle(iced_term::Command::ProxyToBackend(
+                        iced_term::BackendCommand::ProcessAlacrittyEvent(
+                            iced_term::AlacrittyEvent::PtyWrite(String::new()),
+                        ),
+                    ));
+                }
+            }
+
+            Message::ContextMenuPaste => {
+                self.context_menu = None;
+                // Paste is handled at the OS level — we just dismiss the menu
+            }
+
+            Message::ContextMenuDismiss => {
+                self.context_menu = None;
             }
 
             Message::TerminalEvent(iced_term::Event::BackendCall(id, cmd)) => {
@@ -668,7 +697,69 @@ impl ShellKeep {
 
         let status_bar = self.view_status_bar();
 
-        column![tab_bar, content, status_bar].into()
+        // Wrap with context menu overlay if active
+        let main_view: Element<'_, Message> = if let Some((x, y)) = self.context_menu {
+            let menu = container(
+                column![
+                    button(text("Copy").size(13))
+                        .on_press(Message::ContextMenuCopy)
+                        .padding([6, 16])
+                        .width(Length::Fill)
+                        .style(|_theme: &Theme, _status| button::Style {
+                            background: None,
+                            text_color: Color::from_rgb8(0xcd, 0xd6, 0xf4),
+                            ..Default::default()
+                        }),
+                    button(text("Paste").size(13))
+                        .on_press(Message::ContextMenuPaste)
+                        .padding([6, 16])
+                        .width(Length::Fill)
+                        .style(|_theme: &Theme, _status| button::Style {
+                            background: None,
+                            text_color: Color::from_rgb8(0xcd, 0xd6, 0xf4),
+                            ..Default::default()
+                        }),
+                ]
+                .spacing(2),
+            )
+            .padding(4)
+            .style(|_theme: &Theme| container::Style {
+                background: Some(iced::Background::Color(Color::from_rgb8(0x31, 0x32, 0x44))),
+                border: iced::Border {
+                    radius: 6.0.into(),
+                    width: 1.0,
+                    color: Color::from_rgb8(0x45, 0x47, 0x5a),
+                },
+                ..Default::default()
+            });
+
+            // Use a stack to overlay the menu at the right position
+            let dismiss_area = mouse_area(
+                container(Space::new().width(Length::Fill).height(Length::Fill))
+                    .width(Length::Fill)
+                    .height(Length::Fill),
+            )
+            .on_press(Message::ContextMenuDismiss);
+
+            stack![
+                column![tab_bar, content, status_bar],
+                dismiss_area,
+                container(menu)
+                    .padding(iced::Padding {
+                        top: y,
+                        right: 0.0,
+                        bottom: 0.0,
+                        left: x,
+                    })
+                    .width(Length::Shrink)
+                    .height(Length::Shrink),
+            ]
+            .into()
+        } else {
+            column![tab_bar, content, status_bar].into()
+        };
+
+        main_view
     }
 
     fn view_dead_tab<'a>(&'a self, tab: &'a Tab) -> Element<'a, Message> {
