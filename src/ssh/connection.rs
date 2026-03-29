@@ -6,11 +6,15 @@
 use std::sync::Arc;
 
 use russh::keys::PrivateKeyWithHashAlg;
+use russh::keys::agent::client::AgentClient;
 use russh::keys::ssh_key;
+use ssh_key::Algorithm;
 
 /// SSH connection handler for russh client events.
 pub struct SshHandler {
     pub auto_accept_hosts: bool,
+    pub host: String,
+    pub port: u16,
 }
 
 #[derive(Debug)]
@@ -39,42 +43,66 @@ impl russh::client::Handler for SshHandler {
         &mut self,
         server_public_key: &ssh_key::PublicKey,
     ) -> Result<bool, Self::Error> {
+        let fingerprint = server_public_key.fingerprint(ssh_key::HashAlg::Sha256);
+        tracing::info!("host key fingerprint: {fingerprint}");
+
         if self.auto_accept_hosts {
             return Ok(true);
         }
 
-        // Check against ~/.ssh/known_hosts
-        let known_hosts_path = dirs::home_dir()
-            .map(|h| h.join(".ssh").join("known_hosts"))
-            .unwrap_or_default();
+        use super::known_hosts::{self, HostKeyStatus};
 
-        if known_hosts_path.exists() {
-            // For now, accept if known_hosts exists (system ssh already verified)
-            // TODO: parse known_hosts and match against server_public_key
-            tracing::debug!(
-                "host key fingerprint: {}",
-                server_public_key.fingerprint(ssh_key::HashAlg::Sha256)
-            );
-            return Ok(true);
+        match known_hosts::check_host_key(&self.host, self.port, server_public_key) {
+            HostKeyStatus::Known => {
+                tracing::debug!("host key matches known_hosts");
+                Ok(true)
+            }
+            HostKeyStatus::Changed => {
+                tracing::error!(
+                    host = %self.host,
+                    port = self.port,
+                    fingerprint = %fingerprint,
+                    "HOST KEY CHANGED — possible MITM attack, rejecting connection"
+                );
+                Ok(false)
+            }
+            HostKeyStatus::Unknown => {
+                tracing::info!(
+                    host = %self.host,
+                    port = self.port,
+                    fingerprint = %fingerprint,
+                    "unknown host, accepting key (TOFU)"
+                );
+                if let Err(e) = known_hosts::add_host_key(&self.host, self.port, server_public_key)
+                {
+                    tracing::warn!("failed to save host key to known_hosts: {e}");
+                }
+                Ok(true)
+            }
         }
-
-        // No known_hosts — accept (TOFU behavior)
-        tracing::warn!("no known_hosts file, accepting host key (TOFU)");
-        Ok(true)
     }
 }
 
 /// Connect to an SSH server and authenticate.
+/// FR-RECONNECT-01, FR-CONFIG-06: keepalive_interval_secs configures SSH keepalive.
 pub async fn connect(
     host: &str,
     port: u16,
     username: &str,
     identity_file: Option<&str>,
+    keepalive_interval_secs: u32,
 ) -> Result<russh::client::Handle<SshHandler>, SshError> {
-    let config = russh::client::Config::default();
+    let mut config = russh::client::Config::default();
+    if keepalive_interval_secs > 0 {
+        config.keepalive_interval = Some(std::time::Duration::from_secs(
+            keepalive_interval_secs as u64,
+        ));
+    }
 
     let handler = SshHandler {
-        auto_accept_hosts: true,
+        auto_accept_hosts: false,
+        host: host.to_string(),
+        port,
     };
 
     let addr = format!("{host}:{port}");
@@ -84,7 +112,7 @@ pub async fn connect(
         .await
         .map_err(|e| SshError::Connect(e.to_string()))?;
 
-    // Try authentication methods
+    // Try authentication methods /* FR-CONN-07 */
     authenticate(&mut handle, username, identity_file).await?;
 
     tracing::info!("russh: authenticated as {username}");
@@ -96,14 +124,21 @@ async fn authenticate(
     username: &str,
     identity_file: Option<&str>,
 ) -> Result<(), SshError> {
-    // Try explicit identity file first
+    // 1. Try ssh-agent first /* FR-CONN-07 */
+    if std::env::var("SSH_AUTH_SOCK").is_ok() {
+        if try_agent_auth(handle, username).await? {
+            return Ok(());
+        }
+    }
+
+    // 2. Try explicit identity file
     if let Some(key_path) = identity_file
         && try_key_auth(handle, username, key_path).await?
     {
         return Ok(());
     }
 
-    // Try default key paths
+    // 3. Try default key paths (Ed25519, RSA, ECDSA)
     if let Some(home) = dirs::home_dir() {
         let ssh_dir = home.join(".ssh");
         for key_name in &["id_ed25519", "id_rsa", "id_ecdsa"] {
@@ -117,6 +152,64 @@ async fn authenticate(
     }
 
     Err(SshError::Auth("no authentication method succeeded".into()))
+}
+
+/// Try authentication via ssh-agent. /* FR-CONN-07 */
+async fn try_agent_auth(
+    handle: &mut russh::client::Handle<SshHandler>,
+    username: &str,
+) -> Result<bool, SshError> {
+    let mut agent = match AgentClient::connect_env().await {
+        Ok(a) => {
+            tracing::debug!("ssh-agent: connected");
+            a
+        }
+        Err(e) => {
+            tracing::debug!("ssh-agent: connect failed: {e}");
+            return Ok(false);
+        }
+    };
+
+    let identities = match agent.request_identities().await {
+        Ok(ids) => ids,
+        Err(e) => {
+            tracing::debug!("ssh-agent: failed to list identities: {e}");
+            return Ok(false);
+        }
+    };
+
+    tracing::debug!("ssh-agent: {} identities available", identities.len());
+
+    for identity in &identities {
+        let pubkey = identity.public_key();
+
+        // Skip DSA keys from agent too /* FR-CONN-08 */
+        if pubkey.algorithm() == Algorithm::Dsa {
+            tracing::warn!("skipping DSA key from agent: DSA is deprecated and insecure");
+            continue;
+        }
+
+        let comment = identity.comment();
+        tracing::debug!("ssh-agent: trying key {comment}");
+
+        match handle
+            .authenticate_publickey_with(username, pubkey.into_owned(), None, &mut agent)
+            .await
+        {
+            Ok(result) if result.success() => {
+                tracing::info!("ssh-agent: authenticated with key {comment}");
+                return Ok(true);
+            }
+            Ok(_) => {
+                tracing::debug!("ssh-agent: key {comment} rejected");
+            }
+            Err(e) => {
+                tracing::debug!("ssh-agent: auth error with key {comment}: {e}");
+            }
+        }
+    }
+
+    Ok(false)
 }
 
 async fn try_key_auth(
@@ -137,6 +230,12 @@ async fn try_key_auth(
             return Ok(false);
         }
     };
+
+    // Reject DSA keys — deprecated and insecure /* FR-CONN-08 */
+    if key.algorithm() == Algorithm::Dsa {
+        tracing::warn!("skipping DSA key {key_path}: DSA is deprecated and insecure");
+        return Ok(false);
+    }
 
     let key_with_alg = PrivateKeyWithHashAlg::new(Arc::new(key), None);
     match handle.authenticate_publickey(username, key_with_alg).await {
