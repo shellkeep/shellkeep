@@ -701,41 +701,51 @@ impl ShellKeep {
 
         // Wrap with context menu overlay if active
         let main_view: Element<'_, Message> = if let Some((x, y)) = self.context_menu {
+            let ctx_style = |_theme: &Theme, status: button::Status| {
+                let bg = match status {
+                    button::Status::Hovered | button::Status::Pressed => {
+                        Color::from_rgb8(0x45, 0x47, 0x5a)
+                    }
+                    _ => Color::from_rgb8(0x24, 0x24, 0x36),
+                };
+                button::Style {
+                    background: Some(iced::Background::Color(bg)),
+                    text_color: Color::from_rgb8(0xcd, 0xd6, 0xf4),
+                    ..Default::default()
+                }
+            };
+
             let menu = container(
                 column![
-                    button(text("Copy").size(13))
+                    button(text("Copy        Ctrl+Shift+C").size(13))
                         .on_press(Message::ContextMenuCopy)
-                        .padding([6, 16])
-                        .width(Length::Fill)
-                        .style(|_theme: &Theme, _status| button::Style {
-                            background: None,
-                            text_color: Color::from_rgb8(0xcd, 0xd6, 0xf4),
-                            ..Default::default()
-                        }),
-                    button(text("Paste").size(13))
+                        .padding([8, 16])
+                        .width(250)
+                        .style(ctx_style),
+                    button(text("Paste       Ctrl+Shift+V").size(13))
                         .on_press(Message::ContextMenuPaste)
-                        .padding([6, 16])
-                        .width(Length::Fill)
-                        .style(|_theme: &Theme, _status| button::Style {
-                            background: None,
-                            text_color: Color::from_rgb8(0xcd, 0xd6, 0xf4),
-                            ..Default::default()
-                        }),
+                        .padding([8, 16])
+                        .width(250)
+                        .style(ctx_style),
                 ]
-                .spacing(2),
+                .spacing(1),
             )
             .padding(4)
             .style(|_theme: &Theme| container::Style {
-                background: Some(iced::Background::Color(Color::from_rgb8(0x31, 0x32, 0x44))),
+                background: Some(iced::Background::Color(Color::from_rgb8(0x24, 0x24, 0x36))),
                 border: iced::Border {
-                    radius: 6.0.into(),
+                    radius: 8.0.into(),
                     width: 1.0,
                     color: Color::from_rgb8(0x45, 0x47, 0x5a),
+                },
+                shadow: iced::Shadow {
+                    color: Color::from_rgba8(0, 0, 0, 0.5),
+                    offset: iced::Vector::new(2.0, 2.0),
+                    blur_radius: 8.0,
                 },
                 ..Default::default()
             });
 
-            // Use a stack to overlay the menu at the right position
             let dismiss_area = mouse_area(
                 container(Space::new().width(Length::Fill).height(Length::Fill))
                     .width(Length::Fill)
@@ -746,15 +756,12 @@ impl ShellKeep {
             stack![
                 column![tab_bar, content, status_bar],
                 dismiss_area,
-                container(menu)
-                    .padding(iced::Padding {
-                        top: y,
-                        right: 0.0,
-                        bottom: 0.0,
-                        left: x,
-                    })
-                    .width(Length::Shrink)
-                    .height(Length::Shrink),
+                container(menu).padding(iced::Padding {
+                    top: y,
+                    right: 0.0,
+                    bottom: 0.0,
+                    left: x,
+                }),
             ]
             .into()
         } else {

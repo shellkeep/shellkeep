@@ -87,13 +87,15 @@ pub struct TerminalSize {
 
 impl Default for TerminalSize {
     fn default() -> Self {
+        // Use reasonable default cell dimensions to avoid tiny initial terminal.
+        // These will be corrected once the widget measures its actual font.
         Self {
-            cell_width: 1,
-            cell_height: 1,
-            num_cols: 80,
-            num_lines: 50,
-            layout_width: 80.0,
-            layout_height: 50.0,
+            cell_width: 9,
+            cell_height: 18,
+            num_cols: 100,
+            num_lines: 30,
+            layout_width: 900.0,
+            layout_height: 540.0,
         }
     }
 }
