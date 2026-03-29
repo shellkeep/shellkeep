@@ -130,7 +130,9 @@ mod tests {
                 host: format!("host-{i}"),
                 user: "user".into(),
                 port: "22".into(),
+                alias: None,
                 last_connected: None,
+                host_key_fingerprint: None,
             });
         }
         assert_eq!(recent.connections.len(), MAX_RECENT);
