@@ -24,7 +24,7 @@ pub fn disable_core_dumps() {
 /// Get the crash dump directory.
 pub fn crash_dir() -> PathBuf {
     dirs::state_dir()
-        .or_else(|| dirs::data_dir())
+        .or_else(dirs::data_dir)
         .unwrap_or_else(|| PathBuf::from("."))
         .join("shellkeep")
         .join("crashes")

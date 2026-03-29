@@ -197,7 +197,7 @@ impl Backend {
     /// The `ssh_writer` sends keyboard input to the SSH channel.
     /// The `ssh_reader` feeds SSH output into the terminal — call `feed_ssh_data()`.
     pub fn new_ssh(
-        id: u64,
+        _id: u64,
         pty_event_proxy_sender: mpsc::Sender<Event>,
         ssh_writer: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
     ) -> Result<Self> {

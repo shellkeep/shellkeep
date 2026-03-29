@@ -14,10 +14,10 @@ use std::path::PathBuf;
 /// Resolve the client ID.
 pub fn resolve(config_client_id: Option<&str>) -> String {
     // 1. Config file
-    if let Some(id) = config_client_id {
-        if is_valid(id) {
-            return id.to_string();
-        }
+    if let Some(id) = config_client_id
+        && is_valid(id)
+    {
+        return id.to_string();
     }
 
     // 2. Persisted file

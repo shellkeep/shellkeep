@@ -195,6 +195,12 @@ struct Tab {
     dead: bool,
     reconnect_attempts: u32,
     auto_reconnect: bool,
+    /// Whether this tab uses russh (true) or system ssh (false)
+    #[allow(dead_code)]
+    uses_russh: bool,
+    /// Writer channel for sending keyboard input to russh
+    #[allow(dead_code)]
+    ssh_writer: Option<tokio::sync::mpsc::UnboundedSender<Vec<u8>>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -237,6 +243,10 @@ struct ShellKeep {
 #[derive(Debug, Clone)]
 enum Message {
     TerminalEvent(iced_term::Event),
+    #[allow(dead_code)]
+    SshData(u64, Vec<u8>),
+    #[allow(dead_code)]
+    SshDisconnected(u64, String),
     SelectTab(usize),
     CloseTab(usize),
     NewTab,
@@ -357,6 +367,69 @@ impl ShellKeep {
         self.open_tab_with_tmux(ssh_args, label, &tmux_session);
     }
 
+    /// Open a tab using native russh SSH connection.
+    /// Returns true if successful, false if should fall back to system ssh.
+    #[allow(dead_code)]
+    fn try_open_tab_russh(&mut self, label: &str, tmux_session: &str) -> bool {
+        let _conn = match &self.current_conn {
+            Some(c) => c.clone(),
+            None => return false,
+        };
+
+        let id = self.next_id;
+        self.next_id += 1;
+
+        // Create the SSH writer channel
+        let (ssh_writer_tx, _ssh_writer_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+
+        let settings = Settings {
+            font: FontSettings {
+                size: self.config.terminal.font_size,
+                ..FontSettings::default()
+            },
+            theme: ThemeSettings {
+                color_pallete: Box::new(catppuccin_mocha()),
+            },
+            backend: BackendSettings::default(), // not used for SSH terminals
+        };
+
+        let terminal = match iced_term::Terminal::new_ssh(id, settings, ssh_writer_tx) {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::error!("failed to create SSH terminal: {e}");
+                return false;
+            }
+        };
+
+        // Get a reference to feed data into the terminal
+        // We'll do this via the subscription instead
+
+        self.tabs.push(Tab {
+            id,
+            label: label.to_string(),
+            terminal: Some(terminal),
+            ssh_args: Vec::new(),
+            conn_params: self.current_conn.clone(),
+            tmux_session: tmux_session.to_string(),
+            dead: false,
+            reconnect_attempts: 0,
+            auto_reconnect: true,
+            uses_russh: true,
+            ssh_writer: None, // will be set by the subscription
+        });
+        self.active_tab = self.tabs.len() - 1;
+        self.error = None;
+        self.update_title();
+        self.save_state();
+        tracing::info!("opened SSH tab {id}: {label} (tmux: {tmux_session}) via russh");
+
+        // The SSH data flow will be handled by the subscription
+        // We need to start the connection — but we can't await here
+        // So we'll add the connection to a pending list and handle it in subscription
+
+        true
+    }
+
     fn open_tab_with_tmux(&mut self, ssh_args: &[String], label: &str, tmux_session: &str) {
         let id = self.next_id;
         self.next_id += 1;
@@ -397,6 +470,8 @@ impl ShellKeep {
                     dead: false,
                     reconnect_attempts: 0,
                     auto_reconnect: true,
+                    uses_russh: false,
+                    ssh_writer: None,
                 });
                 self.active_tab = self.tabs.len() - 1;
                 self.error = None;
@@ -533,6 +608,31 @@ impl ShellKeep {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::SshData(tab_id, data) => {
+                if let Some(tab) = self.tabs.iter().find(|t| t.id == tab_id)
+                    && let Some(ref terminal) = tab.terminal
+                {
+                    terminal.feed_ssh_data(&data);
+                }
+            }
+
+            Message::SshDisconnected(tab_id, reason) => {
+                if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+                    tab.terminal = None;
+                    if tab.auto_reconnect
+                        && tab.reconnect_attempts < self.config.ssh.reconnect_max_attempts
+                    {
+                        tab.reconnect_attempts += 1;
+                        tracing::info!("SSH tab {tab_id} disconnected: {reason}, will retry");
+                    } else {
+                        tab.dead = true;
+                        tab.auto_reconnect = false;
+                        tracing::info!("SSH tab {tab_id} disconnected: {reason}");
+                    }
+                    self.update_title();
+                }
+            }
+
             Message::TerminalEvent(iced_term::Event::ContextMenu(_id, x, y)) => {
                 self.context_menu = Some((x, y));
                 self.renaming_tab = None;
@@ -867,10 +967,9 @@ impl ShellKeep {
                     if modifiers.control()
                         && modifiers.shift()
                         && key == keyboard::Key::Character("n".into())
+                        && let Ok(exe) = std::env::current_exe()
                     {
-                        if let Ok(exe) = std::env::current_exe() {
-                            let _ = std::process::Command::new(exe).spawn();
-                        }
+                        let _ = std::process::Command::new(exe).spawn();
                     }
                     // Ctrl+Shift+W — close current tab
                     if modifiers.control()
@@ -1564,6 +1663,10 @@ impl ShellKeep {
         }
 
         subs.push(keyboard::listen().map(Message::KeyEvent));
+
+        // Note: russh SSH subscriptions will be added when
+        // try_open_tab_russh is used as the default path.
+        // For now, system ssh via iced_term PTY handles terminal I/O.
 
         // Auto-reconnect timer — check every 3 seconds for tabs needing reconnection
         let has_reconnectable = self
