@@ -2,5 +2,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 pub mod connection;
+pub mod manager;
 pub mod tmux;
 pub mod validate;

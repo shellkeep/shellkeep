@@ -241,6 +241,11 @@ impl Backend {
         self.term.clone()
     }
 
+    /// Returns the current terminal grid size as (cols, rows).
+    pub fn terminal_size(&self) -> (u16, u16) {
+        (self.size.num_cols, self.size.num_lines)
+    }
+
     pub fn handle(&mut self, cmd: Command) -> Action {
         let mut action = Action::default();
         let term = self.term.clone();

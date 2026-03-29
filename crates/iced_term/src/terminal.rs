@@ -90,6 +90,19 @@ impl Terminal {
         self.backend.feed_ssh_data(data);
     }
 
+    /// Feed SSH data and trigger a sync + redraw.
+    /// Use this instead of `feed_ssh_data()` when the terminal needs to render
+    /// the new content immediately (i.e. from the app's update() handler).
+    pub fn process_ssh_data(&mut self, data: &[u8]) {
+        self.backend.feed_ssh_data(data);
+        self.sync_and_redraw();
+    }
+
+    /// Returns the current terminal grid size as (cols, rows).
+    pub fn terminal_size(&self) -> (u16, u16) {
+        self.backend.terminal_size()
+    }
+
     pub fn widget_id(&self) -> &iced::widget::Id {
         &self.widget_id
     }
