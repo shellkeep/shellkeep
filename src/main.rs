@@ -715,6 +715,7 @@ impl ShellKeep {
                     host: self.host_input.clone(),
                     user: self.user_input.clone(),
                     port: self.port_input.clone(),
+                    last_connected: None, // set by push()
                 });
                 self.recent.save();
 

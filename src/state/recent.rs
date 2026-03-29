@@ -19,6 +19,8 @@ pub struct RecentConnection {
     pub host: String,
     pub user: String,
     pub port: String,
+    #[serde(default)]
+    pub last_connected: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -48,7 +50,14 @@ impl RecentConnections {
     }
 
     /// Add a connection to the front of the list, deduplicating by label.
-    pub fn push(&mut self, conn: RecentConnection) {
+    /// Sets last_connected timestamp automatically.
+    pub fn push(&mut self, mut conn: RecentConnection) {
+        conn.last_connected = Some(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        );
         // Remove existing entry with same label
         self.connections.retain(|c| c.label != conn.label);
         // Add to front
@@ -78,6 +87,7 @@ mod tests {
             host: "example.com".into(),
             user: "alice".into(),
             port: "22".into(),
+            last_connected: None,
         });
         recent.push(RecentConnection {
             label: "bob@other.com".into(),
@@ -85,6 +95,7 @@ mod tests {
             host: "other.com".into(),
             user: "bob".into(),
             port: "22".into(),
+            last_connected: None,
         });
         // Push duplicate — should move to front
         recent.push(RecentConnection {
@@ -93,6 +104,7 @@ mod tests {
             host: "example.com".into(),
             user: "alice".into(),
             port: "22".into(),
+            last_connected: None,
         });
         assert_eq!(recent.connections.len(), 2);
         assert_eq!(recent.connections[0].label, "alice@example.com");
@@ -108,6 +120,7 @@ mod tests {
                 host: format!("host-{i}"),
                 user: "user".into(),
                 port: "22".into(),
+                last_connected: None,
             });
         }
         assert_eq!(recent.connections.len(), MAX_RECENT);
