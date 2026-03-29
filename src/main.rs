@@ -306,7 +306,19 @@ impl ShellKeep {
     }
 
     fn open_tab(&mut self, ssh_args: &[String], label: &str) {
-        let tmux_session = format!("shellkeep-{}", self.next_id);
+        // Find the next unused tmux session number
+        let max_existing = self
+            .tabs
+            .iter()
+            .filter_map(|t| {
+                t.tmux_session
+                    .strip_prefix("shellkeep-")
+                    .and_then(|n| n.parse::<u64>().ok())
+            })
+            .max()
+            .unwrap_or(0);
+        let session_num = max_existing.max(self.next_id);
+        let tmux_session = format!("shellkeep-{session_num}");
         self.open_tab_with_tmux(ssh_args, label, &tmux_session);
     }
 
