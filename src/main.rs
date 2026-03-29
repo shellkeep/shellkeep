@@ -18,6 +18,7 @@ use iced_term::settings::{BackendSettings, FontSettings, Settings, ThemeSettings
 use shellkeep::config::Config;
 use shellkeep::ssh;
 use shellkeep::state::recent::{RecentConnection, RecentConnections};
+use shellkeep::state::state_file::{StateFile, TabState};
 
 const RENAME_INPUT_ID: &str = "rename-tab-input";
 
@@ -137,6 +138,8 @@ struct ShellKeep {
     tab_context_menu: Option<(usize, f32, f32)>,
     /// Current connection params (for russh control connection)
     current_conn: Option<ConnParams>,
+    /// Client identifier for state persistence
+    client_id: String,
 
     // Welcome screen state
     host_input: String,
@@ -201,6 +204,11 @@ impl ShellKeep {
             context_menu: None,
             tab_context_menu: None,
             current_conn: None,
+            client_id: config.general.client_id.clone().unwrap_or_else(|| {
+                // Generate a stable client ID from hostname
+                let hostname = whoami::fallible::hostname().unwrap_or_else(|_| "unknown".into());
+                format!("{}-{}", whoami::username(), hostname)
+            }),
             host_input: String::new(),
             port_input: default_port,
             user_input: username,
@@ -273,6 +281,7 @@ impl ShellKeep {
                 self.active_tab = self.tabs.len() - 1;
                 self.error = None;
                 self.update_title();
+                self.save_state();
                 tracing::info!("opened tab {id}: {label} (tmux: {tmux_session})");
             }
             Err(e) => {
@@ -290,6 +299,7 @@ impl ShellKeep {
                 self.active_tab -= 1;
             }
             self.update_title();
+            self.save_state();
         }
     }
 
@@ -326,6 +336,24 @@ impl ShellKeep {
             }
         }
         tracing::debug!("font size: {}", self.current_font_size);
+    }
+
+    fn save_state(&self) {
+        let mut state = StateFile::new(&self.client_id);
+        for (i, tab) in self.tabs.iter().enumerate() {
+            state.tabs.push(TabState {
+                session_uuid: format!("tab-{}", tab.id),
+                tmux_session_name: tab.tmux_session.clone(),
+                title: tab.label.clone(),
+                position: i,
+            });
+        }
+        let path = StateFile::local_cache_path(&self.client_id);
+        if let Err(e) = state.save_local(&path) {
+            tracing::warn!("failed to save state: {e}");
+        } else {
+            tracing::debug!("state saved to {}", path.display());
+        }
     }
 
     fn update_title(&mut self) {
@@ -554,6 +582,7 @@ impl ShellKeep {
                 {
                     self.tabs[index].label = self.rename_input.trim().to_string();
                     self.update_title();
+                    self.save_state();
                 }
                 self.renaming_tab = None;
             }
