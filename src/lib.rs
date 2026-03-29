@@ -4,5 +4,6 @@
 //! shellkeep library — SSH terminal manager internals.
 
 pub mod config;
+pub mod crash;
 pub mod ssh;
 pub mod state;

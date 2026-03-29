@@ -4312,6 +4312,7 @@ dependencies = [
  "iced",
  "iced_runtime",
  "iced_term",
+ "libc",
  "russh",
  "russh-keys",
  "serde",

@@ -84,6 +84,12 @@ fn main() -> iced::Result {
 
     tracing::info!("shellkeep v{} starting", env!("CARGO_PKG_VERSION"));
 
+    // NFR-SEC-10: disable core dumps
+    shellkeep::crash::disable_core_dumps();
+
+    // NFR-OBS-09: install crash handler
+    shellkeep::crash::install_panic_hook();
+
     // NFR-SEC-03: verify and fix file permissions on startup
     shellkeep::state::permissions::verify_and_fix();
 
