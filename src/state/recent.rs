@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
-const MAX_RECENT: usize = 20;
+const MAX_RECENT: usize = 50;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecentConnection {
@@ -20,7 +20,11 @@ pub struct RecentConnection {
     pub user: String,
     pub port: String,
     #[serde(default)]
+    pub alias: Option<String>,
+    #[serde(default)]
     pub last_connected: Option<u64>,
+    #[serde(default)]
+    pub host_key_fingerprint: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -87,7 +91,9 @@ mod tests {
             host: "example.com".into(),
             user: "alice".into(),
             port: "22".into(),
+            alias: None,
             last_connected: None,
+            host_key_fingerprint: None,
         });
         recent.push(RecentConnection {
             label: "bob@other.com".into(),
@@ -95,7 +101,9 @@ mod tests {
             host: "other.com".into(),
             user: "bob".into(),
             port: "22".into(),
+            alias: None,
             last_connected: None,
+            host_key_fingerprint: None,
         });
         // Push duplicate — should move to front
         recent.push(RecentConnection {
@@ -104,7 +112,9 @@ mod tests {
             host: "example.com".into(),
             user: "alice".into(),
             port: "22".into(),
+            alias: None,
             last_connected: None,
+            host_key_fingerprint: None,
         });
         assert_eq!(recent.connections.len(), 2);
         assert_eq!(recent.connections[0].label, "alice@example.com");
