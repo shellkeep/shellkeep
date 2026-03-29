@@ -84,6 +84,9 @@ fn main() -> iced::Result {
 
     tracing::info!("shellkeep v{} starting", env!("CARGO_PKG_VERSION"));
 
+    // NFR-SEC-03: verify and fix file permissions on startup
+    shellkeep::state::permissions::verify_and_fix();
+
     iced::application(
         move || ShellKeep::new(initial_ssh_args.clone()),
         ShellKeep::update,
