@@ -1387,8 +1387,28 @@ impl ShellKeep {
                     .into(),
             );
             for (i, conn) in self.recent.connections.iter().enumerate() {
+                let display_label = if let Some(ts) = conn.last_connected {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+                    let ago = now.saturating_sub(ts);
+                    let time_str = if ago < 60 {
+                        "just now".to_string()
+                    } else if ago < 3600 {
+                        format!("{}m ago", ago / 60)
+                    } else if ago < 86400 {
+                        format!("{}h ago", ago / 3600)
+                    } else {
+                        format!("{}d ago", ago / 86400)
+                    };
+                    format!("{}  ({})", conn.label, time_str)
+                } else {
+                    conn.label.clone()
+                };
+
                 let item: Element<'_, Message> = button(
-                    text(&conn.label)
+                    text(display_label)
                         .size(13)
                         .color(Color::from_rgb8(0xcd, 0xd6, 0xf4)),
                 )
