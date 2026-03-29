@@ -121,7 +121,8 @@ struct ShellKeep {
     renaming_tab: Option<usize>,
     rename_input: String,
     current_font_size: f32,
-    context_menu: Option<(f32, f32)>, // (x, y) position of context menu
+    context_menu: Option<(f32, f32)>, // terminal right-click menu
+    tab_context_menu: Option<(usize, f32, f32)>, // tab right-click menu (index, x, y)
 
     // Welcome screen state
     host_input: String,
@@ -150,6 +151,10 @@ enum Message {
     ContextMenuCopy,
     ContextMenuPaste,
     ContextMenuDismiss,
+    TabContextMenu(usize, f32, f32),
+    TabMoveLeft(usize),
+    TabMoveRight(usize),
+    StartRename(usize),
     ConnectRecent(usize),
     RenameInputChanged(String),
     FinishRename,
@@ -180,6 +185,7 @@ impl ShellKeep {
             rename_input: String::new(),
             current_font_size: config.terminal.font_size,
             context_menu: None,
+            tab_context_menu: None,
             host_input: String::new(),
             port_input: default_port,
             user_input: username,
@@ -358,6 +364,8 @@ impl ShellKeep {
         match message {
             Message::TerminalEvent(iced_term::Event::ContextMenu(_id, x, y)) => {
                 self.context_menu = Some((x, y));
+                self.renaming_tab = None;
+                self.tab_context_menu = None;
             }
 
             Message::ContextMenuCopy => {
@@ -382,6 +390,46 @@ impl ShellKeep {
 
             Message::ContextMenuDismiss => {
                 self.context_menu = None;
+                self.tab_context_menu = None;
+                self.renaming_tab = None;
+            }
+
+            Message::TabContextMenu(index, x, y) => {
+                self.tab_context_menu = Some((index, x, y));
+                self.context_menu = None;
+            }
+
+            Message::StartRename(index) => {
+                self.tab_context_menu = None;
+                if index < self.tabs.len() {
+                    self.active_tab = index;
+                    self.rename_input = self.tabs[index].label.clone();
+                    self.renaming_tab = Some(index);
+                }
+            }
+
+            Message::TabMoveLeft(index) => {
+                self.tab_context_menu = None;
+                if index > 0 && index < self.tabs.len() {
+                    self.tabs.swap(index, index - 1);
+                    if self.active_tab == index {
+                        self.active_tab -= 1;
+                    } else if self.active_tab == index - 1 {
+                        self.active_tab += 1;
+                    }
+                }
+            }
+
+            Message::TabMoveRight(index) => {
+                self.tab_context_menu = None;
+                if index + 1 < self.tabs.len() {
+                    self.tabs.swap(index, index + 1);
+                    if self.active_tab == index {
+                        self.active_tab += 1;
+                    } else if self.active_tab == index + 1 {
+                        self.active_tab -= 1;
+                    }
+                }
             }
 
             Message::TerminalEvent(iced_term::Event::BackendCall(id, cmd)) => {
@@ -425,6 +473,8 @@ impl ShellKeep {
                 if index < self.tabs.len() {
                     self.active_tab = index;
                     self.show_welcome = false;
+                    self.renaming_tab = None;
+                    self.tab_context_menu = None;
                     self.update_title();
                 }
             }
@@ -699,8 +749,101 @@ impl ShellKeep {
 
         let status_bar = self.view_status_bar();
 
-        // Wrap with context menu overlay if active
-        let main_view: Element<'_, Message> = if let Some((x, y)) = self.context_menu {
+        // Wrap with tab context menu if active
+        let main_view: Element<'_, Message> = if let Some((tab_idx, _x, _y)) = self.tab_context_menu
+        {
+            let ctx_style = |_theme: &Theme, status: button::Status| {
+                let bg = match status {
+                    button::Status::Hovered | button::Status::Pressed => {
+                        Color::from_rgb8(0x45, 0x47, 0x5a)
+                    }
+                    _ => Color::from_rgb8(0x24, 0x24, 0x36),
+                };
+                button::Style {
+                    background: Some(iced::Background::Color(bg)),
+                    text_color: Color::from_rgb8(0xcd, 0xd6, 0xf4),
+                    ..Default::default()
+                }
+            };
+
+            let mut menu_items: Vec<Element<'_, Message>> = Vec::new();
+
+            if tab_idx > 0 {
+                menu_items.push(
+                    button(text("Move left").size(13))
+                        .on_press(Message::TabMoveLeft(tab_idx))
+                        .padding([8, 16])
+                        .width(180)
+                        .style(ctx_style)
+                        .into(),
+                );
+            }
+            if tab_idx + 1 < self.tabs.len() {
+                menu_items.push(
+                    button(text("Move right").size(13))
+                        .on_press(Message::TabMoveRight(tab_idx))
+                        .padding([8, 16])
+                        .width(180)
+                        .style(ctx_style)
+                        .into(),
+                );
+            }
+            menu_items.push(
+                button(text("Rename         F2").size(13))
+                    .on_press(Message::StartRename(tab_idx))
+                    .padding([8, 16])
+                    .width(180)
+                    .style(ctx_style)
+                    .into(),
+            );
+            menu_items.push(
+                button(text("Close tab").size(13))
+                    .on_press(Message::CloseTab(tab_idx))
+                    .padding([8, 16])
+                    .width(180)
+                    .style(ctx_style)
+                    .into(),
+            );
+
+            let tab_menu =
+                container(column(menu_items).spacing(1))
+                    .padding(4)
+                    .style(|_theme: &Theme| container::Style {
+                        background: Some(iced::Background::Color(Color::from_rgb8(
+                            0x24, 0x24, 0x36,
+                        ))),
+                        border: iced::Border {
+                            radius: 8.0.into(),
+                            width: 1.0,
+                            color: Color::from_rgb8(0x45, 0x47, 0x5a),
+                        },
+                        shadow: iced::Shadow {
+                            color: Color::from_rgba8(0, 0, 0, 0.5),
+                            offset: iced::Vector::new(2.0, 2.0),
+                            blur_radius: 8.0,
+                        },
+                        ..Default::default()
+                    });
+
+            let dismiss = mouse_area(
+                container(Space::new().width(Length::Fill).height(Length::Fill))
+                    .width(Length::Fill)
+                    .height(Length::Fill),
+            )
+            .on_press(Message::ContextMenuDismiss);
+
+            stack![
+                column![tab_bar, content, status_bar],
+                dismiss,
+                container(tab_menu).padding(iced::Padding {
+                    top: 28.0,
+                    right: 0.0,
+                    bottom: 0.0,
+                    left: (tab_idx as f32) * 120.0,
+                }),
+            ]
+            .into()
+        } else if let Some((x, y)) = self.context_menu {
             let ctx_style = |_theme: &Theme, status: button::Status| {
                 let bg = match status {
                     button::Status::Hovered | button::Status::Pressed => {
@@ -879,7 +1022,7 @@ impl ShellKeep {
                 .spacing(6)
                 .align_y(iced::Alignment::Center);
 
-                button(tab_content)
+                let tab_button = button(tab_content)
                     .on_press(Message::SelectTab(i))
                     .padding([6, 12])
                     .style(move |_theme: &Theme, _status| button::Style {
@@ -890,7 +1033,11 @@ impl ShellKeep {
                             ..Default::default()
                         },
                         ..Default::default()
-                    })
+                    });
+
+                // Wrap in mouse_area for right-click context menu
+                mouse_area(tab_button)
+                    .on_right_press(Message::TabContextMenu(i, 0.0, 30.0))
                     .into()
             };
 
