@@ -519,8 +519,7 @@ impl ShellKeep {
             // (russh is used for interactive Connect button flow)
             let ssh_args_vec = app.build_ssh_args_from_conn(app.current_conn.as_ref().unwrap());
             let existing = ssh::tmux::list_remote_sessions(&ssh_args_vec);
-            let saved_state =
-                StateFile::load_local(&StateFile::local_cache_path(&app.client_id));
+            let saved_state = StateFile::load_local(&StateFile::local_cache_path(&app.client_id));
 
             if existing.is_empty() {
                 app.open_tab_with_tmux(&ssh_args_vec, &label);
@@ -688,12 +687,7 @@ impl ShellKeep {
         self.open_tab_with_tmux_session(ssh_args, label, &tmux_session);
     }
 
-    fn open_tab_with_tmux_session(
-        &mut self,
-        ssh_args: &[String],
-        label: &str,
-        tmux_session: &str,
-    ) {
+    fn open_tab_with_tmux_session(&mut self, ssh_args: &[String], label: &str, tmux_session: &str) {
         let id = self.next_id;
         self.next_id += 1;
 
@@ -786,10 +780,8 @@ impl ShellKeep {
             tab.ssh_resize_tx = None;
             tab.pending_channel = None;
 
-            let (ssh_writer_tx, ssh_writer_rx) =
-                tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
-            let (resize_tx, resize_rx) =
-                tokio::sync::mpsc::unbounded_channel::<(u32, u32)>();
+            let (ssh_writer_tx, ssh_writer_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+            let (resize_tx, resize_rx) = tokio::sync::mpsc::unbounded_channel::<(u32, u32)>();
             let channel_holder: ChannelHolder = Arc::new(Mutex::new(None));
 
             let settings = Settings {
@@ -1107,9 +1099,7 @@ impl ShellKeep {
                 }
 
                 // Handle shutdown after terminal borrow is released
-                if shutdown
-                    && let Some(tab) = self.tabs.iter_mut().find(|t| t.id == id)
-                {
+                if shutdown && let Some(tab) = self.tabs.iter_mut().find(|t| t.id == id) {
                     tab.terminal = None;
                     if tab.auto_reconnect
                         && tab.reconnect_attempts < self.config.ssh.reconnect_max_attempts
@@ -1423,12 +1413,10 @@ impl ShellKeep {
                     ]
                     .into()
                 } else {
-                    container(
-                        iced_term::TerminalView::show(terminal).map(Message::TerminalEvent),
-                    )
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .into()
+                    container(iced_term::TerminalView::show(terminal).map(Message::TerminalEvent))
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .into()
                 }
             } else if tab.auto_reconnect {
                 let attempt_text = format!(

@@ -51,8 +51,7 @@ impl ConnectionManager {
             return Ok(handle.clone());
         }
 
-        let handle =
-            connection::connect(&key.host, key.port, &key.username, identity_file).await?;
+        let handle = connection::connect(&key.host, key.port, &key.username, identity_file).await?;
         let arc = Arc::new(Mutex::new(handle));
         self.handles.insert(key.clone(), arc.clone());
         Ok(arc)
