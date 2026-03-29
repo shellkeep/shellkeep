@@ -28,6 +28,39 @@ fn main() -> iced::Result {
     // Handle --version and --help before initializing anything
     for arg in &args[1..] {
         match arg.as_str() {
+            "--crash-report" => {
+                let dir = shellkeep::crash::crash_dir();
+                if dir.exists() {
+                    match std::fs::read_dir(&dir) {
+                        Ok(entries) => {
+                            let mut files: Vec<_> = entries
+                                .filter_map(|e| e.ok())
+                                .filter(|e| e.path().extension().is_some_and(|ext| ext == "txt"))
+                                .collect();
+                            files.sort_by_key(|e| e.path());
+                            if files.is_empty() {
+                                println!("No crash dumps found.");
+                            } else {
+                                println!("Crash dumps in {}:", dir.display());
+                                for f in &files {
+                                    println!("  {}", f.path().display());
+                                }
+                                // Show the latest one
+                                if let Some(latest) = files.last() {
+                                    println!(
+                                        "\nLatest:\n{}",
+                                        std::fs::read_to_string(latest.path()).unwrap_or_default()
+                                    );
+                                }
+                            }
+                        }
+                        Err(_) => println!("No crash dumps found."),
+                    }
+                } else {
+                    println!("No crash dumps found.");
+                }
+                std::process::exit(0);
+            }
             "--version" | "-V" => {
                 println!("shellkeep {}", env!("CARGO_PKG_VERSION"));
                 std::process::exit(0);
@@ -38,12 +71,13 @@ fn main() -> iced::Result {
                      Usage: shellkeep [user@]host [-p port] [-i identity] [-l user]\n\
                      \n\
                      Options:\n  \
-                       -p PORT       SSH port (default: 22)\n  \
-                       -i FILE       Identity file (private key)\n  \
-                       -l USER       Login user name\n  \
-                       --debug       Enable debug logging\n  \
-                       --version     Show version\n  \
-                       --help        Show this help\n\
+                       -p PORT          SSH port (default: 22)\n  \
+                       -i FILE          Identity file (private key)\n  \
+                       -l USER          Login user name\n  \
+                       --debug          Enable debug logging\n  \
+                       --crash-report   Show crash dumps from previous runs\n  \
+                       --version        Show version\n  \
+                       --help           Show this help\n\
                      \n\
                      Without arguments, opens the welcome screen.\n\
                      https://github.com/shellkeep/shellkeep",
