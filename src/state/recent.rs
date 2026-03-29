@@ -123,7 +123,7 @@ mod tests {
     #[test]
     fn truncates_at_max() {
         let mut recent = RecentConnections::default();
-        for i in 0..25 {
+        for i in 0..55 {
             recent.push(RecentConnection {
                 label: format!("host-{i}"),
                 ssh_args: vec![format!("host-{i}")],
@@ -136,6 +136,6 @@ mod tests {
             });
         }
         assert_eq!(recent.connections.len(), MAX_RECENT);
-        assert_eq!(recent.connections[0].label, "host-24"); // most recent
+        assert_eq!(recent.connections[0].label, "host-54"); // most recent
     }
 }
