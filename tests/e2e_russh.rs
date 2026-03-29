@@ -13,9 +13,10 @@ const SSH_USER: &str = "root";
 #[tokio::test]
 #[ignore]
 async fn test_russh_connect() {
-    let handle = shellkeep::ssh::connection::connect(SSH_HOST, SSH_PORT, SSH_USER, Some(SSH_KEY))
-        .await
-        .expect("failed to connect");
+    let handle =
+        shellkeep::ssh::connection::connect(SSH_HOST, SSH_PORT, SSH_USER, Some(SSH_KEY), 15)
+            .await
+            .expect("failed to connect");
 
     // Verify we can run a command
     let output = shellkeep::ssh::connection::exec_command(&handle, "echo hello_russh")
@@ -31,9 +32,10 @@ async fn test_russh_connect() {
 #[tokio::test]
 #[ignore]
 async fn test_russh_list_tmux_sessions() {
-    let handle = shellkeep::ssh::connection::connect(SSH_HOST, SSH_PORT, SSH_USER, Some(SSH_KEY))
-        .await
-        .expect("failed to connect");
+    let handle =
+        shellkeep::ssh::connection::connect(SSH_HOST, SSH_PORT, SSH_USER, Some(SSH_KEY), 15)
+            .await
+            .expect("failed to connect");
 
     // Clean up any existing sessions
     let _ =
@@ -61,9 +63,10 @@ async fn test_russh_list_tmux_sessions() {
 #[tokio::test]
 #[ignore]
 async fn test_russh_open_shell() {
-    let handle = shellkeep::ssh::connection::connect(SSH_HOST, SSH_PORT, SSH_USER, Some(SSH_KEY))
-        .await
-        .expect("failed to connect");
+    let handle =
+        shellkeep::ssh::connection::connect(SSH_HOST, SSH_PORT, SSH_USER, Some(SSH_KEY), 15)
+            .await
+            .expect("failed to connect");
 
     let mut channel = shellkeep::ssh::connection::open_shell(&handle, 80, 24)
         .await

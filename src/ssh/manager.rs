@@ -46,15 +46,31 @@ impl ConnectionManager {
         &mut self,
         key: &ConnKey,
         identity_file: Option<&str>,
+        keepalive_interval_secs: u32,
     ) -> Result<Arc<Mutex<russh::client::Handle<SshHandler>>>, SshError> {
         if let Some(handle) = self.handles.get(key) {
             return Ok(handle.clone());
         }
 
-        let handle = connection::connect(&key.host, key.port, &key.username, identity_file).await?;
+        let handle = connection::connect(
+            &key.host,
+            key.port,
+            &key.username,
+            identity_file,
+            keepalive_interval_secs,
+        )
+        .await?;
         let arc = Arc::new(Mutex::new(handle));
         self.handles.insert(key.clone(), arc.clone());
         Ok(arc)
+    }
+
+    /// Get a cached handle without creating a new connection.
+    pub fn get_cached(
+        &self,
+        key: &ConnKey,
+    ) -> Option<Arc<Mutex<russh::client::Handle<SshHandler>>>> {
+        self.handles.get(key).cloned()
     }
 
     /// Remove a cached handle (e.g. after connection failure).
