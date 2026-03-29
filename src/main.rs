@@ -1488,10 +1488,11 @@ impl ShellKeep {
                 .into()
         };
 
-        let shortcuts_hint =
-            text("Ctrl+Shift+T new tab  |  Ctrl+Shift+W close  |  F2 rename  |  Ctrl+=/- zoom")
-                .size(10)
-                .color(Color::from_rgb8(0x58, 0x5b, 0x70));
+        let shortcuts_hint = text(
+            "Ctrl+Shift+T new tab  |  Ctrl+Shift+N new window  |  Ctrl+Shift+W close  |  F2 rename",
+        )
+        .size(10)
+        .color(Color::from_rgb8(0x58, 0x5b, 0x70));
 
         let form = column![
             logo,
