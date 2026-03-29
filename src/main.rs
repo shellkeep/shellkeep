@@ -638,19 +638,10 @@ impl ShellKeep {
     }
 
     /// Open a new tab, assigning it the next unused tmux session name.
+    /// FR-SESSION-04, FR-SESSION-05: generate tmux session name with client-id and timestamp
     fn next_tmux_session(&self) -> String {
-        let max_existing = self
-            .tabs
-            .iter()
-            .filter_map(|t| {
-                t.tmux_session
-                    .strip_prefix("shellkeep-")
-                    .and_then(|n| n.parse::<u64>().ok())
-            })
-            .max()
-            .unwrap_or(0);
-        let session_num = max_existing.max(self.next_id);
-        format!("shellkeep-{session_num}")
+        let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+        format!("{}--shellkeep-{}", self.client_id, timestamp)
     }
 
     /// Open a tab using russh SSH. Returns a Task that establishes the connection.
@@ -789,6 +780,7 @@ impl ShellKeep {
                 self.tabs.push(Tab {
                     id,
                     label: label.to_string(),
+                    session_uuid: uuid::Uuid::new_v4().to_string(),
                     terminal: Some(terminal),
                     ssh_args: ssh_args.to_vec(),
                     conn_params: self.current_conn.clone(),
@@ -796,6 +788,7 @@ impl ShellKeep {
                     dead: false,
                     reconnect_attempts: 0,
                     auto_reconnect: true,
+                    reconnect_delay_ms: 0,
                     uses_russh: false,
                     ssh_channel_holder: None,
                     ssh_writer_rx_holder: None,
@@ -967,7 +960,7 @@ impl ShellKeep {
         let mut state = StateFile::new(&self.client_id);
         for (i, tab) in self.tabs.iter().enumerate() {
             state.tabs.push(TabState {
-                session_uuid: format!("tab-{}", tab.id),
+                session_uuid: tab.session_uuid.clone(),
                 tmux_session_name: tab.tmux_session.clone(),
                 title: tab.label.clone(),
                 position: i,
@@ -978,6 +971,11 @@ impl ShellKeep {
             tracing::warn!("failed to save state: {e}");
         } else {
             tracing::debug!("state saved to {}", path.display());
+        }
+
+        // FR-TRAY-02: update tray tooltip with session count
+        if let Some(ref tray) = self.tray {
+            tray.set_session_count(self.tabs.iter().filter(|t| !t.dead).count());
         }
     }
 
@@ -1364,10 +1362,29 @@ impl ShellKeep {
                     .collect();
 
                 if let Some(&index) = reconnect_indices.first() {
+                    // FR-RECONNECT-06: exponential backoff with jitter
+                    let base_ms = (self.config.ssh.reconnect_backoff_base * 1000.0) as u64;
+                    let attempt = self.tabs[index].reconnect_attempts;
+                    let exp_delay = base_ms.saturating_mul(
+                        1u64.checked_shl(attempt.saturating_sub(1))
+                            .unwrap_or(u64::MAX),
+                    );
+                    let capped = exp_delay.min(60_000);
+                    use rand::Rng;
+                    let jitter_range = capped / 4;
+                    let jitter = if jitter_range > 0 {
+                        rand::thread_rng().gen_range(0..jitter_range * 2) as i64
+                            - jitter_range as i64
+                    } else {
+                        0
+                    };
+                    let next_delay = (capped as i64 + jitter).max(base_ms as i64) as u64;
+                    self.tabs[index].reconnect_delay_ms = next_delay;
                     tracing::info!(
-                        "auto-reconnecting tab {} (attempt {})",
+                        "auto-reconnecting tab {} (attempt {}, next delay {}ms)",
                         self.tabs[index].id,
                         self.tabs[index].reconnect_attempts,
+                        next_delay,
                     );
                     return self.reconnect_tab(index);
                 }
@@ -1378,15 +1395,56 @@ impl ShellKeep {
             }
 
             Message::FinishRename => {
+                let mut rename_task = Task::none();
                 if let Some(index) = self.renaming_tab
                     && index < self.tabs.len()
                     && !self.rename_input.trim().is_empty()
                 {
-                    self.tabs[index].label = self.rename_input.trim().to_string();
+                    let new_label = self.rename_input.trim().to_string();
+                    let old_tmux = self.tabs[index].tmux_session.clone();
+                    self.tabs[index].label = new_label.clone();
                     self.update_title();
                     self.save_state();
+
+                    // FR-SESSION-06: also rename tmux session on the server
+                    if self.tabs[index].uses_russh && self.tabs[index].conn_params.is_some() {
+                        let sanitized: String = new_label
+                            .chars()
+                            .map(|c| {
+                                if c.is_alphanumeric() || c == '-' || c == '_' {
+                                    c
+                                } else {
+                                    '-'
+                                }
+                            })
+                            .collect();
+                        let new_tmux = format!("{}--shellkeep-{}", self.client_id, sanitized);
+                        self.tabs[index].tmux_session = new_tmux.clone();
+                        let mgr = self.conn_manager.clone();
+                        let conn = self.tabs[index].conn_params.clone().unwrap();
+                        rename_task = Task::perform(
+                            async move {
+                                let conn_key = ConnKey {
+                                    host: conn.host.clone(),
+                                    port: conn.port,
+                                    username: conn.username.clone(),
+                                };
+                                let mgr_guard = mgr.lock().await;
+                                if let Some(handle_arc) = mgr_guard.get_cached(&conn_key) {
+                                    let handle = handle_arc.lock().await;
+                                    let cmd = format!(
+                                        "tmux rename-session -t {} {} 2>/dev/null || true",
+                                        old_tmux, new_tmux
+                                    );
+                                    let _ = ssh::connection::exec_command(&handle, &cmd).await;
+                                }
+                            },
+                            |_| Message::ContextMenuDismiss,
+                        );
+                    }
                 }
                 self.renaming_tab = None;
+                return rename_task;
             }
 
             Message::HostInputChanged(v) => {
@@ -1556,9 +1614,18 @@ impl ShellKeep {
                         self.current_font_size = self.config.terminal.font_size;
                         self.apply_font_to_all_tabs();
                     }
-                    // Escape — dismiss context menu, cancel rename, or cancel welcome
+                    // Ctrl+Shift+F — toggle scrollback search (FR-TABS-09)
+                    if modifiers.control()
+                        && modifiers.shift()
+                        && key == keyboard::Key::Character("f".into())
+                    {
+                        return self.update(Message::SearchToggle);
+                    }
+                    // Escape — dismiss search, context menu, cancel rename, or cancel welcome
                     if key == keyboard::Key::Named(keyboard::key::Named::Escape) {
-                        if self.context_menu.is_some() {
+                        if self.search_active {
+                            return self.update(Message::SearchClose);
+                        } else if self.context_menu.is_some() {
                             self.context_menu = None;
                         } else if self.renaming_tab.is_some() {
                             self.renaming_tab = None;
@@ -1567,6 +1634,103 @@ impl ShellKeep {
                         }
                     }
                 }
+            }
+
+            // FR-TRAY-01: poll tray menu events
+            Message::TrayPoll => {
+                if let Some(ref tray) = self.tray {
+                    match tray.poll_event() {
+                        Some(TrayAction::ShowWindow) => {
+                            tracing::debug!("tray: show window requested");
+                        }
+                        Some(TrayAction::HideWindow) => {
+                            tracing::debug!("tray: hide window requested");
+                        }
+                        Some(TrayAction::Quit) => {
+                            tracing::info!("tray: quit requested");
+                            std::process::exit(0);
+                        }
+                        None => {}
+                    }
+                }
+            }
+
+            Message::SearchToggle => {
+                self.search_active = !self.search_active;
+                if !self.search_active {
+                    self.search_input.clear();
+                    self.search_regex = None;
+                    self.search_last_match = None;
+                } else {
+                    return iced_runtime::widget::operation::focus("search-input");
+                }
+            }
+
+            Message::SearchInputChanged(v) => {
+                self.search_input = v;
+                if self.search_input.is_empty() {
+                    self.search_regex = None;
+                    self.search_last_match = None;
+                } else {
+                    let escaped = escape_regex(&self.search_input);
+                    self.search_regex = RegexSearch::new(&escaped).ok();
+                    if self.search_regex.is_some() {
+                        return self.update(Message::SearchNext);
+                    }
+                }
+            }
+
+            Message::SearchNext => {
+                if let Some(ref mut regex) = self.search_regex
+                    && let Some(tab) = self.tabs.get_mut(self.active_tab)
+                    && let Some(ref mut terminal) = tab.terminal
+                {
+                    let origin = self
+                        .search_last_match
+                        .as_ref()
+                        .map(|m| {
+                            let mut p = *m.end();
+                            p.column.0 += 1;
+                            p
+                        })
+                        .unwrap_or(AlacrittyPoint::new(
+                            alacritty_terminal::index::Line(0),
+                            alacritty_terminal::index::Column(0),
+                        ));
+                    self.search_last_match = terminal.search_next(regex, origin);
+                }
+            }
+
+            Message::SearchPrev => {
+                if let Some(ref mut regex) = self.search_regex
+                    && let Some(tab) = self.tabs.get_mut(self.active_tab)
+                    && let Some(ref mut terminal) = tab.terminal
+                {
+                    let origin = self
+                        .search_last_match
+                        .as_ref()
+                        .map(|m| {
+                            let mut p = *m.start();
+                            if p.column.0 > 0 {
+                                p.column.0 -= 1;
+                            } else {
+                                p.line -= 1i32;
+                            }
+                            p
+                        })
+                        .unwrap_or(AlacrittyPoint::new(
+                            alacritty_terminal::index::Line(0),
+                            alacritty_terminal::index::Column(0),
+                        ));
+                    self.search_last_match = terminal.search_prev(regex, origin);
+                }
+            }
+
+            Message::SearchClose => {
+                self.search_active = false;
+                self.search_input.clear();
+                self.search_regex = None;
+                self.search_last_match = None;
             }
         }
         Task::none()
@@ -1637,6 +1801,74 @@ impl ShellKeep {
             }
         } else {
             center(text("No active tab")).into()
+        };
+
+        // FR-TABS-09: search bar overlay
+        let content: Element<'_, Message> = if self.search_active {
+            let search_bar_style = |_theme: &Theme| container::Style {
+                background: Some(iced::Background::Color(Color::from_rgb8(0x24, 0x24, 0x36))),
+                border: iced::Border {
+                    radius: 0.0.into(),
+                    width: 0.0,
+                    color: Color::TRANSPARENT,
+                },
+                ..Default::default()
+            };
+            let btn_style = |_theme: &Theme, _status: button::Status| button::Style {
+                background: Some(iced::Background::Color(Color::from_rgb8(0x31, 0x32, 0x44))),
+                text_color: Color::from_rgb8(0xcd, 0xd6, 0xf4),
+                border: iced::Border {
+                    radius: 4.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let match_info: Element<'_, Message> = if self.search_last_match.is_some() {
+                text("Match found")
+                    .size(11)
+                    .color(Color::from_rgb8(0xa6, 0xe3, 0xa1))
+                    .into()
+            } else if !self.search_input.is_empty() {
+                text("No matches")
+                    .size(11)
+                    .color(Color::from_rgb8(0xf3, 0x8b, 0xa8))
+                    .into()
+            } else {
+                Space::new().width(0).into()
+            };
+            let search_bar = container(
+                row![
+                    text_input("Search...", &self.search_input)
+                        .id("search-input")
+                        .on_input(Message::SearchInputChanged)
+                        .on_submit(Message::SearchNext)
+                        .size(13)
+                        .padding(6)
+                        .width(280),
+                    button(text("Previous").size(11))
+                        .on_press(Message::SearchPrev)
+                        .padding([4, 8])
+                        .style(btn_style),
+                    button(text("Next").size(11))
+                        .on_press(Message::SearchNext)
+                        .padding([4, 8])
+                        .style(btn_style),
+                    match_info,
+                    Space::new().width(Length::Fill),
+                    button(text("Close").size(11))
+                        .on_press(Message::SearchClose)
+                        .padding([4, 8])
+                        .style(btn_style),
+                ]
+                .spacing(6)
+                .align_y(iced::Alignment::Center)
+                .padding([4, 8]),
+            )
+            .width(Length::Fill)
+            .style(search_bar_style);
+            column![search_bar, content].into()
+        } else {
+            content
         };
 
         let status_bar = self.view_status_bar();
@@ -2172,7 +2404,7 @@ impl ShellKeep {
         };
 
         let shortcuts_hint = text(
-            "Ctrl+Shift+T new tab  |  Ctrl+Shift+N new window  |  Ctrl+Shift+W close  |  F2 rename",
+            "Ctrl+Shift+T new tab  |  Ctrl+Shift+F search  |  Ctrl+Shift+W close  |  F2 rename",
         )
         .size(10)
         .color(Color::from_rgb8(0x58, 0x5b, 0x70));
@@ -2236,14 +2468,22 @@ impl ShellKeep {
 
         subs.push(keyboard::listen().map(Message::KeyEvent));
 
-        // Auto-reconnect timer — check every 3 seconds for tabs needing reconnection
-        let has_reconnectable = self
+        // FR-RECONNECT-06: exponential backoff auto-reconnect timer
+        if let Some(delay_ms) = self
             .tabs
             .iter()
-            .any(|t| t.terminal.is_none() && t.auto_reconnect && !t.dead);
-        if has_reconnectable {
+            .filter(|t| t.terminal.is_none() && t.auto_reconnect && !t.dead)
+            .map(|t| {
+                if t.reconnect_delay_ms == 0 {
+                    (self.config.ssh.reconnect_backoff_base * 1000.0) as u64
+                } else {
+                    t.reconnect_delay_ms
+                }
+            })
+            .min()
+        {
             subs.push(
-                iced::time::every(std::time::Duration::from_secs(3))
+                iced::time::every(std::time::Duration::from_millis(delay_ms))
                     .map(|_| Message::AutoReconnectTick),
             );
         }
@@ -2265,12 +2505,36 @@ impl ShellKeep {
             );
         }
 
+        // FR-TRAY-01: poll tray events
+        if self.tray.is_some() {
+            subs.push(
+                iced::time::every(std::time::Duration::from_millis(100)).map(|_| Message::TrayPoll),
+            );
+        }
         Subscription::batch(subs)
     }
 
     fn theme(&self) -> Theme {
         Theme::CatppuccinMocha
     }
+}
+
+// ---------------------------------------------------------------------------
+// Regex escaping for search — escape special regex characters for literal matching
+// ---------------------------------------------------------------------------
+
+fn escape_regex(input: &str) -> String {
+    let mut escaped = String::with_capacity(input.len() * 2);
+    for c in input.chars() {
+        if matches!(
+            c,
+            '\\' | '.' | '+' | '*' | '?' | '(' | ')' | '|' | '[' | ']' | '{' | '}' | '^' | '$'
+        ) {
+            escaped.push('\\');
+        }
+        escaped.push(c);
+    }
+    escaped
 }
 
 // ---------------------------------------------------------------------------
