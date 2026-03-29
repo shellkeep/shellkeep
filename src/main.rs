@@ -103,6 +103,7 @@ fn main() -> iced::Result {
 
 /// Connection parameters parsed from user input.
 #[derive(Clone)]
+#[allow(dead_code)]
 struct ConnParams {
     host: String,
     port: u16,
@@ -115,6 +116,7 @@ struct Tab {
     label: String,
     terminal: Option<iced_term::Terminal>,
     ssh_args: Vec<String>,
+    #[allow(dead_code)]
     conn_params: Option<ConnParams>,
     tmux_session: String,
     dead: bool,
@@ -635,22 +637,36 @@ impl ShellKeep {
 
                 // Check for existing shellkeep tmux sessions on the server
                 let existing = ssh::tmux::list_remote_sessions(&ssh_args);
+
+                // Load saved state for tab label restoration
+                let saved_state =
+                    StateFile::load_local(&StateFile::local_cache_path(&self.client_id));
+
                 if existing.is_empty() {
-                    // No existing sessions — open one new tab
                     self.open_tab(&ssh_args, &label);
                 } else {
-                    // Restore all existing sessions as tabs
                     tracing::info!(
                         "found {} existing tmux session(s): {:?}",
                         existing.len(),
                         existing
                     );
                     for (i, session_name) in existing.iter().enumerate() {
-                        let tab_label = if i == 0 {
-                            label.clone()
-                        } else {
-                            format!("Session {}", i + 1)
-                        };
+                        // Try to restore the tab label from saved state
+                        let tab_label = saved_state
+                            .as_ref()
+                            .and_then(|s| {
+                                s.tabs
+                                    .iter()
+                                    .find(|t| t.tmux_session_name == *session_name)
+                                    .map(|t| t.title.clone())
+                            })
+                            .unwrap_or_else(|| {
+                                if i == 0 {
+                                    label.clone()
+                                } else {
+                                    format!("Session {}", i + 1)
+                                }
+                            });
                         self.open_tab_with_tmux(&ssh_args, &tab_label, session_name);
                     }
                 }
@@ -663,17 +679,29 @@ impl ShellKeep {
                     self.user_input = conn.user;
                     self.port_input = conn.port;
 
-                    // Check for existing sessions
                     let existing = ssh::tmux::list_remote_sessions(&conn.ssh_args);
+                    let saved_state =
+                        StateFile::load_local(&StateFile::local_cache_path(&self.client_id));
+
                     if existing.is_empty() {
                         self.open_tab(&conn.ssh_args, &conn.label);
                     } else {
                         for (i, session_name) in existing.iter().enumerate() {
-                            let tab_label = if i == 0 {
-                                conn.label.clone()
-                            } else {
-                                format!("Session {}", i + 1)
-                            };
+                            let tab_label = saved_state
+                                .as_ref()
+                                .and_then(|s| {
+                                    s.tabs
+                                        .iter()
+                                        .find(|t| t.tmux_session_name == *session_name)
+                                        .map(|t| t.title.clone())
+                                })
+                                .unwrap_or_else(|| {
+                                    if i == 0 {
+                                        conn.label.clone()
+                                    } else {
+                                        format!("Session {}", i + 1)
+                                    }
+                                });
                             self.open_tab_with_tmux(&conn.ssh_args, &tab_label, session_name);
                         }
                     }
