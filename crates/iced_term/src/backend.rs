@@ -136,7 +136,8 @@ impl From<TerminalSize> for WindowSize {
 pub struct Backend {
     term: Arc<FairMutex<Term<EventProxy>>>,
     size: TerminalSize,
-    notifier: Notifier,
+    notifier: Option<Notifier>,
+    ssh_writer: Option<tokio::sync::mpsc::UnboundedSender<Vec<u8>>>,
     last_content: RenderableContent,
     pub(crate) url_regex: RegexSearch,
 }
@@ -185,10 +186,59 @@ impl Backend {
         Ok(Self {
             term: term.clone(),
             size: terminal_size,
-            notifier,
+            notifier: Some(notifier),
+            ssh_writer: None,
             last_content: initial_content,
             url_regex: RegexSearch::new(URL_REGEX).expect("invalid url regexp"),
         })
+    }
+
+    /// Create a backend connected to an SSH channel instead of a local PTY.
+    /// The `ssh_writer` sends keyboard input to the SSH channel.
+    /// The `ssh_reader` feeds SSH output into the terminal — call `feed_ssh_data()`.
+    pub fn new_ssh(
+        id: u64,
+        pty_event_proxy_sender: mpsc::Sender<Event>,
+        ssh_writer: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    ) -> Result<Self> {
+        let config = term::Config::default();
+        let terminal_size = TerminalSize::default();
+        let event_proxy = EventProxy(pty_event_proxy_sender);
+
+        let mut term = Term::new(config, &terminal_size, event_proxy);
+        let cursor = term.grid_mut().cursor_cell().clone();
+
+        let initial_content = RenderableContent {
+            grid: term.grid().clone(),
+            selectable_range: None,
+            terminal_mode: *term.mode(),
+            terminal_size,
+            cursor,
+            hovered_hyperlink: None,
+        };
+
+        let term = Arc::new(FairMutex::new(term));
+
+        Ok(Self {
+            term,
+            size: terminal_size,
+            notifier: None,
+            ssh_writer: Some(ssh_writer),
+            last_content: initial_content,
+            url_regex: RegexSearch::new(URL_REGEX).expect("invalid url regexp"),
+        })
+    }
+
+    /// Feed raw bytes from SSH channel into the terminal parser.
+    pub fn feed_ssh_data(&self, data: &[u8]) {
+        let mut term = self.term.lock();
+        let mut parser: alacritty_terminal::vte::ansi::Processor = Default::default();
+        parser.advance(&mut *term, data);
+    }
+
+    /// Get the terminal Arc for external access.
+    pub fn term_arc(&self) -> Arc<FairMutex<Term<EventProxy>>> {
+        self.term.clone()
     }
 
     pub fn handle(&mut self, cmd: Command) -> Action {
@@ -205,7 +255,7 @@ impl Backend {
                         action = Action::ChangeTitle(title);
                     },
                     Event::PtyWrite(pty) => {
-                        self.notifier.notify(pty.into_bytes())
+                        self.write(pty.into_bytes());
                     },
                     _ => {},
                 };
@@ -326,7 +376,7 @@ impl Backend {
             c
         );
 
-        self.notifier.notify(msg.as_bytes().to_vec());
+        self.write(msg.as_bytes().to_vec());
     }
 
     fn normal_mouse_report(&self, point: Point, button: u8, is_utf8: bool) {
@@ -358,7 +408,7 @@ impl Backend {
             msg.push(32 + 1 + line.0 as u8);
         }
 
-        self.notifier.notify(msg);
+        self.write(msg);
     }
 
     fn start_selection(
@@ -444,7 +494,10 @@ impl Backend {
         if lines > 0 && cols > 0 {
             self.size.num_lines = lines;
             self.size.num_cols = cols;
-            self.notifier.on_resize(self.size.into());
+            if let Some(ref mut notifier) = self.notifier {
+                notifier.on_resize(self.size.into());
+            }
+            // For SSH, resize is handled externally via channel.window_change()
             terminal.resize(TermSize::new(
                 self.size.num_cols as usize,
                 self.size.num_lines as usize,
@@ -453,7 +506,12 @@ impl Backend {
     }
 
     fn write<I: Into<Cow<'static, [u8]>>>(&self, input: I) {
-        self.notifier.notify(input);
+        let data = input.into();
+        if let Some(ref ssh_writer) = self.ssh_writer {
+            let _ = ssh_writer.send(data.to_vec());
+        } else if let Some(ref notifier) = self.notifier {
+            notifier.notify(data);
+        }
     }
 
     fn scroll(&mut self, terminal: &mut Term<EventProxy>, delta_value: i32) {
@@ -472,7 +530,7 @@ impl Backend {
                     content.push(line_cmd);
                 }
 
-                self.notifier.notify(content);
+                self.write(content);
             } else {
                 terminal.grid_mut().scroll_display(scroll);
             }
@@ -573,7 +631,9 @@ impl Default for RenderableContent {
 
 impl Drop for Backend {
     fn drop(&mut self) {
-        let _ = self.notifier.0.send(Msg::Shutdown);
+        if let Some(ref notifier) = self.notifier {
+            let _ = notifier.0.send(Msg::Shutdown);
+        }
     }
 }
 

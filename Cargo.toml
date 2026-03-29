@@ -16,6 +16,12 @@ iced_term = { path = "crates/iced_term" }
 iced = { version = "0.14", features = ["tokio"] }
 iced_runtime = "0.14"
 
+# SSH (pure Rust, async)
+russh = "0.58"
+russh-keys = "0.48"
+ssh-key = { version = "0.6", features = ["ed25519", "rsa", "encryption"] }
+async-trait = "0.1"
+
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 

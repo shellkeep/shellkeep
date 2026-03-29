@@ -63,6 +63,33 @@ impl Terminal {
         })
     }
 
+    /// Create a terminal backed by an SSH channel instead of a local PTY.
+    pub fn new_ssh(
+        id: u64,
+        settings: Settings,
+        ssh_writer: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    ) -> Result<Self> {
+        let (backend_event_tx, backend_event_rx) = mpsc::channel(100);
+        let theme = Theme::new(settings.theme);
+        let font = TermFont::new(settings.font);
+
+        Ok(Self {
+            id,
+            widget_id: iced::widget::Id::unique(),
+            font,
+            theme,
+            bindings: BindingsLayout::default(),
+            cache: Cache::default(),
+            backend: backend::Backend::new_ssh(id, backend_event_tx, ssh_writer)?,
+            backend_event_rx: Arc::new(Mutex::new(backend_event_rx)),
+        })
+    }
+
+    /// Feed raw SSH channel data into the terminal parser.
+    pub fn feed_ssh_data(&self, data: &[u8]) {
+        self.backend.feed_ssh_data(data);
+    }
+
     pub fn widget_id(&self) -> &iced::widget::Id {
         &self.widget_id
     }
