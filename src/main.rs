@@ -209,6 +209,8 @@ struct ShellKeep {
     current_font_size: f32,
     context_menu: Option<(f32, f32)>,
     tab_context_menu: Option<(usize, f32, f32)>,
+    /// Toast message (auto-dismisses)
+    toast: Option<(String, std::time::Instant)>,
     /// Current connection params (for russh control connection)
     current_conn: Option<ConnParams>,
     /// Client identifier for state persistence
@@ -248,6 +250,7 @@ enum Message {
     ConnectRecent(usize),
     RenameInputChanged(String),
     FinishRename,
+    ToastDismiss,
     HostInputChanged(String),
     PortInputChanged(String),
     UserInputChanged(String),
@@ -276,6 +279,7 @@ impl ShellKeep {
             current_font_size: config.terminal.font_size,
             context_menu: None,
             tab_context_menu: None,
+            toast: None,
             current_conn: None,
             client_id: config.general.client_id.clone().unwrap_or_else(|| {
                 // Generate a stable client ID from hostname
@@ -385,6 +389,13 @@ impl ShellKeep {
             }
             self.update_title();
             self.save_state();
+            // Toast notification
+            if !tab.dead {
+                self.toast = Some((
+                    "Session kept on server — you can restore it later".into(),
+                    std::time::Instant::now(),
+                ));
+            }
         }
     }
 
@@ -515,6 +526,10 @@ impl ShellKeep {
             Message::ContextMenuPaste => {
                 self.context_menu = None;
                 // Paste is handled at the OS level — we just dismiss the menu
+            }
+
+            Message::ToastDismiss => {
+                self.toast = None;
             }
 
             Message::ContextMenuDismiss => {
@@ -811,6 +826,15 @@ impl ShellKeep {
                             self.show_welcome = true;
                         }
                     }
+                    // Ctrl+Shift+N — new window
+                    if modifiers.control()
+                        && modifiers.shift()
+                        && key == keyboard::Key::Character("n".into())
+                    {
+                        if let Ok(exe) = std::env::current_exe() {
+                            let _ = std::process::Command::new(exe).spawn();
+                        }
+                    }
                     // Ctrl+Shift+W — close current tab
                     if modifiers.control()
                         && modifiers.shift()
@@ -1094,6 +1118,38 @@ impl ShellKeep {
             .into()
         } else {
             column![tab_bar, content, status_bar].into()
+        };
+
+        // Toast overlay
+        let main_view: Element<'_, Message> = if let Some((ref msg, _)) = self.toast {
+            let toast_widget =
+                container(text(msg).size(13).color(Color::from_rgb8(0xcd, 0xd6, 0xf4)))
+                    .padding([8, 16])
+                    .style(|_theme: &Theme| container::Style {
+                        background: Some(iced::Background::Color(Color::from_rgb8(
+                            0x31, 0x32, 0x44,
+                        ))),
+                        border: iced::Border {
+                            radius: 8.0.into(),
+                            width: 1.0,
+                            color: Color::from_rgb8(0x45, 0x47, 0x5a),
+                        },
+                        ..Default::default()
+                    });
+
+            stack![
+                main_view,
+                column![
+                    Space::new().height(Length::Fill),
+                    container(row![Space::new().width(Length::Fill), toast_widget,])
+                        .padding(16)
+                        .width(Length::Fill)
+                        .align_bottom(Length::Fill),
+                ],
+            ]
+            .into()
+        } else {
+            main_view
         };
 
         main_view
@@ -1480,6 +1536,16 @@ impl ShellKeep {
             subs.push(
                 iced::time::every(std::time::Duration::from_secs(3))
                     .map(|_| Message::AutoReconnectTick),
+            );
+        }
+
+        // Toast auto-dismiss after 3 seconds
+        if let Some((_, created)) = &self.toast {
+            if created.elapsed() > std::time::Duration::from_secs(3) {
+                // Can't mutate self in subscription, use a timer instead
+            }
+            subs.push(
+                iced::time::every(std::time::Duration::from_secs(3)).map(|_| Message::ToastDismiss),
             );
         }
 
