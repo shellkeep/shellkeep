@@ -744,10 +744,13 @@ impl ShellKeep {
                     tab.label.clone()
                 };
 
-                let label_color = if tab.dead {
-                    Color::from_rgb8(0xf3, 0x8b, 0xa8)
+                // Status indicator: green=connected, yellow=reconnecting, red=dead
+                let (indicator, label_color) = if tab.dead {
+                    ("●", Color::from_rgb8(0xf3, 0x8b, 0xa8)) // red
+                } else if tab.terminal.is_none() && tab.auto_reconnect {
+                    ("●", Color::from_rgb8(0xf9, 0xe2, 0xaf)) // yellow
                 } else {
-                    Color::from_rgb8(0xcd, 0xd6, 0xf4)
+                    ("●", Color::from_rgb8(0xa6, 0xe3, 0xa1)) // green
                 };
 
                 let close_btn = button(text("×").size(12))
@@ -759,9 +762,15 @@ impl ShellKeep {
                         ..Default::default()
                     });
 
-                let tab_content = row![text(label_text).size(12).color(label_color), close_btn]
-                    .spacing(6)
-                    .align_y(iced::Alignment::Center);
+                let tab_content = row![
+                    text(indicator).size(8).color(label_color),
+                    text(label_text)
+                        .size(12)
+                        .color(Color::from_rgb8(0xcd, 0xd6, 0xf4)),
+                    close_btn
+                ]
+                .spacing(6)
+                .align_y(iced::Alignment::Center);
 
                 button(tab_content)
                     .on_press(Message::SelectTab(i))
