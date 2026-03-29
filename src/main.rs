@@ -103,6 +103,8 @@ struct Tab {
     ssh_args: Vec<String>,
     tmux_session: String,
     dead: bool,
+    reconnect_attempts: u32,
+    auto_reconnect: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -141,6 +143,7 @@ enum Message {
     CloseTab(usize),
     NewTab,
     ReconnectTab(usize),
+    AutoReconnectTick,
     ConnectRecent(usize),
     RenameInputChanged(String),
     FinishRename,
@@ -234,6 +237,8 @@ impl ShellKeep {
                     ssh_args: ssh_args.to_vec(),
                     tmux_session: tmux_session.to_string(),
                     dead: false,
+                    reconnect_attempts: 0,
+                    auto_reconnect: true,
                 });
                 self.active_tab = self.tabs.len() - 1;
                 self.error = None;
@@ -355,10 +360,22 @@ impl ShellKeep {
                             needs_title_update = true;
                         }
                         iced_term::actions::Action::Shutdown => {
-                            tab.dead = true;
                             tab.terminal = None;
+                            if tab.auto_reconnect
+                                && tab.reconnect_attempts < self.config.ssh.reconnect_max_attempts
+                            {
+                                tab.reconnect_attempts += 1;
+                                tracing::info!(
+                                    "tab {id} disconnected, will auto-reconnect (attempt {})",
+                                    tab.reconnect_attempts
+                                );
+                                // Don't mark as dead yet — auto-reconnect timer will handle it
+                            } else {
+                                tab.dead = true;
+                                tab.auto_reconnect = false;
+                                tracing::info!("tab {id} session ended (no more retries)");
+                            }
                             needs_title_update = true;
-                            tracing::info!("session ended for tab {id}");
                         }
                         _ => {}
                     }
@@ -393,7 +410,31 @@ impl ShellKeep {
             }
 
             Message::ReconnectTab(index) => {
+                if index < self.tabs.len() {
+                    self.tabs[index].auto_reconnect = false; // manual reconnect resets state
+                    self.tabs[index].reconnect_attempts = 0;
+                }
                 self.reconnect_tab(index);
+            }
+
+            Message::AutoReconnectTick => {
+                // Find tabs that need auto-reconnection
+                let reconnect_indices: Vec<usize> = self
+                    .tabs
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, t)| t.terminal.is_none() && t.auto_reconnect && !t.dead)
+                    .map(|(i, _)| i)
+                    .collect();
+
+                if let Some(&index) = reconnect_indices.first() {
+                    tracing::info!(
+                        "auto-reconnecting tab {} (attempt {})",
+                        self.tabs[index].id,
+                        self.tabs[index].reconnect_attempts,
+                    );
+                    self.reconnect_tab(index);
+                }
             }
 
             Message::RenameInputChanged(v) => {
@@ -591,6 +632,26 @@ impl ShellKeep {
                     .width(Length::Fill)
                     .height(Length::Fill)
                     .into()
+            } else if tab.auto_reconnect {
+                // Reconnecting state
+                let attempt_text = format!(
+                    "Reconnecting... (attempt {}/{})",
+                    tab.reconnect_attempts, self.config.ssh.reconnect_max_attempts
+                );
+                center(
+                    column![
+                        text("🔄").size(48),
+                        text("Connection lost")
+                            .size(20)
+                            .color(Color::from_rgb8(0xf9, 0xe2, 0xaf)),
+                        text(attempt_text)
+                            .size(14)
+                            .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
+                    ]
+                    .spacing(12)
+                    .align_x(iced::Alignment::Center),
+                )
+                .into()
             } else {
                 center(text("Terminal not available")).into()
             }
@@ -940,6 +1001,18 @@ impl ShellKeep {
         }
 
         subs.push(keyboard::listen().map(Message::KeyEvent));
+
+        // Auto-reconnect timer — check every 3 seconds for tabs needing reconnection
+        let has_reconnectable = self
+            .tabs
+            .iter()
+            .any(|t| t.terminal.is_none() && t.auto_reconnect && !t.dead);
+        if has_reconnectable {
+            subs.push(
+                iced::time::every(std::time::Duration::from_secs(3))
+                    .map(|_| Message::AutoReconnectTick),
+            );
+        }
 
         Subscription::batch(subs)
     }
