@@ -635,9 +635,11 @@ impl ShellKeep {
                         self.current_font_size = self.config.terminal.font_size;
                         self.apply_font_to_all_tabs();
                     }
-                    // Escape — cancel rename or welcome
+                    // Escape — dismiss context menu, cancel rename, or cancel welcome
                     if key == keyboard::Key::Named(keyboard::key::Named::Escape) {
-                        if self.renaming_tab.is_some() {
+                        if self.context_menu.is_some() {
+                            self.context_menu = None;
+                        } else if self.renaming_tab.is_some() {
                             self.renaming_tab = None;
                         } else if self.show_welcome && !self.tabs.is_empty() {
                             self.show_welcome = false;
