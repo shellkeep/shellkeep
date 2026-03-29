@@ -5,270 +5,167 @@ SPDX-License-Identifier: GPL-3.0-or-later
 
 # shellkeep Architecture
 
-This document describes the layered architecture, data flow, and key design
-decisions of shellkeep.
+This document describes the architecture, data flow, and key design decisions
+of shellkeep v0.3.0 (Rust rewrite).
 
-## Layer Diagram
+## Overview
 
-```
-┌─────────────────────────────────────────────────────┐
-│                    Qt6 UI Layer                       │
-│   SkMainWindow, tabs, tray, dialogs, welcome         │
-│   Headers: sk_ui_qt.h, sk_terminal_qt.h              │
-├──────────────────────────┬──────────────────────────┤
-│     Terminal Layer        │       State Layer         │
-│   SkTerminalWidget, I/O   │   JSON persistence,       │
-│   QSocketNotifier, search │   JSONL history, lock,    │
-│   SkTerminalDead          │   SFTP sync               │
-│                           │   Header: sk_state.h      │
-├──────────────────────────┴──────────────────────────┤
-│                 UI Bridge (sk_ui_bridge.h)            │
-│   Toolkit-agnostic callback vtable                   │
-│   Decouples C backend from Qt6 UI                    │
-├─────────────────────────────────────────────────────┤
-│                    Session Layer                      │
-│   tmux interaction: create, attach, list, destroy     │
-│   Control mode orchestration, session naming          │
-│   Header: sk_session.h                               │
-├─────────────────────────────────────────────────────┤
-│                      SSH Layer                        │
-│   libssh connections, authentication, channels        │
-│   SFTP, keepalive, reconnection, algorithm config     │
-│   Header: sk_ssh.h                                   │
-└─────────────────────────────────────────────────────┘
-```
+shellkeep is a cross-platform SSH terminal manager built in Rust. It uses:
 
-### Orchestration Modules
+- **iced** — GPU-accelerated UI framework (wgpu backend)
+- **alacritty_terminal** — VT100/xterm terminal emulation (same as Zed editor)
+- **russh** — Pure Rust SSH client for control operations
+- **System ssh** — Terminal PTY I/O (via iced_term fork)
 
 ```
-┌──────────────────────┐  ┌──────────────────────┐
-│      Connect          │  │     Reconnect         │
-│  End-to-end connect   │  │  Exponential backoff  │
-│  flow: host key,      │  │  with jitter, per-    │
-│  auth, tmux, lock,    │  │  server connection    │
-│  state, restore       │  │  manager              │
-│  Header: sk_connect.h │  │  Header: sk_reconnect.h│
-└──────────────────────┘  └──────────────────────┘
+┌─────────────────────────────────────────────────┐
+│                   shellkeep                      │
+│                                                  │
+│  ┌──────────┐  ┌───────────┐  ┌──────────────┐ │
+│  │   iced   │  │ iced_term │  │    russh     │ │
+│  │  (UI)    │  │ (terminal)│  │  (control)   │ │
+│  └────┬─────┘  └─────┬─────┘  └──────┬───────┘ │
+│       │              │               │          │
+│       │         ┌────┴────┐    ┌─────┴──────┐  │
+│       │         │alacritty│    │  exec/SFTP  │  │
+│       │         │terminal │    │  channels   │  │
+│       │         └────┬────┘    └─────┬──────┘  │
+│       │              │               │          │
+│       └──────────────┴───────────────┘          │
+│                      │                           │
+│              ┌───────┴──────┐                   │
+│              │  SSH / tmux  │                   │
+│              │   (remote)   │                   │
+│              └──────────────┘                   │
+└─────────────────────────────────────────────────┘
 ```
 
-### Supporting Modules
+## Module Structure
 
 ```
-┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
-│   Config      │  │     Log       │  │    Types      │  │     i18n      │
-│  INI parse,   │  │  Async ring   │  │  Shared enum  │  │  gettext      │
-│  defaults,    │  │  buffer, file  │  │  and struct   │  │  macros       │
-│  validation   │  │  rotation     │  │  definitions  │  │               │
-│  sk_config.h  │  │  sk_log.h     │  │  sk_types.h   │  │  sk_i18n.h    │
-└──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘
+src/
+  main.rs           — iced Application: UI, tabs, messages, views
+  lib.rs            — library exports for testing
+  config.rs         — TOML configuration
+  crash.rs          — crash handler, core dump prevention
+  theme.rs          — Catppuccin Mocha color palette
+
+  ssh/
+    connection.rs   — russh: connect, authenticate, open channels
+    tmux.rs         — tmux session detection, creation (system ssh + russh)
+
+  state/
+    recent.rs       — recent connections (JSON, max 20)
+    state_file.rs   — tab layout persistence (JSON, atomic writes)
+    permissions.rs  — file/dir permission enforcement (0600/0700)
+
+crates/
+  iced_term/        — forked terminal widget
+    backend.rs      — PTY or SSH channel backend
+    view.rs         — iced Widget rendering + input handling
+    terminal.rs     — Terminal lifecycle + subscriptions
+    theme.rs        — color palette
+    bindings.rs     — keyboard/mouse bindings
+    font.rs         — font metrics
 ```
-
-## Dependency Rules
-
-These rules are strictly enforced and verified in code review:
-
-| Rule | Description |
-|---|---|
-| UI does not include SSH | `sk_ui_qt.h` never includes `sk_ssh.h` directly |
-| SSH does not call UI | SSH layer has no Qt or GTK dependencies |
-| State does not call UI | State layer has no Qt or GTK dependencies |
-| Backend uses bridge | Connect layer uses `sk_ui_bridge.h` — no toolkit headers |
-| Opaque types | Each layer exposes opaque pointer types (e.g., `SkSshConnection *`) |
-| Callback communication | Backend ↔ UI via bridge vtable function pointers |
-
-This separation enables:
-- Unit testing per layer in isolation
-- Cross-platform UI (bridge implementations for Qt6, future toolkits)
-- Daemon mode without UI
 
 ## Data Flow
 
-### Connection Establishment
+### Terminal I/O (interactive session)
 
 ```
-User input (CLI or GUI)
-    │
-    ▼
-┌──────────┐   via UI Bridge    ┌─────────────┐
-│ Qt6 UI   │ ─────────────────> │  SSH Layer   │
-└──────────┘                    └──────┬──────┘
-                                       │
-                    Authenticated       │
-                                       ▼
-                                ┌──────────────┐
-                                │ Session Layer │
-                                └──────┬───────┘
-                                       │
-          tmux -CC (control mode)      │  tmux -V, lock check
-          list sessions                │
-                                       ▼
-                                ┌──────────────┐
-                                │ State Layer   │
-                                └──────┬───────┘
-                                       │
-          Load <client-id>.json        │  via SFTP
-          Reconcile with server        │
-                                       ▼
-                                ┌──────────────┐
-                                │ Qt6 UI       │
-                                └──────┬───────┘
-                                       │
-          Create windows/tabs          │  Restore layout
-          per state file               │
-                                       ▼
-                                ┌─────────────────┐
-                                │ Terminal Layer   │
-                                │ SkTerminalWidget │
-                                └─────────────────┘
-                                       │
-          Each tab: independent SSH    │  tmux attach-session
-          connection + QTermWidget     │
+User types key
+  → iced keyboard event
+  → iced_term view.rs captures it
+  → iced_term bindings.rs resolves to action
+  → backend.rs writes to PTY (system ssh process)
+  → ssh sends to remote server
+  → remote outputs response
+  → ssh PTY receives data
+  → alacritty_terminal EventLoop reads from PTY
+  → alacritty_terminal Term processes escape sequences
+  → iced_term renders grid via iced Canvas
+  → wgpu renders to screen
 ```
 
-### Terminal I/O (per tab)
+### Control operations (russh)
 
 ```
-Keyboard Input
-    │
-    ▼
-┌─────────────────┐  write   ┌───────────────┐  SSH channel  ┌────────┐
-│ SkTerminalWidget│ ───────> │ Terminal Layer │ ────────────> │ Server │
-│ (Qt widget)     │          └───────────────┘               │ (tmux  │
-│                 │                                           │ session│
-│                 │  feed    ┌───────────────┐  SSH channel  │        │
-│                 │ <─────── │ Terminal Layer │ <──────────── │        │
-└─────────────────┘          └───────────────┘               └────────┘
-
-I/O is non-blocking, integrated via QSocketNotifier on SSH fd.
+App needs to list/create tmux sessions
+  → ssh::connection::connect() via russh
+  → ssh::connection::exec_command() opens channel
+  → runs "tmux list-sessions" or "tmux new-session"
+  → parses output
+  → returns to app for tab management
 ```
 
-### State Persistence
+### State persistence
 
 ```
-Layout change (tab move, window resize, etc.)
-    │
-    ▼
-┌──────────────┐  debounce (2s)   ┌──────────────┐
-│ Qt6 UI       │ ───────────────> │ State Layer   │
-└──────────────┘                  └──────┬───────┘
-                                         │
-                   1. Write to local     │
-                      cache (sync)       │
-                                         │
-                   2. Write to server    │  GTask (worker thread)
-                      via SFTP           │
-                      (tmp + rename)     │
-                                         ▼
-                                  ┌──────────────┐
-                                  │    Server     │
-                                  │ ~/.terminal-  │
-                                  │ state/<cid>.  │
-                                  │ json          │
-                                  └──────────────┘
-```
+Tab opened/closed/renamed
+  → ShellKeep::save_state()
+  → StateFile serialized to JSON
+  → atomic write: tmp file → rename
+  → ~/.local/share/shellkeep/state/<client-id>.json
 
-## Threading Model
-
-shellkeep uses a hybrid threading model:
-
-| Operation | Thread | Mechanism |
-|---|---|---|
-| Qt rendering, user input | Main thread | Qt event loop |
-| SSH data channel I/O | Main thread | `QSocketNotifier` on SSH fd |
-| SSH handshake, auth | Worker thread | `GTask` / `g_task_run_in_thread()` |
-| SFTP file operations | Worker thread | `GTask` |
-| tmux commands | Worker thread | `GTask` |
-| State file writes | Worker thread | `GTask` |
-| Log writes | Dedicated thread | Lock-free ring buffer |
-| JSONL history writes | Worker thread | `GTask` |
-| Dialog dispatch | UI thread | `QMetaObject::invokeMethod(Qt::BlockingQueuedConnection)` |
-
-**Invariant:** No blocking I/O ever executes on the Qt main thread.
-
-### GLib + Qt Event Loop Integration
-
-- **Linux:** Qt's `QEventDispatcherGlib` handles GLib event loop natively
-- **macOS/Windows:** GLib main context runs on a background `QThread`;
-  cross-thread dispatch via `QMetaObject::invokeMethod`
-
-## File System Layout
-
-### Client
-
-```
-~/.config/shellkeep/          (XDG_CONFIG_HOME)
-  config.ini                    Optional configuration overrides
-  client-id                     Auto-generated UUID or user-defined name
-  themes/                       Custom terminal color themes (JSON)
-
-~/.local/share/shellkeep/     (XDG_DATA_HOME)
-  recent_connections.json       Last 50 connections (host, user, port)
-  cache/servers/
-    <host-fingerprint>/
-      <client-id>.json          Local cache of server state
-
-~/.local/state/shellkeep/     (XDG_STATE_HOME)
-  logs/
-    shellkeep.log               Current log file
-    shellkeep.log.1 ... .5      Rotated logs (10 MB each, max 5)
-  crashes/
-    crash-YYYYMMDD-HHMMSS-PID.txt
-
-/run/user/$UID/shellkeep/     (XDG_RUNTIME_DIR)
-  shellkeep.sock                IPC socket (single-instance via QLocalServer)
-  shellkeep.pid                 PID file
-```
-
-### Server
-
-```
-~/.terminal-state/            Permission: 0700
-  <client-id>.json              State file per client (0600)
-  history/
-    <session-uuid>.jsonl        Structured history (0600)
-    <session-uuid>.raw          Raw tmux pipe-pane output (0600)
+On reconnect:
+  → StateFile::load_local()
+  → match saved tabs to live tmux sessions by name
+  → restore tab labels from saved state
 ```
 
 ## Key Design Decisions
 
-### Why libssh instead of the ssh binary?
+### Hybrid SSH approach
 
-Using libssh within the process ensures that `killall ssh` does not affect
-shellkeep sessions. It also provides programmatic control over connections,
-channels, and authentication without parsing command output.
+Terminal I/O uses the system `ssh` binary via a PTY (iced_term spawns it).
+This gives us:
+- Full SSH config support (~/.ssh/config, ProxyJump, etc.)
+- Agent forwarding, FIDO keys, all auth methods
+- Proven stability and compatibility
 
-### Why tmux and not screen or zellij?
+Control operations use russh (pure Rust SSH) for:
+- Programmatic command execution
+- Future: SFTP file operations
+- Future: host key verification UI
+- Non-blocking async operations
 
-tmux provides control mode (`tmux -CC`) for programmatic interaction,
-a well-defined command API, and is widely deployed. Screen has limited
-automation capabilities, and zellij's built-in UI conflicts with
-shellkeep's architecture where the client owns all rendering.
+### Forked iced_term
 
-### Why one SSH connection per tab?
+We forked iced_term (originally by Harzu) to add:
+- **SSH backend**: `Backend::new_ssh()` for SSH channel-backed terminals
+- **Keyboard pass-through**: Ctrl+Shift shortcuts reach the app
+- **Shift+PageUp/Down**: scrollback navigation
+- **Right-click events**: context menu support
+- **Reasonable default size**: 100x30 instead of 80x50 with 1px cells
 
-Isolation: if one tab's connection has issues, other tabs are unaffected.
-This also simplifies the threading model since each connection has its own
-file descriptor in the event loop.
+### tmux integration
 
-### Why Qt6 instead of GTK?
+Each tab runs inside a tmux session (`shellkeep-0`, `shellkeep-1`, etc.):
+- Sessions survive SSH disconnects
+- `tmux new-session -A -s <name>` creates or reattaches
+- Status bar hidden (`tmux set status off`)
+- TERM=xterm-256color for proper rendering
 
-v0.1 used GTK3+VTE which only works on Linux. Qt6 provides:
-- Cross-platform support (Linux, macOS, Windows) from a single codebase
-- Modern widget toolkit with built-in system tray, dark mode, HiDPI
-- QTermWidget for terminal emulation across all platforms
-- Better C++ integration for the UI layer while backend stays C
+### Auto-reconnection
 
-### Why the UI Bridge pattern?
+When SSH drops (iced_term `Shutdown` event):
+1. Tab terminal set to None, auto_reconnect flag set
+2. 3-second timer triggers reconnection attempt
+3. New ssh+tmux process spawned, reattaches to same session
+4. After max attempts, tab shows dead state with manual Reconnect button
 
-The `sk_ui_bridge.h` vtable decouples the C backend from any specific
-toolkit. This means:
-- The connect layer (`sk_connect.c`) never includes Qt headers
-- Future toolkit migrations require only a new bridge implementation
-- The backend can run headlessly (daemon mode) with a stub bridge
-- Testing the backend doesn't require a display server
+## Security
 
-## Related Documents
+- Core dumps disabled via `prctl(PR_SET_DUMPABLE, 0)` on Linux
+- File permissions: directories 0700, files 0600 (verified on startup)
+- Passwords never stored (recent connections have no password field)
+- Crash dumps never contain terminal content or credentials
+- Logs never contain sensitive data
 
-- [STATE-FORMAT.md](STATE-FORMAT.md) -- JSON schema for state files
-- [REQUIREMENTS.md](../REQUIREMENTS.md) -- Full requirements registry
-- [CONTRIBUTING.md](../CONTRIBUTING.md) -- Development setup and guidelines
+## Testing
+
+- **Unit tests**: config parsing, host input parsing, recent connections, state serialization
+- **E2E tmux tests**: SSH connectivity, session create/persist/reattach/list
+- **E2E russh tests**: russh connect, exec, shell with PTY
+- All tests run in CI on Linux, macOS, Windows
