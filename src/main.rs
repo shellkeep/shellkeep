@@ -281,11 +281,7 @@ impl ShellKeep {
             tab_context_menu: None,
             toast: None,
             current_conn: None,
-            client_id: config.general.client_id.clone().unwrap_or_else(|| {
-                // Generate a stable client ID from hostname
-                let hostname = whoami::fallible::hostname().unwrap_or_else(|_| "unknown".into());
-                format!("{}-{}", whoami::username(), hostname)
-            }),
+            client_id: shellkeep::state::client_id::resolve(config.general.client_id.as_deref()),
             host_input: String::new(),
             port_input: default_port,
             user_input: username,
