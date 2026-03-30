@@ -4,6 +4,7 @@
 pub(crate) mod message;
 pub(crate) mod session;
 pub(crate) mod tab;
+pub(crate) mod update;
 pub(crate) mod view;
 
 pub(crate) use message::Message;
