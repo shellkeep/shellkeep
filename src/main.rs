@@ -898,9 +898,9 @@ impl ShellKeep {
         let session_uuid = uuid::Uuid::new_v4().to_string();
         let history_writer =
             history::HistoryWriter::new(&session_uuid, self.config.state.history_max_size_mb);
+        let suuid = session_uuid.clone();
         self.tabs.push(Tab {
             id,
-        let suuid = session_uuid.clone();
             label: label.to_string(),
             session_uuid,
             terminal: Some(terminal),
@@ -2443,7 +2443,7 @@ impl ShellKeep {
                     self.env_list.sort();
                     self.current_environment = name;
                     self.toast = Some((
-                        format!("Environment "{}" created", self.current_environment),
+                        format!("Environment \"{}\" created", self.current_environment),
                         std::time::Instant::now(),
                     ));
                     self.state_dirty = true;
@@ -2481,7 +2481,7 @@ impl ShellKeep {
                             self.current_environment = new_name.clone();
                         }
                         self.toast = Some((
-                            format!("Environment renamed to "{new_name}""),
+                            format!("Environment renamed to \"{new_name}\""),
                             std::time::Instant::now(),
                         ));
                         self.state_dirty = true;
@@ -2517,7 +2517,7 @@ impl ShellKeep {
                             .unwrap_or_else(|| "default".to_string());
                     }
                     self.toast = Some((
-                        format!("Environment "{}" deleted", name),
+                        format!("Environment \"{}\" deleted", name),
                         std::time::Instant::now(),
                     ));
                     self.state_dirty = true;
@@ -2548,7 +2548,7 @@ impl ShellKeep {
                     self.state_dirty = true;
                     self.update_title();
                     self.toast = Some((
-                        format!("Switched to "{}" environment", self.current_environment),
+                        format!("Switched to \"{}\" environment", self.current_environment),
                         std::time::Instant::now(),
                     ));
                 }
