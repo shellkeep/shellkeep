@@ -751,6 +751,14 @@ async fn establish_ssh_session(
         ch
     };
 
+    // FR-SESSION-07: set SHELLKEEP_SESSION_UUID env var inside the tmux session
+    {
+        let h = handle_arc.lock().await;
+        let uuid_cmd =
+            format!("tmux set-environment -t {tmux_session} SHELLKEEP_SESSION_UUID {session_uuid}");
+        ssh::connection::exec_command(&h, &uuid_cmd).await.ok();
+    }
+
     // FR-HISTORY-01: start server-side capture via tmux pipe-pane
     let pipe_cmd = history::pipe_pane_command(&tmux_session, &session_uuid);
     {
@@ -2505,6 +2513,8 @@ impl ShellKeep {
             Message::CloseDialogClose => {
                 self.show_close_dialog = false;
                 self.flush_state();
+                // FR-LOCK-10: lock is released via orphan detection (2x keepalive timeout)
+                // when the SSH connection drops on process exit.
                 if let Some(id) = self.close_window_id.take() {
                     return window::close(id);
                 }
