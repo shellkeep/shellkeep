@@ -428,6 +428,10 @@ enum Message {
     TabMoveRight(usize),
     /// Hide tab: disconnect SSH but keep tmux session alive on server
     HideTab(usize),
+    /// Close all tabs except the one at this index
+    CloseOtherTabs(usize),
+    /// Close all tabs to the right of this index
+    CloseTabsToRight(usize),
     StartRename(usize),
     ConnectRecent(usize),
     RenameInputChanged(String),
@@ -1926,6 +1930,31 @@ impl ShellKeep {
             Message::HideTab(index) => {
                 self.hide_tab(index);
                 self.tab_context_menu = None;
+            }
+
+            Message::CloseOtherTabs(keep_index) => {
+                self.tab_context_menu = None;
+                // Collect IDs of tabs to close (all except the one at keep_index)
+                let keep_id = self.tabs.get(keep_index).map(|t| t.id);
+                let to_close: Vec<usize> = (0..self.tabs.len())
+                    .filter(|&i| self.tabs.get(i).map(|t| t.id) != keep_id)
+                    .rev() // close from end to avoid index shifting
+                    .collect();
+                let mut tasks = Vec::new();
+                for idx in to_close {
+                    tasks.push(self.close_tab(idx));
+                }
+                self.active_tab = 0;
+                return Task::batch(tasks);
+            }
+
+            Message::CloseTabsToRight(index) => {
+                self.tab_context_menu = None;
+                let mut tasks = Vec::new();
+                for idx in (index + 1..self.tabs.len()).rev() {
+                    tasks.push(self.close_tab(idx));
+                }
+                return Task::batch(tasks);
             }
 
             Message::TerminalEvent(iced_term::Event::BackendCall(id, cmd)) => {
@@ -3546,7 +3575,7 @@ impl ShellKeep {
                     button(text(i18n::t(i18n::MOVE_LEFT)).size(13))
                         .on_press(Message::TabMoveLeft(tab_idx))
                         .padding([8, 16])
-                        .width(180)
+                        .width(200)
                         .style(ctx_style)
                         .into(),
                 );
@@ -3556,7 +3585,7 @@ impl ShellKeep {
                     button(text(i18n::t(i18n::MOVE_RIGHT)).size(13))
                         .on_press(Message::TabMoveRight(tab_idx))
                         .padding([8, 16])
-                        .width(180)
+                        .width(200)
                         .style(ctx_style)
                         .into(),
                 );
@@ -3565,7 +3594,7 @@ impl ShellKeep {
                 button(text(format!("{}         F2", i18n::t(i18n::RENAME))).size(13))
                     .on_press(Message::StartRename(tab_idx))
                     .padding([8, 16])
-                    .width(180)
+                    .width(200)
                     .style(ctx_style)
                     .into(),
             );
@@ -3573,10 +3602,42 @@ impl ShellKeep {
                 button(text("Hide (keep on server)").size(13))
                     .on_press(Message::HideTab(tab_idx))
                     .padding([8, 16])
-                    .width(180)
+                    .width(200)
                     .style(ctx_style)
                     .into(),
             );
+            // Separator
+            menu_items.push(
+                container(Space::new().height(1))
+                    .width(Length::Fill)
+                    .style(|_theme: &Theme| container::Style {
+                        background: Some(iced::Background::Color(Color::from_rgb8(
+                            0x45, 0x47, 0x5a,
+                        ))),
+                        ..Default::default()
+                    })
+                    .into(),
+            );
+            if self.tabs.len() > 1 {
+                menu_items.push(
+                    button(text("Close other tabs").size(13))
+                        .on_press(Message::CloseOtherTabs(tab_idx))
+                        .padding([8, 16])
+                        .width(200)
+                        .style(ctx_style)
+                        .into(),
+                );
+            }
+            if tab_idx + 1 < self.tabs.len() {
+                menu_items.push(
+                    button(text("Close tabs to the right").size(13))
+                        .on_press(Message::CloseTabsToRight(tab_idx))
+                        .padding([8, 16])
+                        .width(200)
+                        .style(ctx_style)
+                        .into(),
+                );
+            }
             menu_items.push(
                 button(
                     text(i18n::t(i18n::CLOSE_TAB))
@@ -3585,7 +3646,7 @@ impl ShellKeep {
                 )
                 .on_press(Message::CloseTab(tab_idx))
                 .padding([8, 16])
-                .width(180)
+                .width(200)
                 .style(ctx_style)
                 .into(),
             );
