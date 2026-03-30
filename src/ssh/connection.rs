@@ -326,15 +326,60 @@ async fn authenticate(
         return Ok(());
     }
 
-    // 3. Try default key paths (Ed25519, RSA, ECDSA)
+    // 3. Try keys from ~/.ssh/ — default names first, then scan for others.
+    // This matches ssh behavior: try well-known names, then discover any other
+    // private keys the user may have (e.g. id_rsa_2023, work_key, etc.)
     if let Some(home) = dirs::home_dir() {
         let ssh_dir = home.join(".ssh");
-        for key_name in &["id_ed25519", "id_rsa", "id_ecdsa"] {
+
+        // 3a. Try well-known default key names first (same order as OpenSSH)
+        for key_name in &["id_ed25519", "id_ecdsa", "id_rsa"] {
             let key_path = ssh_dir.join(key_name);
             if key_path.exists()
                 && try_key_auth(handle, username, key_path.to_str().unwrap_or("")).await?
             {
                 return Ok(());
+            }
+        }
+
+        // 3b. Scan ~/.ssh/ for any other private key files
+        if let Ok(entries) = std::fs::read_dir(&ssh_dir) {
+            let skip = [
+                "known_hosts",
+                "known_hosts.old",
+                "config",
+                "authorized_keys",
+                "environment",
+                "rc",
+            ];
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+                // Skip: public keys, known files, directories, hidden files, already-tried defaults
+                if name_str.ends_with(".pub")
+                    || name_str.starts_with('.')
+                    || skip.contains(&name_str.as_ref())
+                    || name_str == "id_ed25519"
+                    || name_str == "id_ecdsa"
+                    || name_str == "id_rsa"
+                {
+                    continue;
+                }
+                let path = entry.path();
+                if !path.is_file() {
+                    continue;
+                }
+                // Quick check: private keys start with "-----BEGIN" or "openssh-key-v1"
+                if let Ok(header) = std::fs::read(&path) {
+                    let dominated =
+                        header.starts_with(b"-----BEGIN") || header.starts_with(b"openssh-key-v1");
+                    if !dominated {
+                        continue;
+                    }
+                }
+                if try_key_auth(handle, username, path.to_str().unwrap_or("")).await? {
+                    return Ok(());
+                }
             }
         }
     }
