@@ -7,6 +7,7 @@
 //! and locally at `$XDG_DATA_HOME/shellkeep/cache/servers/<fingerprint>/<client-id>.json`.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 
@@ -19,6 +20,18 @@ pub struct StateFile {
     pub last_modified: String,
     pub client_id: String,
     pub tabs: Vec<TabState>,
+    /// FR-STATE-14: persisted window geometry
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window: Option<WindowState>,
+}
+
+/// FR-STATE-14: window position and size for geometry persistence.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowState {
+    pub x: Option<i32>,
+    pub y: Option<i32>,
+    pub width: u32,
+    pub height: u32,
 }
 
 /// Per-tab state.
@@ -37,6 +50,7 @@ impl StateFile {
             last_modified: chrono_now(),
             client_id: client_id.to_string(),
             tabs: Vec::new(),
+            window: None,
         }
     }
 
@@ -53,10 +67,24 @@ impl StateFile {
     }
 
     /// Load state from a local file. Renames corrupt files instead of silently ignoring them.
+    /// FR-TABS-02: deduplicates tabs by session_uuid, keeping only the first occurrence.
     pub fn load_local(path: &std::path::Path) -> Option<Self> {
         let content = fs::read_to_string(path).ok()?;
         match serde_json::from_str::<StateFile>(&content) {
-            Ok(state) => Some(state),
+            Ok(mut state) => {
+                let orig_len = state.tabs.len();
+                let mut seen_uuids = HashSet::new();
+                state
+                    .tabs
+                    .retain(|t| seen_uuids.insert(t.session_uuid.clone()));
+                if state.tabs.len() < orig_len {
+                    tracing::warn!(
+                        "removed {} duplicate session UUID(s) from state",
+                        orig_len - state.tabs.len()
+                    );
+                }
+                Some(state)
+            }
             Err(e) => {
                 tracing::warn!("corrupt state file {}: {e}", path.display());
                 // FR-CONN-19: rename to .corrupt.<timestamp> for diagnosis
@@ -122,5 +150,68 @@ mod tests {
         let state = StateFile::new("empty");
         assert_eq!(state.tabs.len(), 0);
         assert_eq!(state.schema_version, 1);
+    }
+
+    #[test]
+    fn state_window_geometry_roundtrip() {
+        use super::WindowState;
+        let mut state = StateFile::new("geo-test");
+        state.window = Some(WindowState {
+            x: Some(100),
+            y: Some(200),
+            width: 1024,
+            height: 768,
+        });
+        let json = serde_json::to_string_pretty(&state).unwrap();
+        let loaded: StateFile = serde_json::from_str(&json).unwrap();
+        let w = loaded.window.unwrap();
+        assert_eq!(w.x, Some(100));
+        assert_eq!(w.y, Some(200));
+        assert_eq!(w.width, 1024);
+        assert_eq!(w.height, 768);
+    }
+
+    #[test]
+    fn state_window_geometry_absent() {
+        // Old state files without window field should load fine
+        let json = r#"{"schema_version":1,"last_modified":"0Z","client_id":"test","tabs":[]}"#;
+        let loaded: StateFile = serde_json::from_str(json).unwrap();
+        assert!(loaded.window.is_none());
+    }
+
+    #[test]
+    fn state_dedup_uuids() {
+        let dir = std::env::temp_dir().join("sk-dedup-test");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("dedup.json");
+
+        let mut state = StateFile::new("dedup-client");
+        state.tabs.push(TabState {
+            session_uuid: "uuid-A".into(),
+            tmux_session_name: "s1".into(),
+            title: "First".into(),
+            position: 0,
+        });
+        state.tabs.push(TabState {
+            session_uuid: "uuid-A".into(), // duplicate
+            tmux_session_name: "s2".into(),
+            title: "Duplicate".into(),
+            position: 1,
+        });
+        state.tabs.push(TabState {
+            session_uuid: "uuid-B".into(),
+            tmux_session_name: "s3".into(),
+            title: "Third".into(),
+            position: 2,
+        });
+        state.save_local(&path).unwrap();
+
+        let loaded = StateFile::load_local(&path).unwrap();
+        assert_eq!(loaded.tabs.len(), 2);
+        assert_eq!(loaded.tabs[0].session_uuid, "uuid-A");
+        assert_eq!(loaded.tabs[0].title, "First"); // first occurrence kept
+        assert_eq!(loaded.tabs[1].session_uuid, "uuid-B");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

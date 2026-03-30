@@ -247,6 +247,7 @@ struct Tab {
     /// FR-UI-08: last error reason for display in dead tab
     last_error: Option<String>,
     /// FR-UI-04..05: last measured latency in milliseconds
+    #[allow(dead_code)]
     last_latency_ms: Option<u32>,
     /// FR-RECONNECT-02: timestamp when reconnection started (for countdown display)
     reconnect_started: Option<std::time::Instant>,
@@ -2172,11 +2173,11 @@ impl ShellKeep {
 
     /// FR-STATE-14: save window geometry (debounced)
     fn save_geometry(&mut self) {
-        if let Some(last) = self.last_geometry_save {
-            if last.elapsed() < std::time::Duration::from_millis(500) {
-                self.state_dirty = true;
-                return;
-            }
+        if let Some(last) = self.last_geometry_save
+            && last.elapsed() < std::time::Duration::from_millis(500)
+        {
+            self.state_dirty = true;
+            return;
         }
         self.last_geometry_save = Some(std::time::Instant::now());
         self.state_dirty = true;
