@@ -11,7 +11,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 /// Ensure a directory has 0700 permissions (owner only).
-pub fn ensure_dir_permissions(path: &Path) {
+pub fn ensure_dir_permissions(#[cfg_attr(not(unix), allow(unused))] path: &Path) {
     #[cfg(unix)]
     if path.exists()
         && let Ok(meta) = std::fs::metadata(path)
@@ -29,7 +29,7 @@ pub fn ensure_dir_permissions(path: &Path) {
 }
 
 /// Ensure a file has 0600 permissions (owner read/write only).
-pub fn ensure_file_permissions(path: &Path) {
+pub fn ensure_file_permissions(#[cfg_attr(not(unix), allow(unused))] path: &Path) {
     #[cfg(unix)]
     if path.exists()
         && let Ok(meta) = std::fs::metadata(path)
