@@ -1,8 +1,0 @@
-{"ts":12345,"type":null,"text":false}
-{"ts":"2026-03-26T10:00:00Z","type":"unknown_type","text":"data"}
-{"ts":"2026-03-26T10:00:00Z","type":"resize","size":"not_an_object"}
-{"ts":"2026-03-26T10:00:00Z","type":"resize","size":{"cols":"big","rows":-1}}
-[]
-"just a string"
-42
-null

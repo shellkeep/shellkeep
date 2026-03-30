@@ -1,1 +1,0 @@
-%session-changed $1 my-session

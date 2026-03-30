@@ -1,7 +1,0 @@
-%begin 1711440000 1 0
-some output line
-another output line
-%end 1711440000 1 0
-%output %1 data
-%session-changed $2 new-session
-%exit
