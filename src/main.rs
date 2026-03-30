@@ -317,6 +317,8 @@ struct ShellKeep {
     // Welcome screen state
     /// FR-UI-03: first-use client-id name input
     client_id_input: String,
+    /// FR-UI-01: toggle for advanced connection options (port, user, identity)
+    show_advanced: bool,
     host_input: String,
     port_input: String,
     user_input: String,
@@ -532,6 +534,8 @@ enum Message {
     /// FR-LOCK-05: lock conflict — cancel
     #[allow(dead_code)]
     LockCancel,
+    /// FR-UI-01: toggle advanced connection options
+    ToggleAdvanced,
     /// FR-UI-03: client-id naming input changed
     ClientIdInputChanged(String),
     /// FR-UI-04/05: periodic latency measurement tick
@@ -808,6 +812,7 @@ impl ShellKeep {
             last_state_save: None,
             state_dirty: false,
             client_id_input: String::new(),
+            show_advanced: false,
             host_input: String::new(),
             port_input: default_port,
             user_input: username,
@@ -2082,6 +2087,10 @@ impl ShellKeep {
                 return rename_task;
             }
 
+            // FR-UI-01: toggle advanced connection options
+            Message::ToggleAdvanced => {
+                self.show_advanced = !self.show_advanced;
+            }
             // FR-UI-03: client-id naming
             Message::ClientIdInputChanged(v) => {
                 // Validate: only [a-zA-Z0-9_-], max 64 chars
@@ -4790,17 +4799,44 @@ impl ShellKeep {
             ..Default::default()
         });
 
-        let host_row = row![
-            column![text(i18n::t(i18n::HOST_LABEL)).size(12), host_field]
-                .spacing(4)
-                .width(Length::Fill),
-            column![text(i18n::t(i18n::PORT_LABEL)).size(12), port_field].spacing(4),
-        ]
-        .spacing(8);
+        // FR-UI-01: simple host input is always visible
+        let host_row = column![text(i18n::t(i18n::HOST_LABEL)).size(12), host_field].spacing(4);
 
-        let user_row = column![text(i18n::t(i18n::USERNAME_LABEL)).size(12), user_field].spacing(4);
-        let identity_row =
-            column![text(i18n::t(i18n::IDENTITY_LABEL)).size(12), identity_field].spacing(4);
+        // FR-UI-01: advanced toggle button
+        let advanced_label = if self.show_advanced {
+            "Hide advanced options"
+        } else {
+            "Advanced options (port, user, key)"
+        };
+        let advanced_toggle = button(
+            text(advanced_label)
+                .size(11)
+                .color(Color::from_rgb8(0x6c, 0x70, 0x86)),
+        )
+        .on_press(Message::ToggleAdvanced)
+        .padding([4, 8])
+        .style(|_theme: &Theme, _status| button::Style {
+            background: None,
+            text_color: Color::from_rgb8(0x6c, 0x70, 0x86),
+            ..Default::default()
+        });
+
+        // FR-UI-01: advanced fields, hidden by default
+        let advanced_section: Element<'_, Message> = if self.show_advanced {
+            let port_row = column![text(i18n::t(i18n::PORT_LABEL)).size(12), port_field].spacing(4);
+            let user_row =
+                column![text(i18n::t(i18n::USERNAME_LABEL)).size(12), user_field].spacing(4);
+            let identity_row = column![
+                text(format!("{} (optional)", i18n::t(i18n::IDENTITY_LABEL)))
+                    .size(12)
+                    .color(Color::from_rgb8(0x6c, 0x70, 0x86)),
+                identity_field
+            ]
+            .spacing(4);
+            column![user_row, port_row, identity_row].spacing(8).into()
+        } else {
+            Space::new().height(0).into()
+        };
 
         let error_text: Element<'_, Message> = if let Some(ref err) = self.error {
             text(err)
@@ -4872,8 +4908,8 @@ impl ShellKeep {
             subtitle,
             Space::new().height(20),
             host_row,
-            user_row,
-            identity_row,
+            advanced_toggle,
+            advanced_section,
             Space::new().height(8),
             connect_btn,
             error_text,
