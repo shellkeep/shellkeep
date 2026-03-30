@@ -584,6 +584,7 @@ async fn establish_ssh_session(
     keepalive_secs: u32,
     client_id: String,
     phase: Arc<std::sync::Mutex<String>>,
+    session_uuid: String,
 ) -> Result<russh::Channel<russh::client::Msg>, String> {
     let conn_key = ConnKey {
         host: conn.host.clone(),
@@ -676,6 +677,10 @@ async fn establish_ssh_session(
         .exec(true, tmux_cmd)
         .await
         .map_err(|e| format!("exec: {e}"))?;
+
+    // FR-HISTORY-01: start server-side capture via tmux pipe-pane
+    let pipe_cmd = history::pipe_pane_command(&tmux_session, &session_uuid);
+    ssh::connection::exec_command(&handle, &pipe_cmd).await.ok();
 
     Ok(channel)
 }
@@ -935,10 +940,11 @@ impl ShellKeep {
         let holder = channel_holder;
         let keepalive = self.config.ssh.keepalive_interval;
         let cid = self.client_id.clone();
+        let suuid = session_uuid.clone();
         let phase_clone = phase;
         Task::perform(
             async move {
-                match establish_ssh_session(mgr, conn, tmux, 80, 24, keepalive, cid, phase_clone)
+                match establish_ssh_session(mgr, conn, tmux, 80, 24, keepalive, cid, suuid, phase_clone)
                     .await
                 {
                     Ok(channel) => {
@@ -1096,6 +1102,7 @@ impl ShellKeep {
                     let keepalive = self.config.ssh.keepalive_interval;
                     let cid = self.client_id.clone();
                     let phase_clone = phase;
+                    let suuid = tab.session_uuid.clone();
                     self.update_title();
 
                     Task::perform(
@@ -1218,6 +1225,16 @@ impl ShellKeep {
         // FR-STATE-06: write state to disk asynchronously to avoid blocking the UI
         match serde_json::to_string_pretty(&state) {
             Ok(state_json) => {
+                // FR-CONN-20: also sync to server if syncer is available
+                if let Some(ref syncer) = self.state_syncer {
+                    let syncer = syncer.clone();
+                    let json = state_json.clone();
+                    tokio::task::spawn(async move {
+                        if let Err(e) = syncer.write_state(&json).await {
+                            tracing::warn!("server state sync failed: {e}");
+                        }
+                    });
+                }
                 tokio::task::spawn_blocking(move || {
                     let tmp = path.with_extension("tmp");
                     if let Some(parent) = path.parent() {
@@ -1293,6 +1310,10 @@ impl ShellKeep {
                     && let Some(ref mut terminal) = tab.terminal
                 {
                     terminal.process_ssh_data(&data);
+                    // FR-HISTORY-02: write to local JSONL history
+                    if let Some(ref mut writer) = tab.history_writer {
+                        writer.append_output(&data);
+                    }
                 }
             }
 
@@ -1466,12 +1487,22 @@ impl ShellKeep {
                     let saved_state =
                         StateFile::load_local(&StateFile::local_cache_path(&self.client_id));
 
-                    // FR-SESSION-08: reconcile by UUID — match saved tabs to server sessions
+                    // FR-ENV-05: restore last environment from saved state
                     if let Some(ref saved) = saved_state {
+                        if let Some(ref env_name) = saved.last_environment {
+                            self.current_environment = env_name.clone();
+                        }
+                    }
+
+                    // FR-SESSION-08: reconcile by UUID — match saved tabs to server sessions
+                    let saved_env_tabs = saved_state
+                        .as_ref()
+                        .map(|s| s.env_tabs(&self.current_environment))
+                        .unwrap_or_default();
+                    if !saved_env_tabs.is_empty() {
                         for tab in &mut self.tabs {
                             // Find saved tab entry by UUID
-                            if let Some(saved_tab) = saved
-                                .tabs
+                            if let Some(saved_tab) = saved_env_tabs
                                 .iter()
                                 .find(|st| st.session_uuid == tab.session_uuid)
                             {
@@ -1521,14 +1552,10 @@ impl ShellKeep {
                         let mut tasks = Vec::new();
                         for (i, session_name) in orphaned.iter().enumerate() {
                             // Try to match orphan to saved state by tmux session name
-                            let tab_label = saved_state
-                                .as_ref()
-                                .and_then(|s| {
-                                    s.tabs
-                                        .iter()
-                                        .find(|t| t.tmux_session_name == *session_name)
-                                        .map(|t| t.title.clone())
-                                })
+                            let tab_label = saved_env_tabs
+                                .iter()
+                                .find(|t| t.tmux_session_name == *session_name)
+                                .map(|t| t.title.clone())
                                 .unwrap_or_else(|| format!("Session {}", i + 2));
                             tasks.push(self.open_tab_russh(&tab_label, session_name));
                         }
@@ -2523,6 +2550,65 @@ impl ShellKeep {
             }
         }
         Task::none()
+
+            // FR-CONN-20: state syncer initialized
+            Message::StateSyncerReady(result) => {
+                match result {
+                    Ok(syncer) => {
+                        let transport = if syncer.is_sftp() { "SFTP" } else { "shell" };
+                        tracing::info!("state syncer ready (transport: {transport})");
+                        let syncer_clone = syncer.clone();
+                        self.state_syncer = Some(syncer);
+                        // FR-STATE-02: read server state (takes precedence over local)
+                        return Task::perform(
+                            async move {
+                                syncer_clone.read_state().await
+                            },
+                            Message::ServerStateLoaded,
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!("state syncer init failed: {e}");
+                    }
+                }
+            }
+
+            // FR-STATE-02: server state loaded
+            Message::ServerStateLoaded(result) => {
+                match result {
+                    Ok(Some(json)) => {
+                        match serde_json::from_str::<StateFile>(&json) {
+                            Ok(server_state) => {
+                                tracing::info!(
+                                    "loaded server state: {} tabs",
+                                    server_state.tabs.len()
+                                );
+                                // Server state takes precedence — update local cache
+                                let path = StateFile::local_cache_path(&self.client_id);
+                                if let Err(e) = server_state.save_local(&path) {
+                                    tracing::warn!("failed to cache server state: {e}");
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!("corrupt server state: {e}");
+                            }
+                        }
+                    }
+                    Ok(None) => {
+                        tracing::debug!("no server state found, using local");
+                    }
+                    Err(e) => {
+                        tracing::warn!("failed to read server state: {e}");
+                    }
+                }
+            }
+
+            // FR-CONN-20: remote state write completed
+            Message::ServerStateSaved(result) => {
+                if let Err(e) = result {
+                    tracing::warn!("server state write failed: {e}");
+                }
+            }
     }
 
     /// FR-STATE-14: save window geometry (debounced)
@@ -2960,6 +3046,19 @@ impl ShellKeep {
             main_view
         };
 
+        // FR-ENV-03: environment selection dialog overlay
+        let main_view: Element<'_, Message> = if self.show_env_dialog {
+            stack![main_view, self.view_env_dialog()].into()
+        } else if self.show_new_env_dialog {
+            stack![main_view, self.view_new_env_dialog()].into()
+        } else if self.show_rename_env_dialog {
+            stack![main_view, self.view_rename_env_dialog()].into()
+        } else if self.show_delete_env_dialog {
+            stack![main_view, self.view_delete_env_dialog()].into()
+        } else {
+            main_view
+        };
+
         // Toast overlay
         let main_view: Element<'_, Message> = if let Some((ref msg, _)) = self.toast {
             let toast_widget =
@@ -3319,6 +3418,391 @@ impl ShellKeep {
             ..Default::default()
         })
         .into()
+    }
+
+    /// FR-ENV-03: environment selection dialog overlay
+    fn view_env_dialog(&self) -> Element<'_, Message> {
+        let dialog_style = |_theme: &Theme| container::Style {
+            background: Some(iced::Background::Color(Color::from_rgb8(0x24, 0x24, 0x36))),
+            border: iced::Border {
+                radius: 12.0.into(),
+                width: 1.0,
+                color: Color::from_rgb8(0x45, 0x47, 0x5a),
+            },
+            shadow: iced::Shadow {
+                color: Color::from_rgba8(0, 0, 0, 0.6),
+                offset: iced::Vector::new(0.0, 4.0),
+                blur_radius: 16.0,
+            },
+            ..Default::default()
+        };
+        let btn_style = |_theme: &Theme, _status: button::Status| button::Style {
+            background: Some(iced::Background::Color(Color::from_rgb8(0x31, 0x32, 0x44))),
+            text_color: Color::from_rgb8(0xcd, 0xd6, 0xf4),
+            border: iced::Border {
+                radius: 6.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let primary_btn_style = |_theme: &Theme, _status: button::Status| button::Style {
+            background: Some(iced::Background::Color(Color::from_rgb8(0x89, 0xb4, 0xfa))),
+            text_color: Color::from_rgb8(0x1e, 0x1e, 0x2e),
+            border: iced::Border {
+                radius: 6.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let filter = self.env_filter.to_lowercase();
+        let filtered: Vec<&String> = self
+            .env_list
+            .iter()
+            .filter(|e| filter.is_empty() || e.to_lowercase().contains(&filter))
+            .collect();
+
+        let mut env_buttons: Vec<Element<'_, Message>> = Vec::new();
+        for env in &filtered {
+            let is_selected = self.selected_env.as_ref() == Some(env);
+            let is_current = **env == self.current_environment;
+            let label = if is_current {
+                format!("{} (current)", env)
+            } else {
+                (*env).clone()
+            };
+            let item_style = move |_theme: &Theme, _status: button::Status| {
+                let bg = if is_selected {
+                    Color::from_rgb8(0x45, 0x47, 0x5a)
+                } else {
+                    Color::from_rgb8(0x31, 0x32, 0x44)
+                };
+                button::Style {
+                    background: Some(iced::Background::Color(bg)),
+                    text_color: Color::from_rgb8(0xcd, 0xd6, 0xf4),
+                    border: iced::Border {
+                        radius: 4.0.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }
+            };
+            env_buttons.push(
+                button(text(label).size(13))
+                    .on_press(Message::SelectEnv((*env).clone()))
+                    .padding([8, 12])
+                    .width(Length::Fill)
+                    .style(item_style)
+                    .into(),
+            );
+        }
+
+        let env_list = scrollable(column(env_buttons).spacing(2)).height(200);
+
+        let dialog = container(
+            column![
+                text("Select environment")
+                    .size(18)
+                    .color(Color::from_rgb8(0xcd, 0xd6, 0xf4)),
+                text_input("Filter environments...", &self.env_filter)
+                    .on_input(Message::EnvFilterChanged)
+                    .size(13)
+                    .padding(8),
+                env_list,
+                Space::new().height(8),
+                row![
+                    button(text("New environment").size(13))
+                        .on_press(Message::NewEnvFromDialog)
+                        .padding([8, 16])
+                        .style(btn_style),
+                    Space::new().width(Length::Fill),
+                    button(text("Cancel").size(13))
+                        .on_press(Message::CancelEnvDialog)
+                        .padding([8, 16])
+                        .style(btn_style),
+                    button(text("Connect").size(13))
+                        .on_press(Message::ConfirmEnv)
+                        .padding([8, 16])
+                        .style(primary_btn_style),
+                ]
+                .spacing(8),
+            ]
+            .spacing(8)
+            .padding(24)
+            .width(400),
+        )
+        .style(dialog_style);
+
+        let scrim = mouse_area(
+            container(Space::new().width(Length::Fill).height(Length::Fill))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(|_theme: &Theme| container::Style {
+                    background: Some(iced::Background::Color(Color::from_rgba8(0, 0, 0, 0.5))),
+                    ..Default::default()
+                }),
+        )
+        .on_press(Message::CancelEnvDialog);
+
+        stack![scrim, center(dialog)].into()
+    }
+
+    /// FR-ENV-07: new environment creation dialog
+    fn view_new_env_dialog(&self) -> Element<'_, Message> {
+        let dialog_style = |_theme: &Theme| container::Style {
+            background: Some(iced::Background::Color(Color::from_rgb8(0x24, 0x24, 0x36))),
+            border: iced::Border {
+                radius: 12.0.into(),
+                width: 1.0,
+                color: Color::from_rgb8(0x45, 0x47, 0x5a),
+            },
+            shadow: iced::Shadow {
+                color: Color::from_rgba8(0, 0, 0, 0.6),
+                offset: iced::Vector::new(0.0, 4.0),
+                blur_radius: 16.0,
+            },
+            ..Default::default()
+        };
+        let btn_style = |_theme: &Theme, _status: button::Status| button::Style {
+            background: Some(iced::Background::Color(Color::from_rgb8(0x31, 0x32, 0x44))),
+            text_color: Color::from_rgb8(0xcd, 0xd6, 0xf4),
+            border: iced::Border {
+                radius: 6.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let primary_btn_style = |_theme: &Theme, _status: button::Status| button::Style {
+            background: Some(iced::Background::Color(Color::from_rgb8(0x89, 0xb4, 0xfa))),
+            text_color: Color::from_rgb8(0x1e, 0x1e, 0x2e),
+            border: iced::Border {
+                radius: 6.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let dialog = container(
+            column![
+                text("New environment")
+                    .size(18)
+                    .color(Color::from_rgb8(0xcd, 0xd6, 0xf4)),
+                text("Enter a name for the new environment.")
+                    .size(13)
+                    .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
+                text_input("Environment name", &self.new_env_input)
+                    .on_input(Message::NewEnvInputChanged)
+                    .on_submit(Message::ConfirmNewEnv)
+                    .size(13)
+                    .padding(8),
+                Space::new().height(8),
+                row![
+                    Space::new().width(Length::Fill),
+                    button(text("Cancel").size(13))
+                        .on_press(Message::CancelNewEnv)
+                        .padding([8, 16])
+                        .style(btn_style),
+                    button(text("Create").size(13))
+                        .on_press(Message::ConfirmNewEnv)
+                        .padding([8, 16])
+                        .style(primary_btn_style),
+                ]
+                .spacing(8),
+            ]
+            .spacing(8)
+            .padding(24)
+            .width(360),
+        )
+        .style(dialog_style);
+
+        let scrim = mouse_area(
+            container(Space::new().width(Length::Fill).height(Length::Fill))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(|_theme: &Theme| container::Style {
+                    background: Some(iced::Background::Color(Color::from_rgba8(0, 0, 0, 0.5))),
+                    ..Default::default()
+                }),
+        )
+        .on_press(Message::CancelNewEnv);
+
+        stack![scrim, center(dialog)].into()
+    }
+
+    /// FR-ENV-08: rename environment dialog
+    fn view_rename_env_dialog(&self) -> Element<'_, Message> {
+        let dialog_style = |_theme: &Theme| container::Style {
+            background: Some(iced::Background::Color(Color::from_rgb8(0x24, 0x24, 0x36))),
+            border: iced::Border {
+                radius: 12.0.into(),
+                width: 1.0,
+                color: Color::from_rgb8(0x45, 0x47, 0x5a),
+            },
+            shadow: iced::Shadow {
+                color: Color::from_rgba8(0, 0, 0, 0.6),
+                offset: iced::Vector::new(0.0, 4.0),
+                blur_radius: 16.0,
+            },
+            ..Default::default()
+        };
+        let btn_style = |_theme: &Theme, _status: button::Status| button::Style {
+            background: Some(iced::Background::Color(Color::from_rgb8(0x31, 0x32, 0x44))),
+            text_color: Color::from_rgb8(0xcd, 0xd6, 0xf4),
+            border: iced::Border {
+                radius: 6.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let primary_btn_style = |_theme: &Theme, _status: button::Status| button::Style {
+            background: Some(iced::Background::Color(Color::from_rgb8(0x89, 0xb4, 0xfa))),
+            text_color: Color::from_rgb8(0x1e, 0x1e, 0x2e),
+            border: iced::Border {
+                radius: 6.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let target_name = self.rename_env_target.as_deref().unwrap_or("unknown");
+
+        let dialog = container(
+            column![
+                text("Rename environment")
+                    .size(18)
+                    .color(Color::from_rgb8(0xcd, 0xd6, 0xf4)),
+                text(format!("Renaming \"{}\"", target_name))
+                    .size(13)
+                    .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
+                text_input("New name", &self.rename_env_input)
+                    .on_input(Message::RenameEnvInputChanged)
+                    .on_submit(Message::ConfirmRenameEnv)
+                    .size(13)
+                    .padding(8),
+                Space::new().height(8),
+                row![
+                    Space::new().width(Length::Fill),
+                    button(text("Cancel").size(13))
+                        .on_press(Message::CancelRenameEnv)
+                        .padding([8, 16])
+                        .style(btn_style),
+                    button(text("Rename").size(13))
+                        .on_press(Message::ConfirmRenameEnv)
+                        .padding([8, 16])
+                        .style(primary_btn_style),
+                ]
+                .spacing(8),
+            ]
+            .spacing(8)
+            .padding(24)
+            .width(360),
+        )
+        .style(dialog_style);
+
+        let scrim = mouse_area(
+            container(Space::new().width(Length::Fill).height(Length::Fill))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(|_theme: &Theme| container::Style {
+                    background: Some(iced::Background::Color(Color::from_rgba8(0, 0, 0, 0.5))),
+                    ..Default::default()
+                }),
+        )
+        .on_press(Message::CancelRenameEnv);
+
+        stack![scrim, center(dialog)].into()
+    }
+
+    /// FR-ENV-09: delete environment confirmation dialog
+    fn view_delete_env_dialog(&self) -> Element<'_, Message> {
+        let dialog_style = |_theme: &Theme| container::Style {
+            background: Some(iced::Background::Color(Color::from_rgb8(0x24, 0x24, 0x36))),
+            border: iced::Border {
+                radius: 12.0.into(),
+                width: 1.0,
+                color: Color::from_rgb8(0x45, 0x47, 0x5a),
+            },
+            shadow: iced::Shadow {
+                color: Color::from_rgba8(0, 0, 0, 0.6),
+                offset: iced::Vector::new(0.0, 4.0),
+                blur_radius: 16.0,
+            },
+            ..Default::default()
+        };
+        let btn_style = |_theme: &Theme, _status: button::Status| button::Style {
+            background: Some(iced::Background::Color(Color::from_rgb8(0x31, 0x32, 0x44))),
+            text_color: Color::from_rgb8(0xcd, 0xd6, 0xf4),
+            border: iced::Border {
+                radius: 6.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let danger_btn_style = |_theme: &Theme, _status: button::Status| button::Style {
+            background: Some(iced::Background::Color(Color::from_rgb8(0xf3, 0x8b, 0xa8))),
+            text_color: Color::from_rgb8(0x1e, 0x1e, 0x2e),
+            border: iced::Border {
+                radius: 6.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let target_name = self.delete_env_target.as_deref().unwrap_or("unknown");
+        // Count sessions in the target environment (stub: 0 for now)
+        let session_count = 0_usize;
+        let warning = if session_count > 0 {
+            format!(
+                "This will remove {session_count} session{} from this environment.",
+                if session_count == 1 { "" } else { "s" }
+            )
+        } else {
+            "This environment has no active sessions.".to_string()
+        };
+
+        let dialog = container(
+            column![
+                text("Delete environment?")
+                    .size(18)
+                    .color(Color::from_rgb8(0xcd, 0xd6, 0xf4)),
+                text(format!("Environment: \"{}\"", target_name))
+                    .size(13)
+                    .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
+                text(warning)
+                    .size(13)
+                    .color(Color::from_rgb8(0xf9, 0xe2, 0xaf)),
+                Space::new().height(8),
+                row![
+                    Space::new().width(Length::Fill),
+                    button(text("Cancel").size(13))
+                        .on_press(Message::CancelDeleteEnv)
+                        .padding([8, 16])
+                        .style(btn_style),
+                    button(text("Delete").size(13))
+                        .on_press(Message::ConfirmDeleteEnv)
+                        .padding([8, 16])
+                        .style(danger_btn_style),
+                ]
+                .spacing(8),
+            ]
+            .spacing(8)
+            .padding(24)
+            .width(360),
+        )
+        .style(dialog_style);
+
+        let scrim = mouse_area(
+            container(Space::new().width(Length::Fill).height(Length::Fill))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(|_theme: &Theme| container::Style {
+                    background: Some(iced::Background::Color(Color::from_rgba8(0, 0, 0, 0.5))),
+                    ..Default::default()
+                }),
+        )
+        .on_press(Message::CancelDeleteEnv);
+
+        stack![scrim, center(dialog)].into()
     }
 
     fn view_welcome(&self) -> Element<'_, Message> {
