@@ -218,7 +218,7 @@ impl ShellKeep {
 
     fn handle_ssh_connected(
         &mut self,
-        tab_id: u64,
+        tab_id: super::tab::TabId,
         result: Result<(), String>,
     ) -> Task<Message> {
         match result {
@@ -1728,7 +1728,7 @@ impl ShellKeep {
                     username: conn.username.clone(),
                 };
                 // Collect tab IDs that are connected via russh
-                let tab_ids: Vec<u64> = self
+                let tab_ids: Vec<super::tab::TabId> = self
                     .tabs
                     .iter()
                     .filter(|t| t.uses_russh && !t.dead && t.terminal.is_some())
@@ -1752,13 +1752,13 @@ impl ShellKeep {
                         };
                         (tab_ids, latency)
                     },
-                    move |(ids, latency): (Vec<u64>, Option<u32>)| {
+                    move |(ids, latency): (Vec<super::tab::TabId>, Option<u32>)| {
                         // Send measurement for the first tab; the update handler
                         // applies the same latency to all tabs on this connection.
                         if let Some(&first) = ids.first() {
                             Message::LatencyMeasured(first, latency)
                         } else {
-                            Message::LatencyMeasured(0, None)
+                            Message::LatencyMeasured(super::tab::TabId(0), None)
                         }
                     },
                 )
@@ -1949,7 +1949,7 @@ impl ShellKeep {
             // FR-TABS-11: context menu paste — read clipboard and send to terminal
             Message::ContextMenuPaste => {
                 self.context_menu = None;
-                let tab_id = self.tabs.get(self.active_tab).map(|t| t.id).unwrap_or(0);
+                let tab_id = self.tabs.get(self.active_tab).map(|t| t.id).unwrap_or(super::tab::TabId(0));
                 iced::clipboard::read().map(move |text| {
                     if let Some(text) = text {
                         Message::PasteToTerminal(tab_id, text.into_bytes())
@@ -1972,7 +1972,7 @@ impl ShellKeep {
             }
 
             Message::TerminalEvent(iced_term::Event::BackendCall(id, cmd)) => {
-                self.handle_terminal_backend_call(id, cmd)
+                self.handle_terminal_backend_call(super::tab::TabId(id), cmd)
             }
 
             // FR-STATE-14: track window geometry changes
@@ -1996,7 +1996,7 @@ impl ShellKeep {
 
     fn handle_terminal_backend_call(
         &mut self,
-        id: u64,
+        id: super::tab::TabId,
         cmd: iced_term::BackendCommand,
     ) -> Task<Message> {
         let is_resize = matches!(&cmd, iced_term::BackendCommand::Resize(..));

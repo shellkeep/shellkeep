@@ -9,7 +9,7 @@ pub(crate) mod view;
 
 pub(crate) use message::Message;
 
-use tab::{ChannelHolder, ConnParams, make_backend_settings, make_font_settings, make_theme_settings};
+use tab::{ChannelHolder, ConnParams, TabId, make_backend_settings, make_font_settings, make_theme_settings};
 use session::{SshSubscriptionData, establish_ssh_session, ssh_channel_stream};
 
 use std::sync::Arc;
@@ -123,7 +123,7 @@ pub(crate) struct ShellKeep {
     #[allow(dead_code)]
     pub(crate) password_input: String,
     #[allow(dead_code)]
-    pub(crate) password_target_tab: Option<u64>,
+    pub(crate) password_target_tab: Option<TabId>,
     #[allow(dead_code)]
     pub(crate) password_conn_params: Option<ConnParams>,
     // FR-LOCK-05: lock conflict dialog
@@ -132,7 +132,7 @@ pub(crate) struct ShellKeep {
     #[allow(dead_code)]
     pub(crate) lock_info_text: String,
     #[allow(dead_code)]
-    pub(crate) lock_target_tab: Option<u64>,
+    pub(crate) lock_target_tab: Option<TabId>,
 
     /// FR-SESSION-10a: close-tab confirmation dialog
     pub(crate) pending_close_tabs: Option<Vec<usize>>,
@@ -369,7 +369,7 @@ impl ShellKeep {
             }
         };
 
-        let id = self.next_id;
+        let id = TabId(self.next_id);
         self.next_id += 1;
 
         // Create channels for SSH I/O
@@ -382,7 +382,7 @@ impl ShellKeep {
             backend: make_backend_settings(&self.config),
         };
 
-        let terminal = match iced_term::Terminal::new_ssh(id, settings, ssh_writer_tx) {
+        let terminal = match iced_term::Terminal::new_ssh(id.0, settings, ssh_writer_tx) {
             Ok(t) => t,
             Err(e) => {
                 tracing::error!("failed to create SSH terminal: {e}");
@@ -486,7 +486,7 @@ impl ShellKeep {
         label: &str,
         tmux_session: &str,
     ) {
-        let id = self.next_id;
+        let id = TabId(self.next_id);
         self.next_id += 1;
 
         let tmux_cmd = format!(
@@ -509,7 +509,7 @@ impl ShellKeep {
             },
         };
 
-        match iced_term::Terminal::new(id, settings) {
+        match iced_term::Terminal::new(id.0, settings) {
             Ok(terminal) => {
                 self.tabs.push(tab::Tab {
                     id,
@@ -643,7 +643,7 @@ impl ShellKeep {
                 backend: make_backend_settings(&self.config),
             };
 
-            match iced_term::Terminal::new_ssh(tab.id, settings, ssh_writer_tx) {
+            match iced_term::Terminal::new_ssh(tab.id.0, settings, ssh_writer_tx) {
                 Ok(terminal) => {
                     tab.terminal = Some(terminal);
                     tab.ssh_writer_rx_holder = Some(Arc::new(Mutex::new(Some(ssh_writer_rx))));

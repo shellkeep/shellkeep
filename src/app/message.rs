@@ -7,14 +7,16 @@ use iced::{keyboard, window, Point, Size};
 
 use shellkeep::ssh;
 
+use super::tab::TabId;
+
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub(crate) enum Message {
     TerminalEvent(iced_term::Event),
-    SshData(u64, Vec<u8>),
-    PasteToTerminal(u64, Vec<u8>),
-    SshDisconnected(u64, String),
-    SshConnected(u64, Result<(), String>),
+    SshData(TabId, Vec<u8>),
+    PasteToTerminal(TabId, Vec<u8>),
+    SshDisconnected(TabId, String),
+    SshConnected(TabId, Result<(), String>),
     ExistingSessionsFound(Result<Vec<String>, String>),
     SelectTab(usize),
     CloseTab(usize),
@@ -146,5 +148,5 @@ pub(crate) enum Message {
     /// FR-UI-04/05: periodic latency measurement tick
     LatencyTick,
     /// FR-UI-04/05: latency measurement result (tab_id, latency_ms or None on error)
-    LatencyMeasured(u64, Option<u32>),
+    LatencyMeasured(TabId, Option<u32>),
 }

@@ -3,6 +3,7 @@
 
 //! Tab-related types for the shellkeep application.
 
+use std::fmt;
 use std::sync::Arc;
 
 use shellkeep::ssh::manager::ConnKey;
@@ -15,6 +16,16 @@ pub(crate) type ChannelHolder = Holder<russh::Channel<russh::client::Msg>>;
 pub(crate) type WriterRxHolder = Holder<tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>>;
 pub(crate) type ResizeRxHolder = Holder<tokio::sync::mpsc::UnboundedReceiver<(u32, u32)>>;
 
+/// Strongly-typed tab identifier.
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
+pub(crate) struct TabId(pub(crate) u64);
+
+impl fmt::Display for TabId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 /// Connection parameters parsed from user input.
 #[derive(Clone, Debug)]
 pub(crate) struct ConnParams {
@@ -25,7 +36,7 @@ pub(crate) struct ConnParams {
 }
 
 pub(crate) struct Tab {
-    pub(crate) id: u64,
+    pub(crate) id: TabId,
     pub(crate) label: String,
     /// FR-SESSION-07: stable UUID for state persistence
     pub(crate) session_uuid: String,

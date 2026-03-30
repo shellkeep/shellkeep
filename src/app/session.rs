@@ -10,7 +10,7 @@ use iced::futures::stream::BoxStream;
 use iced::futures::{SinkExt, StreamExt};
 use tokio::sync::Mutex;
 
-use crate::app::tab::{ChannelHolder, ConnParams, ResizeRxHolder, WriterRxHolder};
+use crate::app::tab::{ChannelHolder, ConnParams, ResizeRxHolder, TabId, WriterRxHolder};
 use crate::app::Message;
 use shellkeep::error::SshError;
 use shellkeep::ssh::manager::{ConnKey, ConnectionManager};
@@ -19,7 +19,7 @@ use shellkeep::{i18n, ssh};
 
 #[derive(Clone)]
 pub(crate) struct SshSubscriptionData {
-    pub(crate) tab_id: u64,
+    pub(crate) tab_id: TabId,
     pub(crate) channel: ChannelHolder,
     pub(crate) writer_rx: WriterRxHolder,
     pub(crate) resize_rx: ResizeRxHolder,
