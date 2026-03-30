@@ -209,9 +209,9 @@ fn build_ansi256_colors() -> HashMap<u8, Color> {
     ansi256_colors
 }
 
-fn hex_to_color(hex: &str) -> anyhow::Result<Color> {
+fn hex_to_color(hex: &str) -> Result<Color, Box<dyn std::error::Error>> {
     if hex.len() != 7 {
-        return Err(anyhow::format_err!("input string is in non valid format"));
+        return Err("input string is in non valid format".into());
     }
 
     let r = u8::from_str_radix(&hex[1..3], 16)?;
