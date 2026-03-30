@@ -428,15 +428,23 @@ impl ShellKeep {
             last_latency_ms: None,
             reconnect_started: None,
             ssh_channel_holder: None, // set when SshConnected(Ok) arrives
-            ssh_writer_rx_holder: Some(writer_rx_holder),
+            ssh_writer_rx_holder: Some(writer_rx_holder.clone()),
             ssh_resize_tx: Some(resize_tx),
-            ssh_resize_rx_holder: Some(resize_rx_holder),
+            ssh_resize_rx_holder: Some(resize_rx_holder.clone()),
             conn_key: None,
             pending_channel: Some(channel_holder.clone()),
             connection_phase: Some(phase.clone()),
             conn_state: tab::ConnectionState::Connecting {
                 phase: phase.clone(),
                 pending_channel: channel_holder.clone(),
+            },
+            backend: tab::TabBackend::Russh {
+                conn_params: self.current_conn.clone().unwrap_or_else(|| ConnParams {
+                    key: ConnKey { host: String::new(), port: 22, username: String::new() },
+                    identity_file: None,
+                }),
+                writer_rx: Some(writer_rx_holder),
+                resize_rx: Some(resize_rx_holder),
             },
             history_writer,
             needs_initial_resize: true,
@@ -539,6 +547,9 @@ impl ShellKeep {
                     conn_state: tab::ConnectionState::Disconnected {
                         error: None,
                         can_reconnect: false,
+                    },
+                    backend: tab::TabBackend::SystemSsh {
+                        ssh_args: ssh_args.to_vec(),
                     },
                     history_writer: None,
                     needs_initial_resize: true,

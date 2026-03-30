@@ -72,6 +72,22 @@ pub(crate) enum ConnectionState {
     },
 }
 
+/// Backend type for a tab — either system ssh (spawned process) or russh (async library).
+///
+/// During migration, `uses_russh: bool` is still the authoritative field; new code
+/// should prefer matching on `backend` once migration is complete.
+#[allow(dead_code)]
+pub(crate) enum TabBackend {
+    SystemSsh {
+        ssh_args: Vec<String>,
+    },
+    Russh {
+        conn_params: ConnParams,
+        writer_rx: Option<WriterRxHolder>,
+        resize_rx: Option<ResizeRxHolder>,
+    },
+}
+
 pub(crate) struct Tab {
     pub(crate) id: TabId,
     pub(crate) label: String,
@@ -113,6 +129,9 @@ pub(crate) struct Tab {
     /// Consolidated connection state (replaces scattered booleans; see ConnectionState docs).
     #[allow(dead_code)]
     pub(crate) conn_state: ConnectionState,
+    /// Backend type (replaces `uses_russh` + scattered Options; see TabBackend docs).
+    #[allow(dead_code)]
+    pub(crate) backend: TabBackend,
     /// FR-HISTORY-02: client-side JSONL history writer
     pub(crate) history_writer: Option<history::HistoryWriter>,
     /// FR-TERMINAL-16: true until first resize is sent to SSH channel after connect
