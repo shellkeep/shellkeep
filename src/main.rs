@@ -2315,6 +2315,21 @@ impl ShellKeep {
                             self.show_welcome = false;
                         }
                     }
+                    // Tab / Shift+Tab — cycle focus between form inputs on dialogs/welcome
+                    if key == keyboard::Key::Named(keyboard::key::Named::Tab)
+                        && (self.show_welcome
+                            || self.show_env_dialog
+                            || self.show_new_env_dialog
+                            || self.show_rename_env_dialog
+                            || self.search_active
+                            || self.renaming_tab.is_some())
+                    {
+                        return if modifiers.shift() {
+                            iced_runtime::widget::operation::focus_previous()
+                        } else {
+                            iced_runtime::widget::operation::focus_next()
+                        };
+                    }
                 }
             }
 
