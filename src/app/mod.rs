@@ -10,7 +10,7 @@ pub(crate) mod view;
 pub(crate) use message::Message;
 
 use tab::{ChannelHolder, ConnParams, TabId, make_backend_settings, make_font_settings, make_theme_settings};
-use session::{SshSubscriptionData, establish_ssh_session, ssh_channel_stream};
+use session::{EstablishParams, SshSubscriptionData, establish_ssh_session, ssh_channel_stream};
 
 use std::sync::Arc;
 use iced::{Subscription, Task, Theme, keyboard, window};
@@ -444,27 +444,23 @@ impl ShellKeep {
         tracing::info!("opened SSH tab {id}: {label} (tmux: {tmux_session}) via russh");
 
         // Launch async connection — writes channel into the pre-allocated holder
-        let mgr = self.conn_manager.clone();
-        let tmux = tmux_session.to_string();
         let holder = channel_holder;
-        let keepalive = self.config.ssh.keepalive_interval;
-        let cid = self.client_id.clone();
-        let phase_clone = phase;
+        let params = EstablishParams {
+            conn_manager: self.conn_manager.clone(),
+            conn,
+            tmux_session: tmux_session.to_string(),
+            cols: 80,
+            rows: 24,
+            keepalive_secs: self.config.ssh.keepalive_interval,
+            client_id: self.client_id.clone(),
+            session_uuid: suuid,
+            phase,
+            password: None,
+            force_lock: false,
+        };
         Task::perform(
             async move {
-                match establish_ssh_session(
-                    mgr,
-                    conn,
-                    tmux,
-                    80,
-                    24,
-                    keepalive,
-                    cid,
-                    phase_clone,
-                    suuid,
-                )
-                .await
-                {
+                match establish_ssh_session(params).await {
                     Ok(channel) => {
                         *holder.lock().await = Some(channel);
                         Ok(())
@@ -658,31 +654,26 @@ impl ShellKeep {
                         Some(c) => c.clone(),
                         None => return Task::none(),
                     };
-                    let tmux = tab.tmux_session.clone();
-                    let mgr = self.conn_manager.clone();
                     let tab_id = tab.id;
                     let holder = channel_holder;
-                    let keepalive = self.config.ssh.keepalive_interval;
-                    let cid = self.client_id.clone();
-                    let phase_clone = phase;
-                    let suuid = tab.session_uuid.clone();
+                    let params = EstablishParams {
+                        conn_manager: self.conn_manager.clone(),
+                        conn,
+                        tmux_session: tab.tmux_session.clone(),
+                        cols: 80,
+                        rows: 24,
+                        keepalive_secs: self.config.ssh.keepalive_interval,
+                        client_id: self.client_id.clone(),
+                        session_uuid: tab.session_uuid.clone(),
+                        phase,
+                        password: None,
+                        force_lock: false,
+                    };
                     self.update_title();
 
                     Task::perform(
                         async move {
-                            match establish_ssh_session(
-                                mgr,
-                                conn,
-                                tmux,
-                                80,
-                                24,
-                                keepalive,
-                                cid,
-                                phase_clone,
-                                suuid,
-                            )
-                            .await
-                            {
+                            match establish_ssh_session(params).await {
                                 Ok(channel) => {
                                     *holder.lock().await = Some(channel);
                                     Ok(())

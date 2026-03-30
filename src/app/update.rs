@@ -3,6 +3,7 @@
 
 use super::message::Message;
 use super::ShellKeep;
+use super::session::{EstablishParams, establish_ssh_session};
 use super::tab::{ChannelHolder, SPINNER_FRAMES};
 
 use std::sync::Arc;
@@ -11,11 +12,10 @@ use iced_term::{AlacrittyColumn, AlacrittyLine, AlacrittyPoint, RegexSearch};
 use iced_term::settings::FontSettings;
 use shellkeep::config::Config;
 use shellkeep::ssh::manager::ConnKey;
-use shellkeep::state::history;
 use shellkeep::state::recent::RecentConnection;
 use shellkeep::state::state_file::StateFile;
-use shellkeep::tray::{Tray, TrayAction};
 use shellkeep::ssh;
+use shellkeep::tray::{Tray, TrayAction};
 use tokio::sync::Mutex;
 
 pub(crate) const RENAME_INPUT_ID: &str = "rename-tab-input";
@@ -1420,83 +1420,32 @@ impl ShellKeep {
                 tab.dead = false;
                 tab.last_error = None;
 
-                let tmux_session = tab.tmux_session.clone();
-                let client_id = self.client_id.clone();
-                let session_uuid = tab.session_uuid.clone();
-                let keepalive = self.config.ssh.keepalive_interval;
                 let channel_holder: ChannelHolder = Arc::new(Mutex::new(None));
                 tab.pending_channel = Some(channel_holder.clone());
 
+                let params = EstablishParams {
+                    conn_manager: mgr,
+                    conn,
+                    tmux_session: tab.tmux_session.clone(),
+                    cols: 80,
+                    rows: 24,
+                    keepalive_secs: self.config.ssh.keepalive_interval,
+                    client_id: self.client_id.clone(),
+                    session_uuid: tab.session_uuid.clone(),
+                    phase,
+                    password: Some(password),
+                    force_lock: false,
+                };
+
                 return Task::perform(
                     async move {
-                        let conn_result = {
-                            let mut m = mgr.lock().await;
-                            m.get_or_connect(
-                                &conn_key,
-                                conn.identity_file.as_deref(),
-                                Some(&password),
-                                keepalive,
-                            )
-                            .await
-                            .map_err(|e| e.to_string())?
-                        };
-                        let handle = conn_result.handle.lock().await;
-
-                        // SAFETY: mutex is never held across a panic path
-                        #[allow(clippy::unwrap_used)]
-                        {
-                            *phase.lock().unwrap() = "Opening session...".to_string();
+                        match establish_ssh_session(params).await {
+                            Ok(channel) => {
+                                *channel_holder.lock().await = Some(channel);
+                                Ok(())
+                            }
+                            Err(e) => Err(e.to_string()),
                         }
-
-                        ssh::lock::acquire_lock(
-                            &handle,
-                            &client_id,
-                            Some(keepalive as u64),
-                        )
-                        .await
-                        .map_err(|e| e.to_string())?;
-
-                        let check = ssh::connection::exec_command(
-                                &handle,
-                                &format!(
-                                    "tmux has-session -t {tmux_session} 2>/dev/null && echo EXISTS"
-                                ),
-                            )
-                            .await
-                            .unwrap_or_default();
-
-                        if !check.trim().contains("EXISTS") {
-                            ssh::tmux::create_session_russh(&handle, &tmux_session)
-                                .await
-                                .map_err(|e| e.to_string())?;
-                        }
-
-                        let channel = handle
-                            .channel_open_session()
-                            .await
-                            .map_err(|e| format!("channel: {e}"))?;
-                        channel
-                            .request_pty(false, "xterm-256color", 80, 24, 0, 0, &[])
-                            .await
-                            .map_err(|e| format!("pty: {e}"))?;
-                        let tmux_cmd = format!(
-                            "TERM=xterm-256color tmux new-session -A -s {tmux_session} \\; set status off || exec $SHELL"
-                        );
-                        channel
-                            .exec(true, tmux_cmd)
-                            .await
-                            .map_err(|e| format!("exec: {e}"))?;
-
-                        let pipe_cmd =
-                            history::pipe_pane_command(&tmux_session, &session_uuid);
-                        if let Err(e) =
-                            ssh::connection::exec_command(&handle, &pipe_cmd).await
-                        {
-                            tracing::warn!("failed to setup history pipe-pane: {e}");
-                        }
-
-                        *channel_holder.lock().await = Some(channel);
-                        Ok(())
                     },
                     move |result: Result<(), String>| Message::SshConnected(tab_id, result),
                 );
@@ -1509,105 +1458,42 @@ impl ShellKeep {
         self.show_lock_dialog = false;
         if let Some(tab_id) = self.lock_target_tab.take()
             && let Some(conn) = self.current_conn.clone()
+            && let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id)
         {
-            let mgr = self.conn_manager.clone();
-            let conn_key = conn.key.clone();
-            let client_id = self.client_id.clone();
+            let phase = Arc::new(std::sync::Mutex::new(String::new()));
+            tab.connection_phase = Some(phase.clone());
+            tab.dead = false;
+            tab.last_error = None;
 
-            if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
-                let phase = Arc::new(std::sync::Mutex::new(String::new()));
-                tab.connection_phase = Some(phase.clone());
-                tab.dead = false;
-                tab.last_error = None;
+            let channel_holder: ChannelHolder = Arc::new(Mutex::new(None));
+            tab.pending_channel = Some(channel_holder.clone());
 
-                let tmux_session = tab.tmux_session.clone();
-                let session_uuid = tab.session_uuid.clone();
-                let keepalive = self.config.ssh.keepalive_interval;
-                let channel_holder: ChannelHolder = Arc::new(Mutex::new(None));
-                tab.pending_channel = Some(channel_holder.clone());
+            let params = EstablishParams {
+                conn_manager: self.conn_manager.clone(),
+                conn,
+                tmux_session: tab.tmux_session.clone(),
+                cols: 80,
+                rows: 24,
+                keepalive_secs: self.config.ssh.keepalive_interval,
+                client_id: self.client_id.clone(),
+                session_uuid: tab.session_uuid.clone(),
+                phase,
+                password: None,
+                force_lock: true,
+            };
 
-                return Task::perform(
-                    async move {
-                        let conn_result = {
-                            let mut m = mgr.lock().await;
-                            m.get_or_connect(
-                                &conn_key,
-                                conn.identity_file.as_deref(),
-                                None,
-                                keepalive,
-                            )
-                            .await
-                            .map_err(|e| e.to_string())?
-                        };
-                        let handle = conn_result.handle.lock().await;
-
-                        // SAFETY: mutex is never held across a panic path
-                        #[allow(clippy::unwrap_used)]
-                        {
-                            *phase.lock().unwrap() = "Taking over lock...".to_string();
+            return Task::perform(
+                async move {
+                    match establish_ssh_session(params).await {
+                        Ok(channel) => {
+                            *channel_holder.lock().await = Some(channel);
+                            Ok(())
                         }
-                        ssh::lock::release_lock(&handle, &client_id)
-                            .await
-                            .map_err(|e| e.to_string())?;
-                        ssh::lock::acquire_lock(
-                            &handle,
-                            &client_id,
-                            Some(keepalive as u64),
-                        )
-                        .await
-                        .map_err(|e| e.to_string())?;
-
-                        // SAFETY: mutex is never held across a panic path
-                        #[allow(clippy::unwrap_used)]
-                        {
-                            *phase.lock().unwrap() = "Opening session...".to_string();
-                        }
-
-                        let check = ssh::connection::exec_command(
-                                &handle,
-                                &format!(
-                                    "tmux has-session -t {tmux_session} 2>/dev/null && echo EXISTS"
-                                ),
-                            )
-                            .await
-                            .unwrap_or_default();
-
-                        if !check.trim().contains("EXISTS") {
-                            ssh::tmux::create_session_russh(&handle, &tmux_session)
-                                .await
-                                .map_err(|e| e.to_string())?;
-                        }
-
-                        let channel = handle
-                            .channel_open_session()
-                            .await
-                            .map_err(|e| format!("channel: {e}"))?;
-                        channel
-                            .request_pty(false, "xterm-256color", 80, 24, 0, 0, &[])
-                            .await
-                            .map_err(|e| format!("pty: {e}"))?;
-                        let tmux_cmd = format!(
-                            "TERM=xterm-256color tmux new-session -A -s {tmux_session} \\; set status off || exec $SHELL"
-                        );
-                        channel
-                            .exec(true, tmux_cmd)
-                            .await
-                            .map_err(|e| format!("exec: {e}"))?;
-
-                        let pipe_cmd =
-                            history::pipe_pane_command(&tmux_session, &session_uuid);
-                        if let Err(e) =
-                            ssh::connection::exec_command(&handle, &pipe_cmd).await
-                        {
-                            tracing::warn!("failed to setup history pipe-pane: {e}");
-                        }
-
-                        *channel_holder.lock().await = Some(channel);
-                        Ok(())
-                    },
-                    move |result: Result<(), String>| Message::SshConnected(tab_id, result),
-                );
-            }
+                        Err(e) => Err(e.to_string()),
+                    }
+                },
+                move |result: Result<(), String>| Message::SshConnected(tab_id, result),
+            );
         }
         Task::none()
     }

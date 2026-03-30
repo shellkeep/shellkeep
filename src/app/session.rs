@@ -117,36 +117,44 @@ pub(crate) fn ssh_channel_stream(data: &SshSubscriptionData) -> BoxStream<'stati
 // Async SSH operations
 // ---------------------------------------------------------------------------
 
+/// Parameters for establishing an SSH session.
+pub(crate) struct EstablishParams {
+    pub conn_manager: Arc<Mutex<ConnectionManager>>,
+    pub conn: ConnParams,
+    pub tmux_session: String,
+    pub cols: u32,
+    pub rows: u32,
+    pub keepalive_secs: u32,
+    pub client_id: String,
+    pub session_uuid: String,
+    pub phase: Arc<std::sync::Mutex<String>>,
+    /// If Some, pass this password to `get_or_connect` (keyboard-interactive auth).
+    pub password: Option<String>,
+    /// If true, release the lock before acquiring it (lock takeover).
+    pub force_lock: bool,
+}
+
 /// Establish an SSH session: connect, acquire lock, create tmux session, open PTY channel.
 /// Returns the raw russh Channel on success.
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn establish_ssh_session(
-    conn_manager: Arc<Mutex<ConnectionManager>>,
-    conn: ConnParams,
-    tmux_session: String,
-    cols: u32,
-    rows: u32,
-    keepalive_secs: u32,
-    client_id: String,
-    phase: Arc<std::sync::Mutex<String>>,
-    session_uuid: String,
+    params: EstablishParams,
 ) -> Result<russh::Channel<russh::client::Msg>, SshError> {
-    let conn_key = conn.key.clone();
+    let conn_key = params.conn.key.clone();
 
     // SAFETY: mutex is never held across a panic path
     #[allow(clippy::unwrap_used)]
     {
-        *phase.lock().unwrap() = i18n::t(i18n::AUTHENTICATING).to_string();
+        *params.phase.lock().unwrap() = i18n::t(i18n::AUTHENTICATING).to_string();
     }
 
     let (handle_arc, _host_key_prompt) = {
-        let mut mgr = conn_manager.lock().await;
+        let mut mgr = params.conn_manager.lock().await;
         let result = mgr
             .get_or_connect(
                 &conn_key,
-                conn.identity_file.as_deref(),
-                None,
-                keepalive_secs,
+                params.conn.identity_file.as_deref(),
+                params.password.as_deref(),
+                params.keepalive_secs,
             )
             .await?;
         (result.handle, result.host_key_prompt)
@@ -160,7 +168,7 @@ pub(crate) async fn establish_ssh_session(
     // SAFETY: mutex is never held across a panic path
     #[allow(clippy::unwrap_used)]
     {
-        *phase.lock().unwrap() = i18n::t(i18n::CHECKING_TMUX).to_string();
+        *params.phase.lock().unwrap() = i18n::t(i18n::CHECKING_TMUX).to_string();
     }
 
     let tmux_version_output = {
@@ -185,17 +193,28 @@ pub(crate) async fn establish_ssh_session(
     // SAFETY: mutex is never held across a panic path
     #[allow(clippy::unwrap_used)]
     {
-        *phase.lock().unwrap() = i18n::t("Acquiring lock...").to_string();
+        *params.phase.lock().unwrap() = if params.force_lock {
+            "Taking over lock...".to_string()
+        } else {
+            i18n::t("Acquiring lock...").to_string()
+        };
     }
 
-    let keepalive_timeout = if keepalive_secs > 0 {
-        Some(keepalive_secs as u64)
+    let keepalive_timeout = if params.keepalive_secs > 0 {
+        Some(params.keepalive_secs as u64)
     } else {
         None
     };
+
+    // If force_lock, release the existing lock first (lock takeover)
+    if params.force_lock {
+        let h = handle_arc.lock().await;
+        ssh::lock::release_lock(&h, &params.client_id).await?;
+    }
+
     {
         let h = handle_arc.lock().await;
-        ssh::lock::acquire_lock(&h, &client_id, keepalive_timeout)
+        ssh::lock::acquire_lock(&h, &params.client_id, keepalive_timeout)
             .await?;
     }
 
@@ -203,7 +222,7 @@ pub(crate) async fn establish_ssh_session(
     // SAFETY: mutex is never held across a panic path
     #[allow(clippy::unwrap_used)]
     {
-        *phase.lock().unwrap() = i18n::t(i18n::OPENING_SESSION).to_string();
+        *params.phase.lock().unwrap() = i18n::t(i18n::OPENING_SESSION).to_string();
     }
 
     let check = {
@@ -212,7 +231,7 @@ pub(crate) async fn establish_ssh_session(
             &h,
             &format!(
                 "tmux has-session -t {} 2>/dev/null && echo EXISTS",
-                tmux_session
+                params.tmux_session
             ),
         )
         .await
@@ -220,9 +239,9 @@ pub(crate) async fn establish_ssh_session(
     };
 
     if !check.trim().contains("EXISTS") {
-        tracing::info!("tmux session {tmux_session} not found, creating new one");
+        tracing::info!("tmux session {} not found, creating new one", params.tmux_session);
         let h = handle_arc.lock().await;
-        ssh::tmux::create_session_russh(&h, &tmux_session)
+        ssh::tmux::create_session_russh(&h, &params.tmux_session)
             .await?;
     }
 
@@ -234,12 +253,13 @@ pub(crate) async fn establish_ssh_session(
             .await
             .map_err(|e| SshError::Channel(format!("channel open: {e}")))?;
 
-        ch.request_pty(false, "xterm-256color", cols, rows, 0, 0, &[])
+        ch.request_pty(false, "xterm-256color", params.cols, params.rows, 0, 0, &[])
             .await
             .map_err(|e| SshError::Channel(format!("pty: {e}")))?;
 
         let tmux_cmd = format!(
-            "TERM=xterm-256color tmux new-session -A -s {tmux_session} \\; set status off || exec $SHELL"
+            "TERM=xterm-256color tmux new-session -A -s {} \\; set status off || exec $SHELL",
+            params.tmux_session
         );
         ch.exec(true, tmux_cmd)
             .await
@@ -250,15 +270,17 @@ pub(crate) async fn establish_ssh_session(
     // FR-SESSION-07: set SHELLKEEP_SESSION_UUID env var inside the tmux session
     {
         let h = handle_arc.lock().await;
-        let uuid_cmd =
-            format!("tmux set-environment -t {tmux_session} SHELLKEEP_SESSION_UUID {session_uuid}");
+        let uuid_cmd = format!(
+            "tmux set-environment -t {} SHELLKEEP_SESSION_UUID {}",
+            params.tmux_session, params.session_uuid
+        );
         if let Err(e) = ssh::connection::exec_command(&h, &uuid_cmd).await {
             tracing::warn!("failed to set SHELLKEEP_SESSION_UUID: {e}");
         }
     }
 
     // FR-HISTORY-01: start server-side capture via tmux pipe-pane
-    let pipe_cmd = history::pipe_pane_command(&tmux_session, &session_uuid);
+    let pipe_cmd = history::pipe_pane_command(&params.tmux_session, &params.session_uuid);
     {
         let h = handle_arc.lock().await;
         if let Err(e) = ssh::connection::exec_command(&h, &pipe_cmd).await {
