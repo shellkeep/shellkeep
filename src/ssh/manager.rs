@@ -46,6 +46,7 @@ impl ConnectionManager {
         &mut self,
         key: &ConnKey,
         identity_file: Option<&str>,
+        password: Option<&str>,
         keepalive_interval_secs: u32,
     ) -> Result<Arc<Mutex<russh::client::Handle<SshHandler>>>, SshError> {
         if let Some(handle) = self.handles.get(key) {
@@ -57,6 +58,7 @@ impl ConnectionManager {
             key.port,
             &key.username,
             identity_file,
+            password,
             keepalive_interval_secs,
         )
         .await?;

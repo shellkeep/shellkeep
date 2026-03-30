@@ -14,15 +14,17 @@ use iced::keyboard;
 use iced::widget::{
     Space, button, center, column, container, mouse_area, row, scrollable, stack, text, text_input,
 };
-use iced::{Color, Element, Length, Subscription, Task, Theme};
+use iced::window;
+use iced::{Color, Element, Length, Point, Size, Subscription, Task, Theme};
 use iced_term::ColorPalette;
 use iced_term::settings::{BackendSettings, FontSettings, Settings, ThemeSettings};
 use iced_term::{AlacrittyColumn, AlacrittyLine, AlacrittyPoint, RegexSearch, SearchMatch};
+use notify::{Event, EventKind, RecursiveMode, Watcher};
 use shellkeep::config::Config;
 use shellkeep::ssh;
 use shellkeep::ssh::manager::{ConnKey, ConnectionManager};
 use shellkeep::state::recent::{RecentConnection, RecentConnections};
-use shellkeep::state::state_file::{StateFile, TabState};
+use shellkeep::state::state_file::{StateFile, TabState, WindowState};
 use shellkeep::tray::{Tray, TrayAction};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -173,7 +175,23 @@ fn main() -> iced::Result {
     // NFR-SEC-03: verify and fix file permissions on startup
     shellkeep::state::permissions::verify_and_fix();
 
-    iced::application(
+    // FR-CLI-04: single instance detection
+    let _pid_guard = match check_single_instance() {
+        Some(guard) => guard,
+        None => {
+            eprintln!("shellkeep is already running (another instance detected)");
+            std::process::exit(0);
+        }
+    };
+
+    // FR-STATE-14: load saved window geometry for startup
+    let saved_window = {
+        let tmp_client_id =
+            shellkeep::state::client_id::resolve(Config::load().general.client_id.as_deref());
+        StateFile::load_local(&StateFile::local_cache_path(&tmp_client_id)).and_then(|s| s.window)
+    };
+
+    let mut app_builder = iced::application(
         move || ShellKeep::new(initial_ssh_args.clone()),
         ShellKeep::update,
         ShellKeep::view,
@@ -181,9 +199,21 @@ fn main() -> iced::Result {
     .title(ShellKeep::title)
     .subscription(ShellKeep::subscription)
     .theme(ShellKeep::theme)
-    .window_size((900.0, 600.0))
     .antialiasing(true)
-    .run()
+    // FR-TABS-17: intercept window close to show confirmation dialog
+    .exit_on_close_request(false);
+
+    if let Some(ref geo) = saved_window {
+        app_builder = app_builder.window_size(Size::new(geo.width as f32, geo.height as f32));
+        if let (Some(x), Some(y)) = (geo.x, geo.y) {
+            app_builder =
+                app_builder.position(window::Position::Specific(Point::new(x as f32, y as f32)));
+        }
+    } else {
+        app_builder = app_builder.window_size((900.0, 600.0));
+    }
+
+    app_builder.run()
 }
 
 // ---------------------------------------------------------------------------
@@ -214,6 +244,12 @@ struct Tab {
     auto_reconnect: bool,
     /// FR-RECONNECT-06: current reconnect delay in milliseconds (0 = use base)
     reconnect_delay_ms: u64,
+    /// FR-UI-08: last error reason for display in dead tab
+    last_error: Option<String>,
+    /// FR-UI-04..05: last measured latency in milliseconds
+    last_latency_ms: Option<u32>,
+    /// FR-RECONNECT-02: timestamp when reconnection started (for countdown display)
+    reconnect_started: Option<std::time::Instant>,
     /// Whether this tab uses russh (true) or system ssh (false)
     uses_russh: bool,
     // russh channel holder — taken by the subscription on first run
@@ -237,12 +273,20 @@ struct Tab {
 // App state
 // ---------------------------------------------------------------------------
 
+/// FR-RECONNECT-02: braille spinner frames for reconnection animation
+const SPINNER_FRAMES: &[char] = &[
+    '\u{280B}', '\u{2819}', '\u{2839}', '\u{2838}', '\u{283C}', '\u{2834}', '\u{2826}', '\u{2827}',
+    '\u{2807}', '\u{280F}',
+];
+
 struct ShellKeep {
     tabs: Vec<Tab>,
     active_tab: usize,
     next_id: u64,
     show_welcome: bool,
     renaming_tab: Option<usize>,
+    /// FR-RECONNECT-02: spinner animation frame index
+    spinner_frame: usize,
     rename_input: String,
     current_font_size: f32,
     context_menu: Option<(f32, f32)>,
@@ -281,6 +325,19 @@ struct ShellKeep {
     search_input: String,
     search_regex: Option<RegexSearch>,
     search_last_match: Option<SearchMatch>,
+
+    /// FR-CONFIG-04: config hot reload receiver
+    config_reload_rx: Option<std::sync::mpsc::Receiver<()>>,
+
+    /// FR-TABS-17: close confirmation dialog visible
+    show_close_dialog: bool,
+    /// FR-STATE-14: current window geometry for persistence
+    window_width: u32,
+    window_height: u32,
+    window_x: Option<i32>,
+    window_y: Option<i32>,
+    /// FR-STATE-14: debounce timer for geometry saves
+    last_geometry_save: Option<std::time::Instant>,
 }
 
 // ---------------------------------------------------------------------------
@@ -322,14 +379,35 @@ enum Message {
     Connect,
     KeyEvent(keyboard::Event),
     ConnectionPhaseTick,
+    /// FR-RECONNECT-02: advance spinner animation frame
+    SpinnerTick,
     /// FR-TRAY-01: poll tray menu events
     TrayPoll,
+    /// FR-UI-07: create a fresh session replacing a dead tab
+    CreateNewSession(usize),
     // FR-TABS-09: scrollback search
     SearchToggle,
     SearchInputChanged(String),
     SearchNext,
     SearchPrev,
     SearchClose,
+    /// FR-CONFIG-04: config file changed on disk
+    ConfigReloaded,
+    /// FR-LOCK-04: periodic lock heartbeat
+    LockHeartbeatTick,
+    /// FR-LOCK-04: heartbeat result
+    LockHeartbeatDone(Result<(), String>),
+    /// FR-TABS-17: window close requested by window manager
+    WindowCloseRequested,
+    /// FR-TABS-17: close dialog — hide window (keep sessions)
+    CloseDialogHide,
+    /// FR-TABS-17: close dialog — quit application
+    CloseDialogClose,
+    /// FR-TABS-17: close dialog — cancel (dismiss dialog)
+    CloseDialogCancel,
+    /// FR-STATE-14: window moved or resized
+    WindowMoved(Point),
+    WindowResized(Size),
 }
 
 // ---------------------------------------------------------------------------
@@ -429,7 +507,7 @@ fn ssh_channel_stream(data: &SshSubscriptionData) -> BoxStream<'static, Message>
 // Async SSH operations
 // ---------------------------------------------------------------------------
 
-/// Establish an SSH session: connect, create tmux session, open PTY channel.
+/// Establish an SSH session: connect, acquire lock, create tmux session, open PTY channel.
 /// Returns the raw russh Channel on success.
 async fn establish_ssh_session(
     conn_manager: Arc<Mutex<ConnectionManager>>,
@@ -438,6 +516,7 @@ async fn establish_ssh_session(
     cols: u32,
     rows: u32,
     keepalive_secs: u32,
+    client_id: String,
     phase: Arc<std::sync::Mutex<String>>,
 ) -> Result<russh::Channel<russh::client::Msg>, String> {
     let conn_key = ConnKey {
@@ -450,9 +529,14 @@ async fn establish_ssh_session(
 
     let handle_arc = {
         let mut mgr = conn_manager.lock().await;
-        mgr.get_or_connect(&conn_key, conn.identity_file.as_deref(), keepalive_secs)
-            .await
-            .map_err(|e| e.to_string())?
+        mgr.get_or_connect(
+            &conn_key,
+            conn.identity_file.as_deref(),
+            None,
+            keepalive_secs,
+        )
+        .await
+        .map_err(|e| e.to_string())?
     };
 
     let handle = handle_arc.lock().await;
@@ -475,6 +559,18 @@ async fn establish_ssh_session(
     {
         tracing::warn!("tmux version {ver_str} < 3.0 — some features may not work");
     }
+
+    // FR-LOCK-01: acquire client-ID lock before reading state or creating sessions
+    *phase.lock().unwrap() = "Acquiring lock...".to_string();
+
+    let keepalive_timeout = if keepalive_secs > 0 {
+        Some(keepalive_secs as u64)
+    } else {
+        None
+    };
+    ssh::lock::acquire_lock(&handle, &client_id, keepalive_timeout)
+        .await
+        .map_err(|e| e.to_string())?;
 
     // Create tmux session (idempotent — no error if already exists)
     *phase.lock().unwrap() = "Opening session...".to_string();
@@ -523,6 +619,7 @@ impl ShellKeep {
             next_id: 0,
             show_welcome: false,
             renaming_tab: None,
+            spinner_frame: 0,
             rename_input: String::new(),
             current_font_size: config.terminal.font_size,
             context_menu: None,
@@ -547,7 +644,11 @@ impl ShellKeep {
             search_input: String::new(),
             search_regex: None,
             search_last_match: None,
+            config_reload_rx: None,
         };
+
+        // FR-CONFIG-04: start watching config file for hot reload
+        app.config_reload_rx = Some(watch_config(Config::file_path()));
 
         // FR-TRAY-01: initialize system tray icon
         app.tray = Tray::new(app.config.tray.enabled);
@@ -706,6 +807,9 @@ impl ShellKeep {
             auto_reconnect: true,
             uses_russh: true,
             reconnect_delay_ms: 0,
+            last_error: None,
+            last_latency_ms: None,
+            reconnect_started: None,
             ssh_channel_holder: None, // set when SshConnected(Ok) arrives
             ssh_writer_rx_holder: Some(writer_rx_holder),
             ssh_resize_tx: Some(resize_tx),
@@ -725,10 +829,13 @@ impl ShellKeep {
         let tmux = tmux_session.to_string();
         let holder = channel_holder;
         let keepalive = self.config.ssh.keepalive_interval;
+        let cid = self.client_id.clone();
         let phase_clone = phase;
         Task::perform(
             async move {
-                match establish_ssh_session(mgr, conn, tmux, 80, 24, keepalive, phase_clone).await {
+                match establish_ssh_session(mgr, conn, tmux, 80, 24, keepalive, cid, phase_clone)
+                    .await
+                {
                     Ok(channel) => {
                         *holder.lock().await = Some(channel);
                         Ok(())
@@ -788,6 +895,9 @@ impl ShellKeep {
                     reconnect_attempts: 0,
                     auto_reconnect: true,
                     reconnect_delay_ms: 0,
+                    last_error: None,
+                    last_latency_ms: None,
+                    reconnect_started: None,
                     uses_russh: false,
                     ssh_channel_holder: None,
                     ssh_writer_rx_holder: None,
@@ -821,10 +931,18 @@ impl ShellKeep {
             self.save_state();
             // Toast notification
             if !tab.dead {
-                self.toast = Some((
-                    "Session kept on server — you can restore it later".into(),
-                    std::time::Instant::now(),
-                ));
+                // FR-UI-06, FR-TABS-19: notify when sessions continue in background
+                if self.tabs.is_empty() && self.tray.is_some() {
+                    self.toast = Some((
+                        "Window hidden — sessions continue in the background.".into(),
+                        std::time::Instant::now(),
+                    ));
+                } else {
+                    self.toast = Some((
+                        "Session kept on server — you can restore it later".into(),
+                        std::time::Instant::now(),
+                    ));
+                }
             }
         }
     }
@@ -877,6 +995,7 @@ impl ShellKeep {
                     let tab_id = tab.id;
                     let holder = channel_holder;
                     let keepalive = self.config.ssh.keepalive_interval;
+                    let cid = self.client_id.clone();
                     let phase_clone = phase;
                     self.update_title();
 
@@ -889,6 +1008,7 @@ impl ShellKeep {
                                 80,
                                 24,
                                 keepalive,
+                                cid,
                                 phase_clone,
                             )
                             .await
@@ -1033,6 +1153,8 @@ impl ShellKeep {
                     && let Some(ref mut terminal) = tab.terminal
                 {
                     terminal.process_ssh_data(&data);
+                    // FR-UI-08: store last error for dead tab display
+                    tab.last_error = Some(reason.clone());
                 }
             }
 
@@ -1095,6 +1217,7 @@ impl ShellKeep {
                                         m.get_or_connect(
                                             &conn_key,
                                             conn.identity_file.as_deref(),
+                                            None,
                                             15,
                                         )
                                         .await
@@ -1116,6 +1239,8 @@ impl ShellKeep {
                             tab.connection_phase = None;
                             tab.terminal = None;
                             // FR-RECONNECT-07: classify error
+                            // FR-UI-08: store last error for dead tab display
+                            tab.last_error = Some(e.clone());
                             if ssh::errors::is_permanent(&e) {
                                 tab.dead = true;
                                 tab.auto_reconnect = false;
@@ -1349,6 +1474,31 @@ impl ShellKeep {
                     self.tabs[index].reconnect_attempts = 0;
                 }
                 return self.reconnect_tab(index);
+            }
+
+            // FR-UI-07: create a fresh session replacing a dead tab
+            Message::CreateNewSession(index) => {
+                if index < self.tabs.len() && self.current_conn.is_some() {
+                    let tab = &self.tabs[index];
+                    let label = tab.label.clone();
+                    // Reuse same tmux session name prefix but generate new UUID
+                    let tmux_session = self.next_tmux_session();
+                    // Remove the dead tab
+                    self.tabs.remove(index);
+                    if self.active_tab >= self.tabs.len() && self.active_tab > 0 {
+                        self.active_tab -= 1;
+                    }
+                    // Open fresh tab
+                    let task = self.open_tab_russh(&label, &tmux_session);
+                    // Move the new tab to the original position
+                    if self.tabs.len() > 1 && index < self.tabs.len() {
+                        let new_tab = self.tabs.pop().unwrap();
+                        self.tabs.insert(index, new_tab);
+                        self.active_tab = index;
+                        self.update_title();
+                    }
+                    return task;
+                }
             }
 
             Message::AutoReconnectTick => {
@@ -1725,6 +1875,59 @@ impl ShellKeep {
                 self.search_regex = None;
                 self.search_last_match = None;
             }
+
+            // FR-CONFIG-04: config file changed, reload hot-reloadable settings
+            Message::ConfigReloaded => {
+                // Check if the watcher actually signaled a change
+                let changed = self
+                    .config_reload_rx
+                    .as_ref()
+                    .is_some_and(|rx| rx.try_recv().is_ok());
+                if !changed {
+                    return Task::none();
+                }
+
+                let new_config = Config::load();
+                tracing::info!("config reloaded from disk");
+
+                // Hot-reload font size/family
+                if (new_config.terminal.font_size - self.config.terminal.font_size).abs() > 0.1
+                    || new_config.terminal.font_family != self.config.terminal.font_family
+                {
+                    self.current_font_size = new_config.terminal.font_size;
+                    // Apply to all open terminals
+                    for tab in &mut self.tabs {
+                        if let Some(ref mut terminal) = tab.terminal {
+                            terminal.handle(iced_term::Command::ChangeFontSize(
+                                iced_term::FontSizeChange::Set(new_config.terminal.font_size),
+                            ));
+                        }
+                    }
+                    tracing::info!("font updated: size={}", new_config.terminal.font_size);
+                }
+
+                // Hot-reload tray settings
+                if new_config.tray.enabled != self.config.tray.enabled {
+                    if new_config.tray.enabled {
+                        self.tray = Tray::new(true);
+                    } else {
+                        self.tray = None;
+                    }
+                    tracing::info!("tray enabled={}", new_config.tray.enabled);
+                }
+
+                // Note: scrollback_lines is NOT hot-reloadable (requires terminal recreation)
+                if new_config.terminal.scrollback_lines != self.config.terminal.scrollback_lines {
+                    tracing::info!(
+                        "scrollback_lines changed {} -> {} (requires restart to take effect)",
+                        self.config.terminal.scrollback_lines,
+                        new_config.terminal.scrollback_lines
+                    );
+                }
+
+                self.config = new_config;
+                self.toast = Some(("Configuration reloaded".into(), std::time::Instant::now()));
+            }
         }
         Task::none()
     }
@@ -2066,45 +2269,112 @@ impl ShellKeep {
     fn view_dead_tab<'a>(&'a self, tab: &'a Tab) -> Element<'a, Message> {
         let index = self.tabs.iter().position(|t| t.id == tab.id).unwrap_or(0);
 
-        center(
-            column![
-                text("⚠").size(48),
-                text("Session disconnected")
-                    .size(20)
-                    .color(Color::from_rgb8(0xf9, 0xe2, 0xaf)),
-                text(&tab.label)
+        // FR-UI-07..08: enhanced dead session banner
+        let banner_text = if tab.reconnect_attempts > 0 {
+            "Session disconnected — it may still be running on the server."
+        } else {
+            "This session was terminated on the server. Output history is preserved below."
+        };
+
+        let mut items: Vec<Element<'a, Message>> = vec![
+            text("⚠").size(48).into(),
+            text("Session disconnected")
+                .size(20)
+                .color(Color::from_rgb8(0xf9, 0xe2, 0xaf))
+                .into(),
+            text(banner_text)
+                .size(13)
+                .color(Color::from_rgb8(0xa6, 0xad, 0xc8))
+                .into(),
+            text(&tab.label)
+                .size(14)
+                .color(Color::from_rgb8(0xa6, 0xad, 0xc8))
+                .into(),
+        ];
+
+        // FR-UI-08: show reconnect attempt count and last error
+        if tab.reconnect_attempts > 0 {
+            items.push(
+                text(format!(
+                    "Connection lost after {} reconnection attempt{}",
+                    tab.reconnect_attempts,
+                    if tab.reconnect_attempts == 1 { "" } else { "s" }
+                ))
+                .size(12)
+                .color(Color::from_rgb8(0xf3, 0x8b, 0xa8))
+                .into(),
+            );
+        }
+        if let Some(ref err) = tab.last_error {
+            items.push(
+                text(format!("Last error: {err}"))
+                    .size(11)
+                    .color(Color::from_rgb8(0x6c, 0x70, 0x86))
+                    .into(),
+            );
+        }
+
+        items.push(Space::new().height(16).into());
+
+        // Reconnect button
+        items.push(
+            button(
+                text("Reconnect")
                     .size(14)
-                    .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
-                Space::new().height(16),
+                    .color(Color::from_rgb8(0x1e, 0x1e, 0x2e)),
+            )
+            .on_press(Message::ReconnectTab(index))
+            .padding([10, 24])
+            .style(|_theme, _status| button::Style {
+                background: Some(iced::Background::Color(Color::from_rgb8(0xa6, 0xe3, 0xa1))),
+                text_color: Color::from_rgb8(0x1e, 0x1e, 0x2e),
+                border: iced::Border {
+                    radius: 6.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            })
+            .into(),
+        );
+
+        // FR-UI-07: create new session button
+        if self.current_conn.is_some() {
+            items.push(
                 button(
-                    text("Reconnect")
-                        .size(14)
-                        .color(Color::from_rgb8(0x1e, 0x1e, 0x2e))
+                    text("Create new session")
+                        .size(13)
+                        .color(Color::from_rgb8(0xcd, 0xd6, 0xf4)),
                 )
-                .on_press(Message::ReconnectTab(index))
-                .padding([10, 24])
-                .style(|_theme, _status| button::Style {
-                    background: Some(iced::Background::Color(Color::from_rgb8(0xa6, 0xe3, 0xa1,))),
-                    text_color: Color::from_rgb8(0x1e, 0x1e, 0x2e),
+                .on_press(Message::CreateNewSession(index))
+                .padding([8, 20])
+                .style(|_theme: &Theme, _status| button::Style {
+                    background: Some(iced::Background::Color(Color::from_rgb8(0x31, 0x32, 0x44))),
+                    text_color: Color::from_rgb8(0xcd, 0xd6, 0xf4),
                     border: iced::Border {
                         radius: 6.0.into(),
-                        ..Default::default()
+                        width: 1.0,
+                        color: Color::from_rgb8(0x45, 0x47, 0x5a),
                     },
                     ..Default::default()
-                }),
-                button(text("Close tab").size(12))
-                    .on_press(Message::CloseTab(index))
-                    .padding([6, 16])
-                    .style(|_theme: &Theme, _status| button::Style {
-                        background: None,
-                        text_color: Color::from_rgb8(0x6c, 0x70, 0x86),
-                        ..Default::default()
-                    }),
-            ]
-            .spacing(12)
-            .align_x(iced::Alignment::Center),
-        )
-        .into()
+                })
+                .into(),
+            );
+        }
+
+        // Close tab button
+        items.push(
+            button(text("Close tab").size(12))
+                .on_press(Message::CloseTab(index))
+                .padding([6, 16])
+                .style(|_theme: &Theme, _status| button::Style {
+                    background: None,
+                    text_color: Color::from_rgb8(0x6c, 0x70, 0x86),
+                    ..Default::default()
+                })
+                .into(),
+        );
+
+        center(column(items).spacing(12).align_x(iced::Alignment::Center)).into()
     }
 
     fn view_tab_bar(&self) -> Element<'_, Message> {
@@ -2269,13 +2539,38 @@ impl ShellKeep {
             .size(28)
             .color(Color::from_rgb8(0x89, 0xb4, 0xfa));
 
-        let version = format!(
-            "v{} — SSH sessions that survive everything",
-            env!("CARGO_PKG_VERSION")
-        );
-        let subtitle = text(version)
-            .size(14)
-            .color(Color::from_rgb8(0xa6, 0xad, 0xc8));
+        // FR-UI-03: first-use experience — show extended welcome on first run
+        let is_first_use = self.recent.connections.is_empty() && !config_file_exists();
+
+        let subtitle: Element<'_, Message> =
+            if is_first_use {
+                column![
+                text("Welcome to shellkeep")
+                    .size(16)
+                    .color(Color::from_rgb8(0xf9, 0xe2, 0xaf)),
+                text("Your SSH sessions survive everything — network drops, laptop sleep, reboots.")
+                    .size(13)
+                    .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
+                text("Connect to a server to get started.")
+                    .size(13)
+                    .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
+                text(format!("Client name: {}", self.client_id))
+                    .size(11)
+                    .color(Color::from_rgb8(0x6c, 0x70, 0x86)),
+            ]
+                .spacing(6)
+                .align_x(iced::Alignment::Center)
+                .into()
+            } else {
+                let version = format!(
+                    "v{} — SSH sessions that survive everything",
+                    env!("CARGO_PKG_VERSION")
+                );
+                text(version)
+                    .size(14)
+                    .color(Color::from_rgb8(0xa6, 0xad, 0xc8))
+                    .into()
+            };
 
         let host_field = text_input("user@host or just hostname", &self.host_input)
             .on_input(Message::HostInputChanged)
@@ -2504,6 +2799,15 @@ impl ShellKeep {
                 iced::time::every(std::time::Duration::from_millis(100)).map(|_| Message::TrayPoll),
             );
         }
+
+        // FR-CONFIG-04: poll config file watcher every 500ms
+        if self.config_reload_rx.is_some() {
+            subs.push(
+                iced::time::every(std::time::Duration::from_millis(500))
+                    .map(|_| Message::ConfigReloaded),
+            );
+        }
+
         Subscription::batch(subs)
     }
 
@@ -2637,6 +2941,15 @@ fn catppuccin_mocha() -> ColorPalette {
         bright_white: "#a6adc8".into(),
         ..Default::default()
     }
+}
+
+/// FR-UI-03: check if the config file exists (first-use detection)
+fn config_file_exists() -> bool {
+    let path = dirs::config_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("shellkeep")
+        .join("config.toml");
+    path.exists()
 }
 
 // ---------------------------------------------------------------------------
