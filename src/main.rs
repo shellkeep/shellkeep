@@ -2536,6 +2536,15 @@ impl ShellKeep {
                     {
                         return self.update(Message::CopyScrollback);
                     }
+                    // Enter/Escape on close-tab confirmation dialog
+                    if self.pending_close_tabs.is_some() {
+                        if key == keyboard::Key::Named(keyboard::key::Named::Enter) {
+                            return self.update(Message::ConfirmCloseTabs);
+                        }
+                        if key == keyboard::Key::Named(keyboard::key::Named::Escape) {
+                            return self.update(Message::CancelCloseTabs);
+                        }
+                    }
                     // Escape — dismiss search, context menu, cancel rename, or cancel welcome
                     if key == keyboard::Key::Named(keyboard::key::Named::Escape) {
                         if self.search_active {
@@ -5171,9 +5180,16 @@ impl ShellKeep {
 
         // FR-UI-01: advanced fields, hidden by default
         let advanced_section: Element<'_, Message> = if self.show_advanced {
-            let port_row = column![text(i18n::t(i18n::PORT_LABEL)).size(12), port_field].spacing(4);
-            let user_row =
-                column![text(i18n::t(i18n::USERNAME_LABEL)).size(12), user_field].spacing(4);
+            // Compact layout: username + port on one row, identity on second
+            let user_port_row = row![
+                column![text(i18n::t(i18n::USERNAME_LABEL)).size(12), user_field]
+                    .spacing(4)
+                    .width(Length::Fill),
+                column![text(i18n::t(i18n::PORT_LABEL)).size(12), port_field]
+                    .spacing(4)
+                    .width(80),
+            ]
+            .spacing(8);
             let identity_row = column![
                 text(format!("{} (optional)", i18n::t(i18n::IDENTITY_LABEL)))
                     .size(12)
@@ -5181,7 +5197,7 @@ impl ShellKeep {
                 identity_field
             ]
             .spacing(4);
-            column![user_row, port_row, identity_row].spacing(8).into()
+            column![user_port_row, identity_row].spacing(8).into()
         } else {
             Space::new().height(0).into()
         };
