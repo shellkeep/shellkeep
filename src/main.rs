@@ -9,6 +9,7 @@
 mod app;
 mod theme;
 
+use app::tab::{ChannelHolder, ConnParams, ResizeRxHolder, Tab, WriterRxHolder, SPINNER_FRAMES};
 use app::Message;
 
 use std::hash::{Hash, Hasher};
@@ -33,12 +34,6 @@ use shellkeep::{i18n, ssh};
 use tokio::sync::Mutex;
 
 const RENAME_INPUT_ID: &str = "rename-tab-input";
-
-/// Shared holder for a value that is take()n by the SSH subscription on first run.
-type Holder<T> = Arc<Mutex<Option<T>>>;
-type ChannelHolder = Holder<russh::Channel<russh::client::Msg>>;
-type WriterRxHolder = Holder<tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>>;
-type ResizeRxHolder = Holder<tokio::sync::mpsc::UnboundedReceiver<(u32, u32)>>;
 
 fn main() -> iced::Result {
     let args: Vec<String> = std::env::args().collect();
@@ -224,71 +219,8 @@ fn main() -> iced::Result {
 }
 
 // ---------------------------------------------------------------------------
-// Tab
-// ---------------------------------------------------------------------------
-
-/// Connection parameters parsed from user input.
-#[derive(Clone, Debug)]
-struct ConnParams {
-    host: String,
-    port: u16,
-    username: String,
-    identity_file: Option<String>,
-}
-
-struct Tab {
-    id: u64,
-    label: String,
-    /// FR-SESSION-07: stable UUID for state persistence
-    session_uuid: String,
-    terminal: Option<iced_term::Terminal>,
-    /// Legacy: system ssh args (kept for compatibility during transition)
-    ssh_args: Vec<String>,
-    conn_params: Option<ConnParams>,
-    tmux_session: String,
-    dead: bool,
-    reconnect_attempts: u32,
-    auto_reconnect: bool,
-    /// FR-RECONNECT-06: current reconnect delay in milliseconds (0 = use base)
-    reconnect_delay_ms: u64,
-    /// FR-UI-08: last error reason for display in dead tab
-    last_error: Option<String>,
-    /// FR-UI-04..05: last measured latency in milliseconds
-    last_latency_ms: Option<u32>,
-    /// FR-RECONNECT-02: timestamp when reconnection started (for countdown display)
-    reconnect_started: Option<std::time::Instant>,
-    /// Whether this tab uses russh (true) or system ssh (false)
-    uses_russh: bool,
-    // russh channel holder — taken by the subscription on first run
-    ssh_channel_holder: Option<ChannelHolder>,
-    // Writer rx holder — keyboard input receiver, taken by subscription
-    ssh_writer_rx_holder: Option<WriterRxHolder>,
-    // Resize command sender
-    ssh_resize_tx: Option<tokio::sync::mpsc::UnboundedSender<(u32, u32)>>,
-    // Resize rx holder — taken by subscription
-    ssh_resize_rx_holder: Option<ResizeRxHolder>,
-    #[allow(dead_code)]
-    conn_key: Option<ConnKey>,
-    /// Holder for a channel being established by the async task.
-    /// Moved to ssh_channel_holder when SshConnected(Ok) arrives.
-    pending_channel: Option<ChannelHolder>,
-    /// FR-CONN-16: connection phase text, shared with async task
-    connection_phase: Option<Arc<std::sync::Mutex<String>>>,
-    /// FR-HISTORY-02: client-side JSONL history writer
-    history_writer: Option<history::HistoryWriter>,
-    /// FR-TERMINAL-16: true until first resize is sent to SSH channel after connect
-    needs_initial_resize: bool,
-}
-
-// ---------------------------------------------------------------------------
 // App state
 // ---------------------------------------------------------------------------
-
-/// FR-RECONNECT-02: braille spinner frames for reconnection animation
-const SPINNER_FRAMES: &[char] = &[
-    '\u{280B}', '\u{2819}', '\u{2839}', '\u{2838}', '\u{283C}', '\u{2834}', '\u{2826}', '\u{2827}',
-    '\u{2807}', '\u{280F}',
-];
 
 struct ShellKeep {
     tabs: Vec<Tab>,
