@@ -411,6 +411,7 @@ struct ShellKeep {
 enum Message {
     TerminalEvent(iced_term::Event),
     SshData(u64, Vec<u8>),
+    PasteToTerminal(u64, Vec<u8>),
     SshDisconnected(u64, String),
     SshConnected(u64, Result<(), String>),
     ExistingSessionsFound(Result<Vec<String>, String>),
@@ -1875,11 +1876,22 @@ impl ShellKeep {
                 let tab_id = self.tabs.get(self.active_tab).map(|t| t.id).unwrap_or(0);
                 return iced::clipboard::read().map(move |text| {
                     if let Some(text) = text {
-                        Message::SshData(tab_id, text.into_bytes())
+                        Message::PasteToTerminal(tab_id, text.into_bytes())
                     } else {
                         Message::ToastDismiss // no-op
                     }
                 });
+            }
+
+            // FR-TABS-11: write clipboard text to terminal (input direction)
+            Message::PasteToTerminal(tab_id, data) => {
+                if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id)
+                    && let Some(ref mut terminal) = tab.terminal
+                {
+                    terminal.handle(iced_term::Command::ProxyToBackend(
+                        iced_term::BackendCommand::Write(data),
+                    ));
+                }
             }
 
             Message::ToastDismiss => {
