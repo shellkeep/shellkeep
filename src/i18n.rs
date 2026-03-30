@@ -51,6 +51,52 @@ pub fn t(key: &str) -> &str {
         .unwrap_or(key)
 }
 
+/// NFR-I18N-02: format a translated string with positional arguments.
+/// Usage: `tf("{1} connected to {2}", &["alice", "server.example.com"])`
+/// The English key uses `{1}`, `{2}`, etc. for positional placeholders.
+pub fn tf(key: &str, args: &[&str]) -> String {
+    let template = t(key);
+    let mut result = template.to_string();
+    for (i, arg) in args.iter().enumerate() {
+        let placeholder = format!("{{{}}}", i + 1);
+        result = result.replace(&placeholder, arg);
+    }
+    result
+}
+
+/// NFR-I18N-03: pluralized translation (ngettext equivalent).
+/// `singular` and `plural` are the English string keys.
+/// If locale has a translation, uses it; otherwise picks singular/plural based on `n`.
+pub fn tn(singular: &str, plural: &str, n: usize) -> String {
+    let locale = LOCALE.get().map(|s| s.as_str()).unwrap_or("en");
+    let is_pt = locale == "pt_BR";
+
+    let key = if n == 1 { singular } else { plural };
+
+    // Look up translation
+    let base = if locale == "en" || locale.starts_with("en_") {
+        key.to_string()
+    } else {
+        TRANSLATIONS
+            .get()
+            .and_then(|all| all.get(locale))
+            .and_then(|map| map.get(key))
+            .copied()
+            .unwrap_or(key)
+            .to_string()
+    };
+
+    // Replace {n} placeholder with the count
+    let _ = is_pt; // suppress unused warning
+    base.replace("{n}", &n.to_string())
+}
+
+// Plural string keys
+pub const N_ACTIVE_SESSIONS_1: &str = "{n} active session";
+pub const N_ACTIVE_SESSIONS_N: &str = "{n} active sessions";
+pub const N_TABS_1: &str = "{n} tab";
+pub const N_TABS_N: &str = "{n} tabs";
+
 /// NFR-I18N-09: format a relative time duration for display.
 /// Takes seconds ago, returns a localized human-readable string.
 pub fn format_relative_time(secs_ago: u64) -> String {
@@ -240,6 +286,12 @@ fn pt_br_translations() -> HashMap<&'static str, &'static str> {
     // Crash
     m.insert(NO_CRASH_DUMPS, "Nenhum dump de falha encontrado.");
 
+    // Plurals
+    m.insert(N_ACTIVE_SESSIONS_1, "{n} sessão ativa");
+    m.insert(N_ACTIVE_SESSIONS_N, "{n} sessões ativas");
+    m.insert(N_TABS_1, "{n} aba");
+    m.insert(N_TABS_N, "{n} abas");
+
     m
 }
 
@@ -287,5 +339,19 @@ mod tests {
     #[test]
     fn test_unknown_key_returns_key() {
         assert_eq!(t("nonexistent_key_xyz"), "nonexistent_key_xyz");
+    }
+
+    #[test]
+    fn test_tf_positional_args() {
+        assert_eq!(tf("{1} at {2}", &["alice", "host"]), "alice at host");
+        assert_eq!(tf("no args", &[]), "no args");
+        assert_eq!(tf("{1}", &["x"]), "x");
+    }
+
+    #[test]
+    fn test_tn_plural() {
+        assert_eq!(tn(N_ACTIVE_SESSIONS_1, N_ACTIVE_SESSIONS_N, 1), "1 active session");
+        assert_eq!(tn(N_ACTIVE_SESSIONS_1, N_ACTIVE_SESSIONS_N, 5), "5 active sessions");
+        assert_eq!(tn(N_ACTIVE_SESSIONS_1, N_ACTIVE_SESSIONS_N, 0), "0 active sessions");
     }
 }

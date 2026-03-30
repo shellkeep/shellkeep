@@ -44,15 +44,24 @@ pub async fn read_file(sftp: &SftpSession, path: &str) -> Result<Vec<u8>, String
 }
 
 /// Write a file atomically via SFTP: write to .tmp, then rename.
+/// FR-STATE-05: uses posix-rename semantics (atomic overwrite). Falls back to
+/// unlink + rename if the rename fails (e.g., server lacks posix-rename extension).
 pub async fn write_file_atomic(sftp: &SftpSession, path: &str, data: &[u8]) -> Result<(), String> {
     let tmp_path = format!("{path}.tmp");
     sftp.write(&tmp_path, data)
         .await
         .map_err(|e| format!("sftp write {tmp_path}: {e}"))?;
-    sftp.rename(&tmp_path, path)
-        .await
-        .map_err(|e| format!("sftp rename {tmp_path} -> {path}: {e}"))?;
-    Ok(())
+    // Try rename (posix-rename@openssh.com does atomic overwrite)
+    match sftp.rename(&tmp_path, path).await {
+        Ok(()) => Ok(()),
+        Err(_) => {
+            // Fallback: unlink target then rename
+            let _ = sftp.remove_file(path).await; // ignore error if file doesn't exist
+            sftp.rename(&tmp_path, path)
+                .await
+                .map_err(|e| format!("sftp rename {tmp_path} -> {path}: {e}"))
+        }
+    }
 }
 
 /// Ensure the remote state directory exists and return the state file path.

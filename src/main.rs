@@ -253,7 +253,6 @@ struct Tab {
     /// FR-UI-08: last error reason for display in dead tab
     last_error: Option<String>,
     /// FR-UI-04..05: last measured latency in milliseconds
-    #[allow(dead_code)]
     last_latency_ms: Option<u32>,
     /// FR-RECONNECT-02: timestamp when reconnection started (for countdown display)
     reconnect_started: Option<std::time::Instant>,
@@ -316,6 +315,8 @@ struct ShellKeep {
     state_dirty: bool,
 
     // Welcome screen state
+    /// FR-UI-03: first-use client-id name input
+    client_id_input: String,
     host_input: String,
     port_input: String,
     user_input: String,
@@ -531,6 +532,12 @@ enum Message {
     /// FR-LOCK-05: lock conflict — cancel
     #[allow(dead_code)]
     LockCancel,
+    /// FR-UI-03: client-id naming input changed
+    ClientIdInputChanged(String),
+    /// FR-UI-04/05: periodic latency measurement tick
+    LatencyTick,
+    /// FR-UI-04/05: latency measurement result (tab_id, latency_ms or None on error)
+    LatencyMeasured(u64, Option<u32>),
 }
 
 // ---------------------------------------------------------------------------
@@ -800,6 +807,7 @@ impl ShellKeep {
             sessions_listed: false,
             last_state_save: None,
             state_dirty: false,
+            client_id_input: String::new(),
             host_input: String::new(),
             port_input: default_port,
             user_input: username,
@@ -1339,7 +1347,10 @@ impl ShellKeep {
 
         // FR-TRAY-02: update tray tooltip with session count
         if let Some(ref tray) = self.tray {
-            tray.set_session_count(self.tabs.iter().filter(|t| !t.dead).count());
+            let active_count = self.tabs.iter().filter(|t| !t.dead).count();
+            tray.set_session_count(active_count);
+            // FR-TRAY-04: change icon when active sessions exist but window may be hidden
+            tray.set_hidden_active(active_count > 0 && !self.show_welcome);
         }
 
         // FR-STATE-06: write state to disk asynchronously to avoid blocking the UI
@@ -2062,6 +2073,16 @@ impl ShellKeep {
                 return rename_task;
             }
 
+            // FR-UI-03: client-id naming
+            Message::ClientIdInputChanged(v) => {
+                // Validate: only [a-zA-Z0-9_-], max 64 chars
+                let filtered: String = v
+                    .chars()
+                    .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+                    .take(64)
+                    .collect();
+                self.client_id_input = filtered;
+            }
             Message::HostInputChanged(v) => {
                 self.host_input = v;
             }
@@ -2072,6 +2093,15 @@ impl ShellKeep {
             Message::Connect => {
                 if self.host_input.trim().is_empty() {
                     return Task::none();
+                }
+                // FR-UI-03: if user provided a client-id name on first use, save it
+                if !self.client_id_input.is_empty() && self.client_id_input != self.client_id {
+                    self.client_id = self.client_id_input.clone();
+                    if let Err(e) =
+                        shellkeep::state::client_id::save_client_id(&self.client_id)
+                    {
+                        tracing::warn!("failed to save client-id: {e}");
+                    }
                 }
                 let ssh_args = self.build_ssh_args();
                 let label = ssh_args
@@ -2492,6 +2522,67 @@ impl ShellKeep {
             Message::LockHeartbeatDone(result) => {
                 if let Err(e) = result {
                     tracing::warn!("lock heartbeat failed: {e}");
+                }
+            }
+
+            // FR-UI-04/05: latency measurement
+            Message::LatencyTick => {
+                let mgr = self.conn_manager.clone();
+                let conn = match &self.current_conn {
+                    Some(c) => c.clone(),
+                    None => return Task::none(),
+                };
+                let conn_key = ConnKey {
+                    host: conn.host.clone(),
+                    port: conn.port,
+                    username: conn.username.clone(),
+                };
+                // Collect tab IDs that are connected via russh
+                let tab_ids: Vec<u64> = self
+                    .tabs
+                    .iter()
+                    .filter(|t| t.uses_russh && !t.dead && t.terminal.is_some())
+                    .map(|t| t.id)
+                    .collect();
+                if tab_ids.is_empty() {
+                    return Task::none();
+                }
+                return Task::perform(
+                    async move {
+                        let mgr = mgr.lock().await;
+                        let latency = if let Some(handle_arc) = mgr.get_cached(&conn_key) {
+                            let handle = handle_arc.lock().await;
+                            let start = std::time::Instant::now();
+                            match ssh::connection::exec_command(&handle, "true").await {
+                                Ok(_) => Some(start.elapsed().as_millis() as u32),
+                                Err(_) => None,
+                            }
+                        } else {
+                            None
+                        };
+                        (tab_ids, latency)
+                    },
+                    move |(ids, latency): (Vec<u64>, Option<u32>)| {
+                        // Send measurement for the first tab; the update handler
+                        // applies the same latency to all tabs on this connection.
+                        if let Some(&first) = ids.first() {
+                            Message::LatencyMeasured(first, latency)
+                        } else {
+                            Message::LatencyMeasured(0, None)
+                        }
+                    },
+                );
+            }
+
+            Message::LatencyMeasured(_, latency) => {
+                // All tabs on the same connection share the same latency
+                if let Some(conn) = &self.current_conn {
+                    let _host = &conn.host;
+                    for tab in &mut self.tabs {
+                        if tab.uses_russh && !tab.dead && tab.terminal.is_some() {
+                            tab.last_latency_ms = latency;
+                        }
+                    }
                 }
             }
 
@@ -4076,12 +4167,17 @@ impl ShellKeep {
                     tab.label.clone()
                 };
 
+                // FR-UI-04: connection status indicator
+                // red = dead/disconnected, yellow = reconnecting or high latency (>300ms),
+                // green = connected and healthy
                 let (indicator, label_color) = if tab.dead {
                     ("●", Color::from_rgb8(0xf3, 0x8b, 0xa8))
-                } else if tab.terminal.is_none() && tab.auto_reconnect {
+                } else if (tab.terminal.is_none() && tab.auto_reconnect)
+                    || (tab.uses_russh && tab.ssh_channel_holder.is_none())
+                {
                     ("●", Color::from_rgb8(0xf9, 0xe2, 0xaf))
-                } else if tab.uses_russh && tab.ssh_channel_holder.is_none() {
-                    // Connecting state for russh tabs
+                } else if tab.last_latency_ms.is_some_and(|ms| ms > 300) {
+                    // FR-UI-04: yellow for high latency (>300ms)
                     ("●", Color::from_rgb8(0xf9, 0xe2, 0xaf))
                 } else {
                     ("●", Color::from_rgb8(0xa6, 0xe3, 0xa1))
@@ -4096,15 +4192,27 @@ impl ShellKeep {
                         ..Default::default()
                     });
 
-                let tab_content = row![
-                    text(indicator).size(8).color(label_color),
+                // FR-UI-05: build tab content with optional latency display
+                let mut tab_items: Vec<Element<'_, Message>> = vec![
+                    text(indicator).size(8).color(label_color).into(),
                     text(label_text)
                         .size(12)
-                        .color(Color::from_rgb8(0xcd, 0xd6, 0xf4)),
-                    close_btn
-                ]
-                .spacing(6)
-                .align_y(iced::Alignment::Center);
+                        .color(Color::from_rgb8(0xcd, 0xd6, 0xf4))
+                        .into(),
+                ];
+                // Show latency value when > 300ms
+                if let Some(ms) = tab.last_latency_ms
+                    && ms > 300
+                {
+                    tab_items.push(
+                        text(format!("{ms}ms"))
+                            .size(9)
+                            .color(Color::from_rgb8(0xf9, 0xe2, 0xaf))
+                            .into(),
+                    );
+                }
+                tab_items.push(close_btn.into());
+                let tab_content = row(tab_items).spacing(6).align_y(iced::Alignment::Center);
 
                 let tab_button = button(tab_content)
                     .on_press(Message::SelectTab(i))
@@ -4598,6 +4706,13 @@ impl ShellKeep {
         let is_first_use = self.recent.connections.is_empty() && !config_file_exists();
 
         let subtitle: Element<'_, Message> = if is_first_use {
+            // FR-UI-03: first-use with client-id naming input
+            let client_id_field =
+                text_input(&self.client_id, &self.client_id_input)
+                    .on_input(Message::ClientIdInputChanged)
+                    .size(13)
+                    .padding(8)
+                    .width(250);
             column![
                 text(i18n::t(i18n::WELCOME_TEXT))
                     .size(16)
@@ -4608,9 +4723,10 @@ impl ShellKeep {
                 text(i18n::t(i18n::WELCOME_PROMPT))
                     .size(13)
                     .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
-                text(format!("Client name: {}", self.client_id))
-                    .size(11)
-                    .color(Color::from_rgb8(0x6c, 0x70, 0x86)),
+                text("Name this device (e.g. \"Work Laptop\"):")
+                    .size(12)
+                    .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
+                client_id_field,
             ]
             .spacing(6)
             .align_x(iced::Alignment::Center)
@@ -4858,6 +4974,19 @@ impl ShellKeep {
             subs.push(
                 iced::time::every(std::time::Duration::from_secs(heartbeat_secs))
                     .map(|_| Message::LockHeartbeatTick),
+            );
+        }
+
+        // FR-UI-04/05: latency measurement timer — every keepalive_interval
+        let has_connected_russh = self
+            .tabs
+            .iter()
+            .any(|t| t.uses_russh && !t.dead && t.terminal.is_some());
+        if has_connected_russh && self.current_conn.is_some() {
+            let interval = self.config.ssh.keepalive_interval.max(5) as u64;
+            subs.push(
+                iced::time::every(std::time::Duration::from_secs(interval))
+                    .map(|_| Message::LatencyTick),
             );
         }
 

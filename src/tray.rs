@@ -89,15 +89,32 @@ mod real_tray {
 
         /// FR-TRAY-02: update the tooltip to reflect the number of active sessions.
         pub fn set_session_count(&self, count: usize) {
+            use crate::i18n;
             let tooltip = if count > 0 {
-                format!(
-                    "shellkeep — {count} active session{}",
-                    if count == 1 { "" } else { "s" }
-                )
+                // NFR-I18N-03: use ngettext-style plural
+                let sessions = i18n::tn(
+                    i18n::N_ACTIVE_SESSIONS_1,
+                    i18n::N_ACTIVE_SESSIONS_N,
+                    count,
+                );
+                format!("shellkeep — {sessions}")
             } else {
                 "shellkeep".to_string()
             };
             let _ = self._icon.set_tooltip(Some(&tooltip));
+        }
+
+        /// FR-TRAY-04: change icon appearance when sessions active but windows hidden.
+        /// Orange icon = active sessions with hidden windows; blue = normal.
+        pub fn set_hidden_active(&self, hidden_active: bool) {
+            let icon = if hidden_active {
+                create_icon_color(0xfa, 0xb3, 0x87) // catppuccin peach/orange
+            } else {
+                create_icon_color(0x89, 0xb4, 0xfa) // catppuccin blue
+            };
+            if let Ok(icon) = icon {
+                let _ = self._icon.set_icon(Some(icon));
+            }
         }
 
         /// Poll for tray menu events. Returns `None` when no event is pending.
@@ -117,8 +134,8 @@ mod real_tray {
         }
     }
 
-    /// Generate a simple 32x32 RGBA icon — filled circle in catppuccin blue (#89b4fa).
-    fn create_icon() -> Result<Icon, tray_icon::BadIcon> {
+    /// Generate a simple 32x32 RGBA icon — filled circle with given color.
+    fn create_icon_color(r: u8, g: u8, b: u8) -> Result<Icon, tray_icon::BadIcon> {
         let size = 32u32;
         let mut rgba = vec![0u8; (size * size * 4) as usize];
         let center = 15.5_f32;
@@ -130,14 +147,19 @@ mod real_tray {
                 let dy = y as f32 - center;
                 if dx * dx + dy * dy < radius_sq {
                     let i = ((y * size + x) * 4) as usize;
-                    rgba[i] = 0x89;
-                    rgba[i + 1] = 0xb4;
-                    rgba[i + 2] = 0xfa;
+                    rgba[i] = r;
+                    rgba[i + 1] = g;
+                    rgba[i + 2] = b;
                     rgba[i + 3] = 0xff;
                 }
             }
         }
         Icon::from_rgba(rgba, size, size)
+    }
+
+    /// Generate default icon (catppuccin blue #89b4fa).
+    fn create_icon() -> Result<Icon, tray_icon::BadIcon> {
+        create_icon_color(0x89, 0xb4, 0xfa)
     }
 }
 
@@ -164,6 +186,8 @@ mod stub_tray {
         }
 
         pub fn set_session_count(&self, _count: usize) {}
+
+        pub fn set_hidden_active(&self, _hidden_active: bool) {}
 
         pub fn poll_event(&self) -> Option<TrayAction> {
             None

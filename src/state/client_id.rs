@@ -57,6 +57,25 @@ pub fn is_valid(id: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
+/// Save a client ID to the persistent file.
+/// FR-UI-03: allows user to set a friendly client name on first use.
+pub fn save_client_id(id: &str) -> Result<(), String> {
+    if !is_valid(id) {
+        return Err(format!("invalid client-id: {id}"));
+    }
+    let path = file_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    fs::write(&path, id).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
+    }
+    Ok(())
+}
+
 fn file_path() -> PathBuf {
     dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
