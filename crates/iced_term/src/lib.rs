@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 shellkeep contributors
+// SPDX-License-Identifier: MIT
+
 pub mod actions;
 pub mod bindings;
 pub mod settings;

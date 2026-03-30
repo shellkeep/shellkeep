@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 shellkeep contributors
+// SPDX-License-Identifier: MIT
+
 use crate::backend::{
     Backend, Command, LinkAction, MouseButton, RenderableContent,
 };

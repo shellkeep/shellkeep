@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 shellkeep contributors
+// SPDX-License-Identifier: MIT
+
 use crate::settings::FontSettings;
 use iced::{Font, Size};
 use iced_core::{

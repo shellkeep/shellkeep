@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 shellkeep contributors
+// SPDX-License-Identifier: MIT
+
 use std::{collections::HashMap, path::PathBuf};
 
 use crate::ColorPalette;

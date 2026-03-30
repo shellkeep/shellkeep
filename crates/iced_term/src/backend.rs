@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 shellkeep contributors
+// SPDX-License-Identifier: MIT
+
 use crate::actions::Action;
 use crate::settings::BackendSettings;
 use alacritty_terminal::event::{

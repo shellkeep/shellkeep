@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 shellkeep contributors
+// SPDX-License-Identifier: MIT
+
 use alacritty_terminal::term::TermMode;
 use iced_core::{
     keyboard::{key::Named, Modifiers},

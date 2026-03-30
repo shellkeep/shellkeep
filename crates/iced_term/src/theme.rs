@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 shellkeep contributors
+// SPDX-License-Identifier: MIT
+
 use crate::settings::ThemeSettings;
 use alacritty_terminal::vte::ansi::{self, NamedColor};
 use iced::{widget::container, Color};
