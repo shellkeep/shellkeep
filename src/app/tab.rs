@@ -40,6 +40,38 @@ impl ConnParams {
     }
 }
 
+/// Connection lifecycle state for a tab.
+///
+/// This enum models the full connection state machine, replacing scattered
+/// boolean/option fields (dead, auto_reconnect, reconnect_attempts, etc.).
+/// During the migration period, the old fields are kept in sync; new code
+/// should prefer matching on `conn_state`.
+#[allow(dead_code)]
+pub(crate) enum ConnectionState {
+    /// Initial connection in progress (tab just opened).
+    Connecting {
+        phase: Arc<std::sync::Mutex<String>>,
+        pending_channel: ChannelHolder,
+    },
+    /// Fully connected with an active SSH channel.
+    Connected {
+        channel: ChannelHolder,
+    },
+    /// Connection lost; automatic reconnection in progress.
+    Reconnecting {
+        attempt: u32,
+        delay_ms: u64,
+        started: std::time::Instant,
+        phase: Arc<std::sync::Mutex<String>>,
+        pending_channel: Option<ChannelHolder>,
+    },
+    /// Disconnected (terminal dead). May or may not allow manual reconnect.
+    Disconnected {
+        error: Option<String>,
+        can_reconnect: bool,
+    },
+}
+
 pub(crate) struct Tab {
     pub(crate) id: TabId,
     pub(crate) label: String,
@@ -78,6 +110,9 @@ pub(crate) struct Tab {
     pub(crate) pending_channel: Option<ChannelHolder>,
     /// FR-CONN-16: connection phase text, shared with async task
     pub(crate) connection_phase: Option<Arc<std::sync::Mutex<String>>>,
+    /// Consolidated connection state (replaces scattered booleans; see ConnectionState docs).
+    #[allow(dead_code)]
+    pub(crate) conn_state: ConnectionState,
     /// FR-HISTORY-02: client-side JSONL history writer
     pub(crate) history_writer: Option<history::HistoryWriter>,
     /// FR-TERMINAL-16: true until first resize is sent to SSH channel after connect

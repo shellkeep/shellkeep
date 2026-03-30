@@ -434,6 +434,10 @@ impl ShellKeep {
             conn_key: None,
             pending_channel: Some(channel_holder.clone()),
             connection_phase: Some(phase.clone()),
+            conn_state: tab::ConnectionState::Connecting {
+                phase: phase.clone(),
+                pending_channel: channel_holder.clone(),
+            },
             history_writer,
             needs_initial_resize: true,
         });
@@ -532,6 +536,10 @@ impl ShellKeep {
                     conn_key: None,
                     pending_channel: None,
                     connection_phase: None,
+                    conn_state: tab::ConnectionState::Disconnected {
+                        error: None,
+                        can_reconnect: false,
+                    },
                     history_writer: None,
                     needs_initial_resize: true,
                 });
