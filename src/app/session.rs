@@ -12,6 +12,7 @@ use tokio::sync::Mutex;
 
 use crate::app::tab::{ChannelHolder, ConnParams, ResizeRxHolder, WriterRxHolder};
 use crate::app::Message;
+use shellkeep::error::SshError;
 use shellkeep::ssh::manager::{ConnKey, ConnectionManager};
 use shellkeep::state::history;
 use shellkeep::{i18n, ssh};
@@ -129,7 +130,7 @@ pub(crate) async fn establish_ssh_session(
     client_id: String,
     phase: Arc<std::sync::Mutex<String>>,
     session_uuid: String,
-) -> Result<russh::Channel<russh::client::Msg>, String> {
+) -> Result<russh::Channel<russh::client::Msg>, SshError> {
     let conn_key = ConnKey {
         host: conn.host.clone(),
         port: conn.port,
@@ -151,8 +152,7 @@ pub(crate) async fn establish_ssh_session(
                 None,
                 keepalive_secs,
             )
-            .await
-            .map_err(|e| e.to_string())?;
+            .await?;
         (result.handle, result.host_key_prompt)
     };
 
@@ -175,7 +175,7 @@ pub(crate) async fn establish_ssh_session(
     };
 
     if tmux_version_output.contains("NOT_FOUND") || tmux_version_output.trim().is_empty() {
-        return Err("tmux not found on server — install tmux >= 3.0 to use shellkeep".to_string());
+        return Err(SshError::Channel("tmux not found on server — install tmux >= 3.0 to use shellkeep".to_string()));
     }
 
     if let Some(ver_str) = tmux_version_output.trim().strip_prefix("tmux ")
@@ -200,8 +200,7 @@ pub(crate) async fn establish_ssh_session(
     {
         let h = handle_arc.lock().await;
         ssh::lock::acquire_lock(&h, &client_id, keepalive_timeout)
-            .await
-            .map_err(|e| e.to_string())?;
+            .await?;
     }
 
     // FR-RECONNECT-03: verify tmux session exists before reattaching, create if needed
@@ -228,8 +227,7 @@ pub(crate) async fn establish_ssh_session(
         tracing::info!("tmux session {tmux_session} not found, creating new one");
         let h = handle_arc.lock().await;
         ssh::tmux::create_session_russh(&h, &tmux_session)
-            .await
-            .map_err(|e| e.to_string())?;
+            .await?;
     }
 
     // Open PTY channel and attach to tmux session
@@ -238,18 +236,18 @@ pub(crate) async fn establish_ssh_session(
         let ch = h
             .channel_open_session()
             .await
-            .map_err(|e| format!("channel open: {e}"))?;
+            .map_err(|e| SshError::Channel(format!("channel open: {e}")))?;
 
         ch.request_pty(false, "xterm-256color", cols, rows, 0, 0, &[])
             .await
-            .map_err(|e| format!("pty: {e}"))?;
+            .map_err(|e| SshError::Channel(format!("pty: {e}")))?;
 
         let tmux_cmd = format!(
             "TERM=xterm-256color tmux new-session -A -s {tmux_session} \\; set status off || exec $SHELL"
         );
         ch.exec(true, tmux_cmd)
             .await
-            .map_err(|e| format!("exec: {e}"))?;
+            .map_err(|e| SshError::Channel(format!("exec: {e}")))?;
         ch
     };
 

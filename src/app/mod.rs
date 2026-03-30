@@ -467,7 +467,7 @@ impl ShellKeep {
                         *holder.lock().await = Some(channel);
                         Ok(())
                     }
-                    Err(e) => Err(e),
+                    Err(e) => Err(e.to_string()),
                 }
             },
             move |result: Result<(), String>| Message::SshConnected(id, result),
@@ -689,7 +689,7 @@ impl ShellKeep {
                                     *holder.lock().await = Some(channel);
                                     Ok(())
                                 }
-                                Err(e) => Err(e),
+                                Err(e) => Err(e.to_string()),
                             }
                         },
                         move |result: Result<(), String>| Message::SshConnected(tab_id, result),
