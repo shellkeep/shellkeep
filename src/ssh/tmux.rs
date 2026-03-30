@@ -7,10 +7,14 @@ use std::process::Command;
 
 use super::connection;
 
-/// Check if a session name belongs to shellkeep.
+/// Check if a session name belongs to shellkeep (but NOT the lock session).
 /// Matches old format ("shellkeep-N"), v1 format ("<client-id>--shellkeep-YYYYMMDD-HHMMSS"),
 /// and v2 environment format ("<client-id>--<env>--<session-name>").
+/// FR-LOCK-11: lock sessions ("shellkeep-lock-*") are never treated as terminal sessions.
 fn is_shellkeep_session(name: &str) -> bool {
+    if name.starts_with("shellkeep-lock-") || name.contains("--shellkeep-lock-") {
+        return false;
+    }
     name.starts_with("shellkeep-") || name.contains("--shellkeep-")
 }
 
@@ -164,5 +168,17 @@ mod tests {
         assert!(name.starts_with("my-client--Default--shellkeep-"));
         // Should contain a timestamp-like pattern
         assert!(name.len() > "my-client--Default--shellkeep-".len());
+    }
+
+    #[test]
+    fn lock_sessions_excluded() {
+        // FR-LOCK-11: lock sessions must never appear as regular sessions
+        assert!(!is_shellkeep_session("shellkeep-lock-my-client"));
+        assert!(!is_shellkeep_session("my-client--shellkeep-lock-my-client"));
+        // Regular sessions still match
+        assert!(is_shellkeep_session("shellkeep-0"));
+        assert!(is_shellkeep_session(
+            "my-client--Default--shellkeep-20260330-120000"
+        ));
     }
 }
