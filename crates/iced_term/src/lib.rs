@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 shellkeep contributors
 // SPDX-License-Identifier: MIT
 
+//! Terminal emulator widget for iced, backed by alacritty_terminal.
+
 pub mod actions;
 pub mod bindings;
 pub mod settings;

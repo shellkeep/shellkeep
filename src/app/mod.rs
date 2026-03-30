@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 shellkeep contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+//! Main application state, tab management, and iced integration.
+
 pub(crate) mod message;
 pub(crate) mod session;
 pub(crate) mod tab;

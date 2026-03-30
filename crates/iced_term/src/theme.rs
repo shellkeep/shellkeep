@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 shellkeep contributors
 // SPDX-License-Identifier: MIT
 
+//! Color palette and styling for terminal rendering.
+
 use crate::settings::ThemeSettings;
 use alacritty_terminal::vte::ansi::{self, NamedColor};
 use iced::{widget::container, Color};

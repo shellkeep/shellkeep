@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 shellkeep contributors
 // SPDX-License-Identifier: MIT
 
+//! Configuration types for terminal font, theme, and backend settings.
+
 use std::{collections::HashMap, path::PathBuf};
 
 use crate::ColorPalette;

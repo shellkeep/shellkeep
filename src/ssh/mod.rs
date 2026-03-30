@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 shellkeep contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+//! SSH connection management, authentication, and tmux session control.
+
 pub mod connection;
 pub mod errors;
 pub mod known_hosts;

@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 shellkeep contributors
 // SPDX-License-Identifier: MIT
 
+//! PTY and SSH backend: process spawning, I/O bridging, and terminal grid management.
+
 use crate::actions::Action;
 use crate::settings::BackendSettings;
 use alacritty_terminal::event::{

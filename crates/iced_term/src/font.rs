@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 shellkeep contributors
 // SPDX-License-Identifier: MIT
 
+//! Font measurement and glyph metrics for terminal cell sizing.
+
 use crate::settings::FontSettings;
 use iced::{Font, Size};
 use iced_core::{

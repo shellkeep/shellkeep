@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 shellkeep contributors
 // SPDX-License-Identifier: MIT
 
+//! Iced widget implementation for rendering the terminal grid.
+
 use crate::backend::{
     Backend, Command, LinkAction, MouseButton, RenderableContent,
 };

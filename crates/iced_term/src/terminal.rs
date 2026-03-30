@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 shellkeep contributors
 // SPDX-License-Identifier: MIT
 
+//! Terminal state, event handling, and command dispatch.
+
 use crate::actions::Action;
 use crate::backend;
 use crate::bindings::{Binding, BindingAction, BindingsLayout, InputKind};
