@@ -255,6 +255,7 @@ impl Backend {
     }
 
     /// Get the terminal Arc for external access.
+    #[allow(dead_code)]
     pub fn term_arc(&self) -> Arc<FairMutex<Term<EventProxy>>> {
         self.term.clone()
     }
