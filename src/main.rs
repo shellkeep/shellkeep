@@ -3924,15 +3924,6 @@ impl ShellKeep {
                 },
                 ..Default::default()
             };
-            let close_btn_style = |_theme: &Theme, _status: button::Status| button::Style {
-                background: Some(iced::Background::Color(Color::from_rgb8(0xf3, 0x8b, 0xa8))),
-                text_color: Color::from_rgb8(0x1e, 0x1e, 0x2e),
-                border: iced::Border {
-                    radius: 6.0.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            };
             let session_word = if active_count == 1 {
                 "session"
             } else {
@@ -3940,30 +3931,34 @@ impl ShellKeep {
             };
             let dialog = container(
                 column![
-                    text(i18n::t(i18n::CLOSE_SHELLKEEP))
+                    text("Close shellkeep?")
                         .size(18)
                         .color(Color::from_rgb8(0xcd, 0xd6, 0xf4)),
                     text(format!(
-                        "{active_count} active {session_word} will be kept running on the server."
+                        "Your {active_count} active {session_word} will keep running on the server."
                     ))
                     .size(13)
                     .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
+                    text("To terminate sessions, close the tabs before quitting.")
+                        .size(12)
+                        .color(Color::from_rgb8(0x6c, 0x70, 0x86)),
                     Space::new().height(12),
                     row![
-                        button(text(i18n::t(i18n::HIDE)).size(13))
-                            .on_press(Message::CloseDialogHide)
-                            .padding([8, 16])
-                            .style(primary_btn_style),
-                        button(text(i18n::t(i18n::CLOSE_ANYWAY)).size(13))
-                            .on_press(Message::CloseDialogClose)
-                            .padding([8, 16])
-                            .style(close_btn_style),
                         button(text(i18n::t(i18n::CANCEL)).size(13))
                             .on_press(Message::CloseDialogCancel)
                             .padding([8, 16])
                             .style(btn_style),
+                        Space::new().width(Length::Fill),
+                        button(
+                            text("Close")
+                                .size(13)
+                                .color(Color::from_rgb8(0x1e, 0x1e, 0x2e))
+                        )
+                        .on_press(Message::CloseDialogClose)
+                        .padding([8, 16])
+                        .style(primary_btn_style),
                     ]
-                    .spacing(8),
+                    .width(Length::Fill),
                 ]
                 .spacing(8)
                 .padding(24),
