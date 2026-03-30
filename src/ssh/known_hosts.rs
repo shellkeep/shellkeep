@@ -11,7 +11,7 @@ use russh::keys::ssh_key;
 use ssh_key::PublicKey;
 
 /// Result of checking a server's host key against known_hosts.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HostKeyStatus {
     /// Key matches the stored entry.
     Known,

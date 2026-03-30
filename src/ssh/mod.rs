@@ -6,6 +6,7 @@ pub mod errors;
 pub mod known_hosts;
 pub mod lock;
 pub mod manager;
+pub mod proxy;
 pub mod sftp;
 pub mod ssh_config;
 pub mod tmux;

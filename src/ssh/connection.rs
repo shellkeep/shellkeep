@@ -14,13 +14,31 @@ use russh::keys::agent::client::AgentClient;
 use russh::keys::ssh_key;
 use ssh_key::Algorithm;
 
+use super::known_hosts::HostKeyStatus;
+use super::proxy;
 use super::ssh_config;
+
+/// Result of host key verification during connection.
+/// Stored in shared state so the UI can show a dialog after connection.
+#[derive(Debug, Clone)]
+pub struct HostKeyPrompt {
+    pub host: String,
+    pub port: u16,
+    pub fingerprint: String,
+    pub status: HostKeyStatus,
+    /// Old fingerprint (only set for Changed status)
+    pub old_fingerprint: Option<String>,
+}
 
 /// SSH connection handler for russh client events.
 pub struct SshHandler {
     pub auto_accept_hosts: bool,
     pub host: String,
     pub port: u16,
+    /// FR-CONN-05: StrictHostKeyChecking mode from ssh_config
+    pub strict_host_key_checking: String,
+    /// Shared slot for deferred host key prompt (phase-2 UI dialog)
+    pub pending_host_key: Arc<std::sync::Mutex<Option<HostKeyPrompt>>>,
 }
 
 #[derive(Debug)]
@@ -56,7 +74,9 @@ impl russh::client::Handler for SshHandler {
             return Ok(true);
         }
 
-        use super::known_hosts::{self, HostKeyStatus};
+        use super::known_hosts;
+
+        let mode = self.strict_host_key_checking.as_str();
 
         match known_hosts::check_host_key(&self.host, self.port, server_public_key) {
             HostKeyStatus::Known => {
@@ -68,22 +88,76 @@ impl russh::client::Handler for SshHandler {
                     host = %self.host,
                     port = self.port,
                     fingerprint = %fingerprint,
-                    "HOST KEY CHANGED — possible MITM attack, rejecting connection"
+                    "HOST KEY CHANGED — possible MITM attack"
                 );
+
+                // FR-CONN-02: changed keys always rejected, but store prompt for UI
+                if let Ok(mut slot) = self.pending_host_key.lock() {
+                    // Try to find old fingerprint from known_hosts
+                    let old_fp = known_hosts::get_stored_fingerprint(&self.host, self.port);
+                    *slot = Some(HostKeyPrompt {
+                        host: self.host.clone(),
+                        port: self.port,
+                        fingerprint: fingerprint.to_string(),
+                        status: HostKeyStatus::Changed,
+                        old_fingerprint: old_fp,
+                    });
+                }
                 Ok(false)
             }
             HostKeyStatus::Unknown => {
-                tracing::info!(
-                    host = %self.host,
-                    port = self.port,
-                    fingerprint = %fingerprint,
-                    "unknown host, accepting key (TOFU)"
-                );
-                if let Err(e) = known_hosts::add_host_key(&self.host, self.port, server_public_key)
-                {
-                    tracing::warn!("failed to save host key to known_hosts: {e}");
+                match mode {
+                    // FR-CONN-05: yes = reject unknown hosts
+                    "yes" => {
+                        tracing::warn!("StrictHostKeyChecking=yes: rejecting unknown host");
+                        Ok(false)
+                    }
+                    // FR-CONN-05: no = auto-accept everything
+                    "no" => {
+                        tracing::info!("StrictHostKeyChecking=no: auto-accepting unknown host");
+                        if let Err(e) =
+                            known_hosts::add_host_key(&self.host, self.port, server_public_key)
+                        {
+                            tracing::warn!("failed to save host key: {e}");
+                        }
+                        Ok(true)
+                    }
+                    // FR-CONN-05: accept-new = auto-accept unknown, reject changed
+                    "accept-new" => {
+                        tracing::info!("StrictHostKeyChecking=accept-new: accepting new host");
+                        if let Err(e) =
+                            known_hosts::add_host_key(&self.host, self.port, server_public_key)
+                        {
+                            tracing::warn!("failed to save host key: {e}");
+                        }
+                        Ok(true)
+                    }
+                    // FR-CONN-05: ask (default) = accept temporarily, store prompt for UI
+                    _ => {
+                        tracing::info!(
+                            host = %self.host,
+                            fingerprint = %fingerprint,
+                            "unknown host, deferring to UI (TOFU)"
+                        );
+                        // Accept temporarily — UI will show dialog after connection
+                        if let Ok(mut slot) = self.pending_host_key.lock() {
+                            *slot = Some(HostKeyPrompt {
+                                host: self.host.clone(),
+                                port: self.port,
+                                fingerprint: fingerprint.to_string(),
+                                status: HostKeyStatus::Unknown,
+                                old_fingerprint: None,
+                            });
+                        }
+                        // Save to known_hosts provisionally (UI can undo on reject)
+                        if let Err(e) =
+                            known_hosts::add_host_key(&self.host, self.port, server_public_key)
+                        {
+                            tracing::warn!("failed to save host key: {e}");
+                        }
+                        Ok(true)
+                    }
                 }
-                Ok(true)
             }
         }
     }
@@ -124,6 +198,13 @@ fn restricted_preferred() -> russh::Preferred {
     }
 }
 
+/// Result of a successful SSH connection, including deferred host key prompt.
+pub struct ConnectResult {
+    pub handle: russh::client::Handle<SshHandler>,
+    /// If set, the UI should show a host key dialog before using this connection.
+    pub host_key_prompt: Option<HostKeyPrompt>,
+}
+
 /// Connect to an SSH server and authenticate.
 /// FR-RECONNECT-01, FR-CONFIG-06: keepalive_interval_secs configures SSH keepalive.
 /// FR-COMPAT-01, FR-CONFIG-07: applies ~/.ssh/config overrides.
@@ -134,7 +215,7 @@ pub async fn connect(
     identity_file: Option<&str>,
     password: Option<&str>,
     keepalive_interval_secs: u32,
-) -> Result<russh::client::Handle<SshHandler>, SshError> {
+) -> Result<ConnectResult, SshError> {
     // FR-COMPAT-01: load ~/.ssh/config overrides
     let host_cfg = ssh_config::load_host_config(host);
 
@@ -150,6 +231,13 @@ pub async fn connect(
         host_cfg.server_alive_interval.unwrap_or(0)
     };
 
+    // FR-CONN-05: StrictHostKeyChecking from ssh_config
+    let strict_mode = host_cfg
+        .strict_host_key_checking
+        .as_deref()
+        .unwrap_or("ask")
+        .to_string();
+
     let mut config = russh::client::Config {
         preferred: restricted_preferred(), /* NFR-SEC-12..16 */
         ..Default::default()
@@ -163,18 +251,38 @@ pub async fn connect(
         }
     }
 
+    let pending_host_key = Arc::new(std::sync::Mutex::new(None));
     let handler = SshHandler {
         auto_accept_hosts: false,
         host: effective_host.to_string(),
         port: effective_port,
+        strict_host_key_checking: strict_mode,
+        pending_host_key: pending_host_key.clone(),
     };
 
     let addr = format!("{effective_host}:{effective_port}");
-    tracing::info!("russh: connecting to {addr}");
 
-    let mut handle = russh::client::connect(Arc::new(config), &addr, handler)
-        .await
-        .map_err(|e| SshError::Connect(e.to_string()))?;
+    // FR-PROXY-01, FR-PROXY-02: check for ProxyJump/ProxyCommand
+    let proxy_cmd = proxy::resolve_proxy_command(
+        host_cfg.proxy_jump.as_deref(),
+        host_cfg.proxy_command.as_deref(),
+    );
+
+    let mut handle = if let Some(ref cmd) = proxy_cmd {
+        tracing::info!("russh: connecting to {addr} via proxy");
+        let stream =
+            proxy::ProxyStream::spawn(cmd, effective_host, effective_port, Some(effective_user))
+                .await
+                .map_err(|e| SshError::Connect(e.to_string()))?;
+        russh::client::connect_stream(Arc::new(config), stream, handler)
+            .await
+            .map_err(|e| SshError::Connect(format!("proxy connection to {addr} failed: {e}")))?
+    } else {
+        tracing::info!("russh: connecting to {addr}");
+        russh::client::connect(Arc::new(config), &addr, handler)
+            .await
+            .map_err(|e| SshError::Connect(e.to_string()))?
+    };
 
     // Try authentication methods /* FR-CONN-07 */
     authenticate(
@@ -186,7 +294,17 @@ pub async fn connect(
     .await?;
 
     tracing::info!("russh: authenticated as {effective_user}");
-    Ok(handle)
+
+    // Check if there's a deferred host key prompt
+    let prompt = pending_host_key
+        .lock()
+        .ok()
+        .and_then(|mut slot| slot.take());
+
+    Ok(ConnectResult {
+        handle,
+        host_key_prompt: prompt,
+    })
 }
 
 async fn authenticate(
@@ -306,9 +424,14 @@ async fn try_key_auth(
         return Ok(false);
     }
 
-    // NFR-SEC-09: In Rust, private keys are managed by russh-keys which handles
-    // key material. Explicit mlock/bzero is not available for Rust stack vars.
-    // Keys are dropped when the Arc goes out of scope (Rust ownership model).
+    // NFR-SEC-09: Private key memory protection
+    // In Rust, explicit mlock() and explicit_bzero() are not available for safe code.
+    // Private keys are managed by russh-keys via Arc<PrivateKey> and are dropped when
+    // the last reference goes out of scope. The Rust ownership model ensures keys are
+    // not accidentally copied. However, key material may be swapped to disk by the OS.
+    // Core dumps are disabled (NFR-SEC-10) to mitigate this risk.
+    // For enhanced security, users should use ssh-agent (FR-CONN-07) which handles
+    // key material in a separate process with its own memory protections.
     tracing::debug!("russh: trying key {key_path}");
     let key = match russh::keys::load_secret_key(path, None) {
         Ok(k) => k,
