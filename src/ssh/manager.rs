@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use super::connection::{self, SshError, SshHandler};
+use super::connection::{self, HostKeyPrompt, SshError, SshHandler};
 
 /// Key for deduplicating SSH connections.
 #[derive(Clone, Debug, Hash, Eq, PartialEq)]
@@ -15,6 +15,13 @@ pub struct ConnKey {
     pub host: String,
     pub port: u16,
     pub username: String,
+}
+
+/// Result from get_or_connect, including any deferred host key prompt.
+pub struct ManagedConnectResult {
+    pub handle: Arc<Mutex<russh::client::Handle<SshHandler>>>,
+    /// Set on first connection if the host key was unknown (TOFU).
+    pub host_key_prompt: Option<HostKeyPrompt>,
 }
 
 /// Manages shared russh connection handles.
@@ -48,12 +55,15 @@ impl ConnectionManager {
         identity_file: Option<&str>,
         password: Option<&str>,
         keepalive_interval_secs: u32,
-    ) -> Result<Arc<Mutex<russh::client::Handle<SshHandler>>>, SshError> {
+    ) -> Result<ManagedConnectResult, SshError> {
         if let Some(handle) = self.handles.get(key) {
-            return Ok(handle.clone());
+            return Ok(ManagedConnectResult {
+                handle: handle.clone(),
+                host_key_prompt: None,
+            });
         }
 
-        let handle = connection::connect(
+        let result = connection::connect(
             &key.host,
             key.port,
             &key.username,
@@ -62,9 +72,12 @@ impl ConnectionManager {
             keepalive_interval_secs,
         )
         .await?;
-        let arc = Arc::new(Mutex::new(handle));
+        let arc = Arc::new(Mutex::new(result.handle));
         self.handles.insert(key.clone(), arc.clone());
-        Ok(arc)
+        Ok(ManagedConnectResult {
+            handle: arc,
+            host_key_prompt: result.host_key_prompt,
+        })
     }
 
     /// Get a cached handle without creating a new connection.

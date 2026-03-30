@@ -116,6 +116,63 @@ fn check_host_key_in(
     }
 }
 
+/// Get the stored fingerprint for a host from known_hosts (for showing old key in Changed dialog).
+pub fn get_stored_fingerprint(host: &str, port: u16) -> Option<String> {
+    let path = known_hosts_path()?;
+    let contents = fs::read_to_string(&path).ok()?;
+    let lookup = format_host(host, port);
+
+    for line in contents.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with("|1|") {
+            continue;
+        }
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 3 {
+            continue;
+        }
+        if parts[0].split(',').any(|h| h == lookup) {
+            // Reconstruct openssh key and compute fingerprint
+            let key_str = format!("{} {}", parts[1], parts[2]);
+            if let Ok(key) = PublicKey::from_openssh(&key_str) {
+                return Some(key.fingerprint(ssh_key::HashAlg::Sha256).to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Remove a host entry from ~/.ssh/known_hosts (used when user rejects TOFU).
+pub fn remove_host_key(host: &str, port: u16) -> Result<(), std::io::Error> {
+    let path = known_hosts_path()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no home directory"))?;
+    let contents = fs::read_to_string(&path)?;
+    let lookup = format_host(host, port);
+
+    let filtered: Vec<&str> = contents
+        .lines()
+        .filter(|line| {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                return true; // keep comments and blanks
+            }
+            let parts: Vec<&str> = trimmed.split_whitespace().collect();
+            if parts.is_empty() {
+                return true;
+            }
+            // Remove lines that match this host
+            !parts[0].split(',').any(|h| h == lookup)
+        })
+        .collect();
+
+    let mut output = filtered.join("\n");
+    if !output.ends_with('\n') {
+        output.push('\n');
+    }
+    fs::write(&path, output)?;
+    Ok(())
+}
+
 /// Append a host key to ~/.ssh/known_hosts.
 pub fn add_host_key(host: &str, port: u16, server_key: &PublicKey) -> Result<(), std::io::Error> {
     let path = known_hosts_path()

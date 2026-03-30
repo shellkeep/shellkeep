@@ -2744,20 +2744,260 @@ impl ShellKeep {
                 }
             }
 
-            // FR-CONN-03: host key TOFU dialogs (implemented by W4-A1)
-            Message::HostKeyAcceptSave => {}
-            Message::HostKeyConnectOnce => {}
-            Message::HostKeyReject => {}
-            Message::HostKeyChangedDismiss => {}
+            // FR-CONN-03: host key TOFU — accept and save to known_hosts
+            Message::HostKeyAcceptSave => {
+                self.pending_host_key_prompt = None;
+            }
+            Message::HostKeyConnectOnce => {
+                if let Some(ref prompt) = self.pending_host_key_prompt {
+                    let _ = ssh::known_hosts::remove_host_key(&prompt.host, prompt.port);
+                }
+                self.pending_host_key_prompt = None;
+            }
+            Message::HostKeyReject => {
+                if let Some(ref prompt) = self.pending_host_key_prompt {
+                    let _ = ssh::known_hosts::remove_host_key(&prompt.host, prompt.port);
+                }
+                self.pending_host_key_prompt = None;
+                for tab in &mut self.tabs {
+                    tab.dead = true;
+                    tab.auto_reconnect = false;
+                    tab.last_error = Some("Host key rejected by user".to_string());
+                }
+                self.error = Some("Connection cancelled: host key rejected.".to_string());
+            }
+            Message::HostKeyChangedDismiss => {
+                self.pending_host_key_prompt = None;
+            }
 
-            // FR-CONN-09: password auth dialog (implemented by W4-A1)
-            Message::PasswordInputChanged(_) => {}
-            Message::PasswordSubmit => {}
-            Message::PasswordCancel => {}
+            // FR-CONN-09: password auth dialog
+            Message::PasswordInputChanged(val) => {
+                self.password_input = val;
+            }
+            Message::PasswordSubmit => {
+                self.show_password_dialog = false;
+                let password = self.password_input.clone();
+                self.password_input.clear();
 
-            // FR-LOCK-05: lock conflict dialog (implemented by W4-A1)
-            Message::LockTakeOver => {}
-            Message::LockCancel => {}
+                if let Some(tab_id) = self.password_target_tab.take()
+                    && let Some(conn) = self
+                        .password_conn_params
+                        .take()
+                        .or(self.current_conn.clone())
+                {
+                    let mgr = self.conn_manager.clone();
+                    let conn_key = ConnKey {
+                        host: conn.host.clone(),
+                        port: conn.port,
+                        username: conn.username.clone(),
+                    };
+                    {
+                        let mut m = mgr.blocking_lock();
+                        m.remove(&conn_key);
+                    }
+
+                    if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+                        let phase = Arc::new(std::sync::Mutex::new(String::new()));
+                        tab.connection_phase = Some(phase.clone());
+                        tab.dead = false;
+                        tab.last_error = None;
+
+                        let tmux_session = tab.tmux_session.clone();
+                        let client_id = self.client_id.clone();
+                        let session_uuid = tab.session_uuid.clone();
+                        let keepalive = self.config.ssh.keepalive_interval;
+                        let channel_holder: ChannelHolder = Arc::new(Mutex::new(None));
+                        tab.pending_channel = Some(channel_holder.clone());
+
+                        return Task::perform(
+                            async move {
+                                let conn_result = {
+                                    let mut m = mgr.lock().await;
+                                    m.get_or_connect(
+                                        &conn_key,
+                                        conn.identity_file.as_deref(),
+                                        Some(&password),
+                                        keepalive,
+                                    )
+                                    .await
+                                    .map_err(|e| e.to_string())?
+                                };
+                                let handle = conn_result.handle.lock().await;
+
+                                *phase.lock().unwrap() = "Opening session...".to_string();
+
+                                ssh::lock::acquire_lock(
+                                    &handle,
+                                    &client_id,
+                                    Some(keepalive as u64),
+                                )
+                                .await
+                                .map_err(|e| e.to_string())?;
+
+                                let check = ssh::connection::exec_command(
+                                        &handle,
+                                        &format!(
+                                            "tmux has-session -t {tmux_session} 2>/dev/null && echo EXISTS"
+                                        ),
+                                    )
+                                    .await
+                                    .unwrap_or_default();
+
+                                if !check.trim().contains("EXISTS") {
+                                    ssh::tmux::create_session_russh(&handle, &tmux_session)
+                                        .await
+                                        .map_err(|e| e.to_string())?;
+                                }
+
+                                let channel = handle
+                                    .channel_open_session()
+                                    .await
+                                    .map_err(|e| format!("channel: {e}"))?;
+                                channel
+                                    .request_pty(false, "xterm-256color", 80, 24, 0, 0, &[])
+                                    .await
+                                    .map_err(|e| format!("pty: {e}"))?;
+                                let tmux_cmd = format!(
+                                    "TERM=xterm-256color tmux new-session -A -s {tmux_session} \\; set status off || exec $SHELL"
+                                );
+                                channel
+                                    .exec(true, tmux_cmd)
+                                    .await
+                                    .map_err(|e| format!("exec: {e}"))?;
+
+                                let pipe_cmd =
+                                    history::pipe_pane_command(&tmux_session, &session_uuid);
+                                ssh::connection::exec_command(&handle, &pipe_cmd).await.ok();
+
+                                *channel_holder.lock().await = Some(channel);
+                                Ok(())
+                            },
+                            move |result: Result<(), String>| Message::SshConnected(tab_id, result),
+                        );
+                    }
+                }
+            }
+            Message::PasswordCancel => {
+                self.show_password_dialog = false;
+                self.password_input.clear();
+                if let Some(tab_id) = self.password_target_tab.take()
+                    && let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id)
+                {
+                    tab.dead = true;
+                    tab.auto_reconnect = false;
+                    tab.last_error = Some("Authentication cancelled".to_string());
+                }
+                self.error = Some("Authentication cancelled.".to_string());
+            }
+
+            // FR-LOCK-05: lock conflict — take over
+            Message::LockTakeOver => {
+                self.show_lock_dialog = false;
+                if let Some(tab_id) = self.lock_target_tab.take()
+                    && let Some(conn) = self.current_conn.clone()
+                {
+                    let mgr = self.conn_manager.clone();
+                    let conn_key = ConnKey {
+                        host: conn.host.clone(),
+                        port: conn.port,
+                        username: conn.username.clone(),
+                    };
+                    let client_id = self.client_id.clone();
+
+                    if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+                        let phase = Arc::new(std::sync::Mutex::new(String::new()));
+                        tab.connection_phase = Some(phase.clone());
+                        tab.dead = false;
+                        tab.last_error = None;
+
+                        let tmux_session = tab.tmux_session.clone();
+                        let session_uuid = tab.session_uuid.clone();
+                        let keepalive = self.config.ssh.keepalive_interval;
+                        let channel_holder: ChannelHolder = Arc::new(Mutex::new(None));
+                        tab.pending_channel = Some(channel_holder.clone());
+
+                        return Task::perform(
+                            async move {
+                                let conn_result = {
+                                    let mut m = mgr.lock().await;
+                                    m.get_or_connect(
+                                        &conn_key,
+                                        conn.identity_file.as_deref(),
+                                        None,
+                                        keepalive,
+                                    )
+                                    .await
+                                    .map_err(|e| e.to_string())?
+                                };
+                                let handle = conn_result.handle.lock().await;
+
+                                *phase.lock().unwrap() = "Taking over lock...".to_string();
+                                ssh::lock::release_lock(&handle, &client_id)
+                                    .await
+                                    .map_err(|e| e.to_string())?;
+                                ssh::lock::acquire_lock(
+                                    &handle,
+                                    &client_id,
+                                    Some(keepalive as u64),
+                                )
+                                .await
+                                .map_err(|e| e.to_string())?;
+
+                                *phase.lock().unwrap() = "Opening session...".to_string();
+
+                                let check = ssh::connection::exec_command(
+                                        &handle,
+                                        &format!(
+                                            "tmux has-session -t {tmux_session} 2>/dev/null && echo EXISTS"
+                                        ),
+                                    )
+                                    .await
+                                    .unwrap_or_default();
+
+                                if !check.trim().contains("EXISTS") {
+                                    ssh::tmux::create_session_russh(&handle, &tmux_session)
+                                        .await
+                                        .map_err(|e| e.to_string())?;
+                                }
+
+                                let channel = handle
+                                    .channel_open_session()
+                                    .await
+                                    .map_err(|e| format!("channel: {e}"))?;
+                                channel
+                                    .request_pty(false, "xterm-256color", 80, 24, 0, 0, &[])
+                                    .await
+                                    .map_err(|e| format!("pty: {e}"))?;
+                                let tmux_cmd = format!(
+                                    "TERM=xterm-256color tmux new-session -A -s {tmux_session} \\; set status off || exec $SHELL"
+                                );
+                                channel
+                                    .exec(true, tmux_cmd)
+                                    .await
+                                    .map_err(|e| format!("exec: {e}"))?;
+
+                                let pipe_cmd =
+                                    history::pipe_pane_command(&tmux_session, &session_uuid);
+                                ssh::connection::exec_command(&handle, &pipe_cmd).await.ok();
+
+                                *channel_holder.lock().await = Some(channel);
+                                Ok(())
+                            },
+                            move |result: Result<(), String>| Message::SshConnected(tab_id, result),
+                        );
+                    }
+                }
+            }
+            Message::LockCancel => {
+                self.show_lock_dialog = false;
+                if let Some(tab_id) = self.lock_target_tab.take()
+                    && let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id)
+                {
+                    tab.dead = true;
+                    tab.auto_reconnect = false;
+                    tab.last_error = Some("Lock takeover cancelled".to_string());
+                }
+            }
         }
         Task::none()
     }
@@ -3211,6 +3451,320 @@ impl ShellKeep {
             stack![main_view, self.view_rename_env_dialog()].into()
         } else if self.show_delete_env_dialog {
             stack![main_view, self.view_delete_env_dialog()].into()
+        } else {
+            main_view
+        };
+
+        // FR-CONN-03, FR-CONN-02: host key verification dialog overlay
+        let main_view: Element<'_, Message> = if let Some(ref prompt) = self.pending_host_key_prompt
+        {
+            use ssh::known_hosts::HostKeyStatus;
+            let dialog_style = |_theme: &Theme| container::Style {
+                background: Some(iced::Background::Color(Color::from_rgb8(0x24, 0x24, 0x36))),
+                border: iced::Border {
+                    radius: 12.0.into(),
+                    width: 1.0,
+                    color: Color::from_rgb8(0x45, 0x47, 0x5a),
+                },
+                shadow: iced::Shadow {
+                    color: Color::from_rgba8(0, 0, 0, 0.6),
+                    offset: iced::Vector::new(0.0, 4.0),
+                    blur_radius: 16.0,
+                },
+                ..Default::default()
+            };
+            let btn_style = |_theme: &Theme, _status: button::Status| button::Style {
+                background: Some(iced::Background::Color(Color::from_rgb8(0x31, 0x32, 0x44))),
+                text_color: Color::from_rgb8(0xcd, 0xd6, 0xf4),
+                border: iced::Border {
+                    radius: 6.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let warn_btn_style = |_theme: &Theme, _status: button::Status| button::Style {
+                background: Some(iced::Background::Color(Color::from_rgb8(0xf3, 0x8b, 0xa8))),
+                text_color: Color::from_rgb8(0x1e, 0x1e, 0x2e),
+                border: iced::Border {
+                    radius: 6.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let primary_btn_style = |_theme: &Theme, _status: button::Status| button::Style {
+                background: Some(iced::Background::Color(Color::from_rgb8(0x89, 0xb4, 0xfa))),
+                text_color: Color::from_rgb8(0x1e, 0x1e, 0x2e),
+                border: iced::Border {
+                    radius: 6.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let label_color = Color::from_rgb8(0xa6, 0xad, 0xc8);
+            let text_color = Color::from_rgb8(0xcd, 0xd6, 0xf4);
+
+            let dialog = match prompt.status {
+                HostKeyStatus::Unknown => {
+                    let host_label = format!("Host: {}:{}", prompt.host, prompt.port);
+                    let fp_label = format!("Fingerprint: {}", prompt.fingerprint);
+                    container(
+                        column![
+                            text("Unknown Host Key").size(18).color(text_color),
+                            Space::new().height(8),
+                            text(host_label.clone()).size(13).color(label_color),
+                            text(fp_label.clone()).size(13).color(label_color),
+                            Space::new().height(8),
+                            text("This host is not in your known_hosts file.")
+                                .size(13)
+                                .color(label_color),
+                            Space::new().height(12),
+                            row![
+                                button(text("Accept and save").size(13))
+                                    .on_press(Message::HostKeyAcceptSave)
+                                    .padding([8, 16])
+                                    .style(primary_btn_style),
+                                button(text("Connect once").size(13))
+                                    .on_press(Message::HostKeyConnectOnce)
+                                    .padding([8, 16])
+                                    .style(btn_style),
+                                button(text("Cancel").size(13))
+                                    .on_press(Message::HostKeyReject)
+                                    .padding([8, 16])
+                                    .style(warn_btn_style),
+                            ]
+                            .spacing(8),
+                        ]
+                        .spacing(4)
+                        .padding(24),
+                    )
+                    .style(dialog_style)
+                }
+                HostKeyStatus::Changed => {
+                    let host_label = format!("Host: {}:{}", prompt.host, prompt.port);
+                    let new_fp = format!("New: {}", prompt.fingerprint);
+                    let old_fp = prompt
+                        .old_fingerprint
+                        .as_deref()
+                        .map(|fp| format!("Old: {fp}"))
+                        .unwrap_or_default();
+                    container(
+                        column![
+                            text("WARNING: HOST KEY HAS CHANGED")
+                                .size(18)
+                                .color(Color::from_rgb8(0xf3, 0x8b, 0xa8)),
+                            Space::new().height(8),
+                            text(host_label.clone()).size(13).color(label_color),
+                            text(old_fp.clone()).size(13).color(label_color),
+                            text(new_fp.clone()).size(13).color(label_color),
+                            Space::new().height(8),
+                            text("This may indicate a man-in-the-middle attack.")
+                                .size(13)
+                                .color(Color::from_rgb8(0xf3, 0x8b, 0xa8)),
+                            text("Update your known_hosts file manually if this is expected.")
+                                .size(13)
+                                .color(label_color),
+                            Space::new().height(12),
+                            button(text("Disconnect").size(13))
+                                .on_press(Message::HostKeyChangedDismiss)
+                                .padding([8, 16])
+                                .style(warn_btn_style),
+                        ]
+                        .spacing(4)
+                        .padding(24),
+                    )
+                    .style(dialog_style)
+                }
+                HostKeyStatus::Known => {
+                    // Should not happen, but dismiss gracefully
+                    container(text(""))
+                }
+            };
+
+            let scrim = mouse_area(
+                container(Space::new().width(Length::Fill).height(Length::Fill))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .style(|_theme: &Theme| container::Style {
+                        background: Some(iced::Background::Color(Color::from_rgba8(0, 0, 0, 0.5))),
+                        ..Default::default()
+                    }),
+            )
+            .on_press(Message::HostKeyReject);
+
+            stack![main_view, scrim, center(dialog)].into()
+        } else {
+            main_view
+        };
+
+        // FR-CONN-09: password prompt dialog overlay
+        let main_view: Element<'_, Message> = if self.show_password_dialog {
+            let dialog_style = |_theme: &Theme| container::Style {
+                background: Some(iced::Background::Color(Color::from_rgb8(0x24, 0x24, 0x36))),
+                border: iced::Border {
+                    radius: 12.0.into(),
+                    width: 1.0,
+                    color: Color::from_rgb8(0x45, 0x47, 0x5a),
+                },
+                shadow: iced::Shadow {
+                    color: Color::from_rgba8(0, 0, 0, 0.6),
+                    offset: iced::Vector::new(0.0, 4.0),
+                    blur_radius: 16.0,
+                },
+                ..Default::default()
+            };
+            let btn_style = |_theme: &Theme, _status: button::Status| button::Style {
+                background: Some(iced::Background::Color(Color::from_rgb8(0x31, 0x32, 0x44))),
+                text_color: Color::from_rgb8(0xcd, 0xd6, 0xf4),
+                border: iced::Border {
+                    radius: 6.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let primary_btn_style = |_theme: &Theme, _status: button::Status| button::Style {
+                background: Some(iced::Background::Color(Color::from_rgb8(0x89, 0xb4, 0xfa))),
+                text_color: Color::from_rgb8(0x1e, 0x1e, 0x2e),
+                border: iced::Border {
+                    radius: 6.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let label_color = Color::from_rgb8(0xa6, 0xad, 0xc8);
+            let text_color = Color::from_rgb8(0xcd, 0xd6, 0xf4);
+
+            let title = if let Some(ref conn) = self.current_conn {
+                format!("Password for {}@{}", conn.username, conn.host)
+            } else {
+                "Password required".to_string()
+            };
+
+            let dialog = container(
+                column![
+                    text(title.clone()).size(18).color(text_color),
+                    Space::new().height(8),
+                    text("Key-based authentication failed. Enter password:")
+                        .size(13)
+                        .color(label_color),
+                    Space::new().height(8),
+                    text_input("Password", &self.password_input)
+                        .on_input(Message::PasswordInputChanged)
+                        .on_submit(Message::PasswordSubmit)
+                        .secure(true)
+                        .padding(8)
+                        .width(300),
+                    Space::new().height(12),
+                    row![
+                        button(text("Connect").size(13))
+                            .on_press(Message::PasswordSubmit)
+                            .padding([8, 16])
+                            .style(primary_btn_style),
+                        button(text("Cancel").size(13))
+                            .on_press(Message::PasswordCancel)
+                            .padding([8, 16])
+                            .style(btn_style),
+                    ]
+                    .spacing(8),
+                ]
+                .spacing(4)
+                .padding(24),
+            )
+            .style(dialog_style);
+
+            let scrim = mouse_area(
+                container(Space::new().width(Length::Fill).height(Length::Fill))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .style(|_theme: &Theme| container::Style {
+                        background: Some(iced::Background::Color(Color::from_rgba8(0, 0, 0, 0.5))),
+                        ..Default::default()
+                    }),
+            )
+            .on_press(Message::PasswordCancel);
+
+            stack![main_view, scrim, center(dialog)].into()
+        } else {
+            main_view
+        };
+
+        // FR-LOCK-05: lock conflict dialog overlay
+        let main_view: Element<'_, Message> = if self.show_lock_dialog {
+            let dialog_style = |_theme: &Theme| container::Style {
+                background: Some(iced::Background::Color(Color::from_rgb8(0x24, 0x24, 0x36))),
+                border: iced::Border {
+                    radius: 12.0.into(),
+                    width: 1.0,
+                    color: Color::from_rgb8(0x45, 0x47, 0x5a),
+                },
+                shadow: iced::Shadow {
+                    color: Color::from_rgba8(0, 0, 0, 0.6),
+                    offset: iced::Vector::new(0.0, 4.0),
+                    blur_radius: 16.0,
+                },
+                ..Default::default()
+            };
+            let btn_style = |_theme: &Theme, _status: button::Status| button::Style {
+                background: Some(iced::Background::Color(Color::from_rgb8(0x31, 0x32, 0x44))),
+                text_color: Color::from_rgb8(0xcd, 0xd6, 0xf4),
+                border: iced::Border {
+                    radius: 6.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let warn_btn_style = |_theme: &Theme, _status: button::Status| button::Style {
+                background: Some(iced::Background::Color(Color::from_rgb8(0xfa, 0xb3, 0x87))),
+                text_color: Color::from_rgb8(0x1e, 0x1e, 0x2e),
+                border: iced::Border {
+                    radius: 6.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let text_color = Color::from_rgb8(0xcd, 0xd6, 0xf4);
+            let label_color = Color::from_rgb8(0xa6, 0xad, 0xc8);
+
+            let dialog = container(
+                column![
+                    text("Another shellkeep instance connected")
+                        .size(18)
+                        .color(text_color),
+                    Space::new().height(8),
+                    text(&self.lock_info_text).size(13).color(label_color),
+                    Space::new().height(8),
+                    text("Taking over will disconnect the other instance.")
+                        .size(13)
+                        .color(label_color),
+                    Space::new().height(12),
+                    row![
+                        button(text("Take over").size(13))
+                            .on_press(Message::LockTakeOver)
+                            .padding([8, 16])
+                            .style(warn_btn_style),
+                        button(text("Cancel").size(13))
+                            .on_press(Message::LockCancel)
+                            .padding([8, 16])
+                            .style(btn_style),
+                    ]
+                    .spacing(8),
+                ]
+                .spacing(4)
+                .padding(24),
+            )
+            .style(dialog_style);
+
+            let scrim = mouse_area(
+                container(Space::new().width(Length::Fill).height(Length::Fill))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .style(|_theme: &Theme| container::Style {
+                        background: Some(iced::Background::Color(Color::from_rgba8(0, 0, 0, 0.5))),
+                        ..Default::default()
+                    }),
+            )
+            .on_press(Message::LockCancel);
+
+            stack![main_view, scrim, center(dialog)].into()
         } else {
             main_view
         };
