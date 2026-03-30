@@ -6,9 +6,10 @@
 //! Stores the last 20 SSH connections in a JSON file at
 //! `$XDG_DATA_HOME/shellkeep/recent.json`.
 
-use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+
+use serde::{Deserialize, Serialize};
 
 const MAX_RECENT: usize = 50;
 

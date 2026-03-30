@@ -8,15 +8,13 @@ use std::path::Path;
 use std::sync::Arc;
 
 use russh::client::KeyboardInteractiveAuthResponse;
-use russh::keys::PrivateKeyWithHashAlg;
 #[cfg(unix)]
 use russh::keys::agent::client::AgentClient;
-use russh::keys::ssh_key;
+use russh::keys::{PrivateKeyWithHashAlg, ssh_key};
 use ssh_key::{Algorithm, HashAlg};
 
 use super::known_hosts::HostKeyStatus;
-use super::proxy;
-use super::ssh_config;
+use super::{proxy, ssh_config};
 
 /// Result of host key verification during connection.
 /// Stored in shared state so the UI can show a dialog after connection.

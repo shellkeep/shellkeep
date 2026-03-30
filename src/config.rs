@@ -6,9 +6,10 @@
 //! Loads settings from `$XDG_CONFIG_HOME/shellkeep/config.toml`.
 //! All values have sensible defaults — the file is optional.
 
-use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]

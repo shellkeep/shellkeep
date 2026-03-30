@@ -289,8 +289,9 @@ fn glob_paths(pattern: &Path) -> Result<Vec<PathBuf>, std::io::Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::io::Write;
+
+    use super::*;
 
     fn write_config(dir: &Path, filename: &str, content: &str) -> PathBuf {
         let path = dir.join(filename);

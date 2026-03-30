@@ -10,10 +10,11 @@
 //! - Client-side: `HistoryWriter` writes structured JSONL (FR-HISTORY-02..04)
 //! - Rotation: per-file truncation + total directory size limit (FR-HISTORY-05..07)
 
-use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Write as _;
 use std::path::PathBuf;
+
+use serde::{Deserialize, Serialize};
 
 /// Maximum single-file size before rotation (50 MB).
 const MAX_FILE_BYTES: u64 = 50 * 1024 * 1024;

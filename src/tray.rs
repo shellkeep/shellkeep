@@ -20,9 +20,10 @@ pub enum TrayAction {
 // ---------------------------------------------------------------------------
 #[cfg(feature = "tray")]
 mod real_tray {
-    use super::TrayAction;
     use muda::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
     use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
+
+    use super::TrayAction;
 
     /// FR-TRAY-01: system tray handle backed by `tray-icon` + `muda`.
     pub struct Tray {

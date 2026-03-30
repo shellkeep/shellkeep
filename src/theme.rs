@@ -8,10 +8,11 @@
 
 #![allow(dead_code)]
 
+use std::path::PathBuf;
+
 use iced::Color;
 use iced_term::ColorPalette;
 use serde::Deserialize;
-use std::path::PathBuf;
 
 // Catppuccin Mocha UI colors
 pub const BASE: Color = Color::from_rgb(

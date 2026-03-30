@@ -8,27 +8,25 @@
 
 mod theme;
 
+use std::hash::{Hash, Hasher};
+use std::sync::Arc;
+
 use iced::futures::stream::BoxStream;
 use iced::futures::{SinkExt, StreamExt};
-use iced::keyboard;
 use iced::widget::{
     Space, button, center, column, container, mouse_area, row, scrollable, stack, text, text_input,
 };
-use iced::window;
-use iced::{Color, Element, Length, Point, Size, Subscription, Task, Theme};
+use iced::{Color, Element, Length, Point, Size, Subscription, Task, Theme, keyboard, window};
 use iced_term::settings::{BackendSettings, FontSettings, Settings, ThemeSettings};
 use iced_term::{AlacrittyColumn, AlacrittyLine, AlacrittyPoint, RegexSearch, SearchMatch};
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use shellkeep::config::Config;
-use shellkeep::i18n;
-use shellkeep::ssh;
 use shellkeep::ssh::manager::{ConnKey, ConnectionManager};
 use shellkeep::state::history;
 use shellkeep::state::recent::{RecentConnection, RecentConnections};
 use shellkeep::state::state_file::{StateFile, TabState, WindowState};
 use shellkeep::tray::{Tray, TrayAction};
-use std::hash::{Hash, Hasher};
-use std::sync::Arc;
+use shellkeep::{i18n, ssh};
 use tokio::sync::Mutex;
 
 const RENAME_INPUT_ID: &str = "rename-tab-input";

@@ -6,10 +6,11 @@
 //! Stored on server at `~/.terminal-state/<client-id>.json` (primary)
 //! and locally at `$XDG_DATA_HOME/shellkeep/cache/servers/<fingerprint>/<client-id>.json`.
 
-use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
+
+use serde::{Deserialize, Serialize};
 
 const SCHEMA_VERSION: u32 = 2;
 
