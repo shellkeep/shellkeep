@@ -275,6 +275,8 @@ struct Tab {
     connection_phase: Option<Arc<std::sync::Mutex<String>>>,
     /// FR-HISTORY-02: client-side JSONL history writer
     history_writer: Option<history::HistoryWriter>,
+    /// FR-TERMINAL-16: true until first resize is sent to SSH channel after connect
+    needs_initial_resize: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -1054,6 +1056,7 @@ impl ShellKeep {
             pending_channel: Some(channel_holder.clone()),
             connection_phase: Some(phase.clone()),
             history_writer,
+            needs_initial_resize: true,
         });
         self.active_tab = self.tabs.len() - 1;
         self.error = None;
@@ -1150,6 +1153,7 @@ impl ShellKeep {
                     pending_channel: None,
                     connection_phase: None,
                     history_writer: None,
+                    needs_initial_resize: true,
                 });
                 self.active_tab = self.tabs.len() - 1;
                 self.error = None;
@@ -1454,6 +1458,21 @@ impl ShellKeep {
                     if let Some(ref mut writer) = tab.history_writer {
                         writer.append_output(&data);
                     }
+                    // FR-TERMINAL-16: deferred initial resize — by the time data arrives,
+                    // the terminal widget has definitely rendered and knows its real size
+                    if tab.needs_initial_resize {
+                        let (cols, rows) = terminal.terminal_size();
+                        if cols > 0
+                            && rows > 0
+                            && let Some(ref resize_tx) = tab.ssh_resize_tx
+                        {
+                            let _ = resize_tx.send((cols as u32, rows as u32));
+                            tracing::info!(
+                                "tab {tab_id}: deferred initial resize {cols}x{rows}"
+                            );
+                        }
+                        tab.needs_initial_resize = false;
+                    }
                 }
             }
 
@@ -1505,14 +1524,21 @@ impl ShellKeep {
                             // terminal widget size (PTY was opened with default 80x24)
                             if let Some(ref terminal) = tab.terminal {
                                 let (cols, rows) = terminal.terminal_size();
+                                tracing::info!("tab {tab_id}: terminal widget size {cols}x{rows}");
                                 if cols > 0
                                     && rows > 0
-                                    && (cols != 80 || rows != 24)
                                     && let Some(ref resize_tx) = tab.ssh_resize_tx
                                 {
                                     let _ = resize_tx.send((cols as u32, rows as u32));
-                                    tracing::debug!("tab {tab_id}: initial resize {cols}x{rows}");
+                                    tab.needs_initial_resize = false;
+                                    tracing::info!(
+                                        "tab {tab_id}: sent initial resize {cols}x{rows}"
+                                    );
                                 }
+                            } else {
+                                tracing::info!(
+                                    "tab {tab_id}: no terminal widget yet, resize deferred"
+                                );
                             }
                         }
 
@@ -1899,9 +1925,15 @@ impl ShellKeep {
 
                 // Propagate resize to SSH channel
                 if let Some((cols, rows)) = resize_info
-                    && let Some(tab) = self.tabs.iter().find(|t| t.id == id)
+                    && let Some(tab) = self.tabs.iter_mut().find(|t| t.id == id)
                     && let Some(ref resize_tx) = tab.ssh_resize_tx
                 {
+                    if tab.needs_initial_resize {
+                        tracing::info!(
+                            "tab {id}: initial terminal size {cols}x{rows}, sending to SSH"
+                        );
+                        tab.needs_initial_resize = false;
+                    }
                     let _ = resize_tx.send((cols, rows));
                 }
 
