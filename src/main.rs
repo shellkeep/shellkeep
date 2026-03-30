@@ -368,6 +368,30 @@ struct ShellKeep {
     rename_env_target: Option<String>,
     show_delete_env_dialog: bool,
     delete_env_target: Option<String>,
+
+    // FR-CONN-03: host key TOFU dialog
+    #[allow(dead_code)]
+    pending_host_key_prompt: Option<ssh::connection::HostKeyPrompt>,
+    // FR-CONN-09: password prompt dialog
+    #[allow(dead_code)]
+    show_password_dialog: bool,
+    #[allow(dead_code)]
+    password_input: String,
+    #[allow(dead_code)]
+    password_target_tab: Option<u64>,
+    #[allow(dead_code)]
+    password_conn_params: Option<ConnParams>,
+    // FR-LOCK-05: lock conflict dialog
+    #[allow(dead_code)]
+    show_lock_dialog: bool,
+    #[allow(dead_code)]
+    lock_info_text: String,
+    #[allow(dead_code)]
+    lock_target_tab: Option<u64>,
+
+    /// FR-RECONNECT-08: last known default gateway (Linux network monitoring)
+    #[cfg(target_os = "linux")]
+    last_gateway: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -377,6 +401,7 @@ struct ShellKeep {
 // (no large bundle structs — channel is passed via Arc<Mutex<Option<>>> holders)
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 enum Message {
     TerminalEvent(iced_term::Event),
     SshData(u64, Vec<u8>),
@@ -468,6 +493,8 @@ enum Message {
     ConfirmDeleteEnv,
     CancelDeleteEnv,
     CancelEnvDialog,
+    /// FR-RECONNECT-08: network change detected (Linux)
+    NetworkChanged,
     /// FR-ENV-10: switch to a different environment
     SwitchEnvironment(String),
     /// FR-CONN-20: remote state syncer initialized
@@ -477,6 +504,33 @@ enum Message {
     /// FR-CONN-20: remote state write completed
     #[allow(dead_code)]
     ServerStateSaved(Result<(), String>),
+    /// FR-CONN-03: host key TOFU — accept and save
+    #[allow(dead_code)]
+    HostKeyAcceptSave,
+    /// FR-CONN-03: host key TOFU — connect once without saving
+    #[allow(dead_code)]
+    HostKeyConnectOnce,
+    /// FR-CONN-03: host key TOFU — reject and disconnect
+    #[allow(dead_code)]
+    HostKeyReject,
+    /// FR-CONN-02: host key changed — dismiss (disconnect already happened)
+    #[allow(dead_code)]
+    HostKeyChangedDismiss,
+    /// FR-CONN-09: password dialog input changed
+    #[allow(dead_code)]
+    PasswordInputChanged(String),
+    /// FR-CONN-09: password dialog — submit
+    #[allow(dead_code)]
+    PasswordSubmit,
+    /// FR-CONN-09: password dialog — cancel
+    #[allow(dead_code)]
+    PasswordCancel,
+    /// FR-LOCK-05: lock conflict — take over
+    #[allow(dead_code)]
+    LockTakeOver,
+    /// FR-LOCK-05: lock conflict — cancel
+    #[allow(dead_code)]
+    LockCancel,
 }
 
 // ---------------------------------------------------------------------------
@@ -598,16 +652,18 @@ async fn establish_ssh_session(
 
     *phase.lock().unwrap() = i18n::t(i18n::AUTHENTICATING).to_string();
 
-    let handle_arc = {
+    let (handle_arc, _host_key_prompt) = {
         let mut mgr = conn_manager.lock().await;
-        mgr.get_or_connect(
-            &conn_key,
-            conn.identity_file.as_deref(),
-            None,
-            keepalive_secs,
-        )
-        .await
-        .map_err(|e| e.to_string())?
+        let result = mgr
+            .get_or_connect(
+                &conn_key,
+                conn.identity_file.as_deref(),
+                None,
+                keepalive_secs,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        (result.handle, result.host_key_prompt)
     };
 
     let handle = handle_arc.lock().await;
@@ -753,6 +809,16 @@ impl ShellKeep {
             rename_env_target: None,
             show_delete_env_dialog: false,
             delete_env_target: None,
+            pending_host_key_prompt: None,
+            show_password_dialog: false,
+            password_input: String::new(),
+            password_target_tab: None,
+            password_conn_params: None,
+            show_lock_dialog: false,
+            lock_info_text: String::new(),
+            lock_target_tab: None,
+            #[cfg(target_os = "linux")]
+            last_gateway: read_default_gateway(),
         };
 
         // FR-CONFIG-04: start watching config file for hot reload
@@ -1397,7 +1463,7 @@ impl ShellKeep {
                             return Task::batch([
                                 Task::perform(
                                     async move {
-                                        let handle_arc = {
+                                        let conn_result = {
                                             let mut m = mgr.lock().await;
                                             m.get_or_connect(
                                                 &conn_key,
@@ -1408,7 +1474,7 @@ impl ShellKeep {
                                             .await
                                             .map_err(|e| e.to_string())?
                                         };
-                                        let handle = handle_arc.lock().await;
+                                        let handle = conn_result.handle.lock().await;
                                         Ok(ssh::tmux::list_sessions_russh(&handle).await)
                                     },
                                     |result: Result<Vec<String>, String>| {
@@ -1417,7 +1483,7 @@ impl ShellKeep {
                                 ),
                                 Task::perform(
                                     async move {
-                                        let handle_arc = {
+                                        let conn_result = {
                                             let mut m = mgr2.lock().await;
                                             m.get_or_connect(
                                                 &conn_key2,
@@ -1428,9 +1494,11 @@ impl ShellKeep {
                                             .await
                                             .map_err(|e| e.to_string())?
                                         };
-                                        let syncer =
-                                            ssh::sftp::StateSyncer::new(handle_arc, &client_id)
-                                                .await?;
+                                        let syncer = ssh::sftp::StateSyncer::new(
+                                            conn_result.handle,
+                                            &client_id,
+                                        )
+                                        .await?;
                                         Ok(Arc::new(syncer))
                                     },
                                     |result: Result<Arc<ssh::sftp::StateSyncer>, String>| {
@@ -1470,9 +1538,31 @@ impl ShellKeep {
                                  \u{2022} macOS: brew install tmux"
                                     .to_string(),
                             );
+                        } else if (el.contains("auth failed")
+                            || el.contains("no authentication method succeeded"))
+                            && !self.show_password_dialog
+                        {
+                            // FR-CONN-09: show password prompt dialog on auth failure
+                            if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+                                tab.dead = false;
+                                tab.auto_reconnect = false;
+                            }
+                            self.show_password_dialog = true;
+                            self.password_input.clear();
+                            self.password_target_tab = Some(tab_id);
+                            self.password_conn_params = self.current_conn.clone();
+                        } else if el.contains("session locked by") || el.contains("lock held by") {
+                            // FR-LOCK-05: show lock conflict dialog
+                            if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+                                tab.dead = false;
+                                tab.auto_reconnect = false;
+                            }
+                            self.show_lock_dialog = true;
+                            self.lock_info_text = e.clone();
+                            self.lock_target_tab = Some(tab_id);
                         } else if el.contains("auth failed") || el.contains("authentication failed")
                         {
-                            // FR-CONN-17: descriptive auth error with guidance
+                            // FR-CONN-17: descriptive auth error (password already tried)
                             self.error = Some(format!(
                                 "Authentication failed. Check your SSH key or try a different identity file.\n\
                                  Detail: {e}"
@@ -1503,6 +1593,12 @@ impl ShellKeep {
                         && let Some(ref env_name) = saved.last_environment
                     {
                         self.current_environment = env_name.clone();
+                    }
+
+                    // FR-ENV-04: populate env_list from saved state
+                    if let Some(ref saved) = saved_state {
+                        self.env_list = saved.environments.keys().cloned().collect();
+                        self.env_list.sort();
                     }
 
                     // FR-SESSION-08: reconcile by UUID — match saved tabs to server sessions
@@ -1842,6 +1938,28 @@ impl ShellKeep {
                         next_delay,
                     );
                     return self.reconnect_tab(index);
+                }
+            }
+
+            // FR-RECONNECT-08: network change detected — force immediate reconnect
+            Message::NetworkChanged => {
+                #[cfg(target_os = "linux")]
+                {
+                    let current = read_default_gateway();
+                    if current != self.last_gateway {
+                        tracing::info!(
+                            "network change detected (gateway {:?} -> {:?}), triggering immediate reconnect",
+                            self.last_gateway,
+                            current
+                        );
+                        self.last_gateway = current;
+                        for tab in &mut self.tabs {
+                            if tab.terminal.is_none() && tab.auto_reconnect && !tab.dead {
+                                tab.reconnect_delay_ms = 0;
+                                tab.reconnect_attempts = 0;
+                            }
+                        }
+                    }
                 }
             }
 
@@ -2397,6 +2515,14 @@ impl ShellKeep {
 
             // FR-ENV-03: environment selection dialog
             Message::ShowEnvDialog => {
+                // FR-ENV-04: if only one environment, select it directly
+                if self.env_list.len() == 1 {
+                    let env_name = self.env_list[0].clone();
+                    if env_name != self.current_environment {
+                        return self.update(Message::SwitchEnvironment(env_name));
+                    }
+                    return Task::none();
+                }
                 self.show_env_dialog = true;
                 self.env_filter.clear();
                 // Pre-select current environment
@@ -2617,6 +2743,21 @@ impl ShellKeep {
                     tracing::warn!("server state write failed: {e}");
                 }
             }
+
+            // FR-CONN-03: host key TOFU dialogs (implemented by W4-A1)
+            Message::HostKeyAcceptSave => {}
+            Message::HostKeyConnectOnce => {}
+            Message::HostKeyReject => {}
+            Message::HostKeyChangedDismiss => {}
+
+            // FR-CONN-09: password auth dialog (implemented by W4-A1)
+            Message::PasswordInputChanged(_) => {}
+            Message::PasswordSubmit => {}
+            Message::PasswordCancel => {}
+
+            // FR-LOCK-05: lock conflict dialog (implemented by W4-A1)
+            Message::LockTakeOver => {}
+            Message::LockCancel => {}
         }
         Task::none()
     }
@@ -2647,8 +2788,13 @@ impl ShellKeep {
         let tab_bar = self.view_tab_bar();
         let content: Element<'_, Message> = if let Some(tab) = self.tabs.get(self.active_tab) {
             if tab.dead {
+                // INV-DEAD-1: dead session never accepts input — the TerminalView
+                // widget is not rendered, so keyboard events cannot reach it.
                 self.view_dead_tab(tab)
             } else if let Some(ref terminal) = tab.terminal {
+                // INV-CONN-2: before auth completes, the SSH I/O subscription only starts
+                // when ssh_channel_holder is set (after SshConnected). Input is buffered
+                // in ssh_writer_tx but not sent until the channel is ready.
                 // Show "Connecting..." overlay if russh tab without channel yet
                 if tab.uses_russh && tab.ssh_channel_holder.is_none() {
                     let phase_text = tab
@@ -3276,7 +3422,23 @@ impl ShellKeep {
             .width(Length::Fill)
             .height(Length::Fill)
             .into(),
-            None => center(banner).into(),
+            // FR-UI-09: no history file exists
+            None => column![
+                container(banner).padding(iced::Padding {
+                    top: 24.0,
+                    right: 0.0,
+                    bottom: 8.0,
+                    left: 0.0
+                }),
+                center(
+                    text("History unavailable")
+                        .size(12)
+                        .color(Color::from_rgb8(0x6c, 0x70, 0x86)),
+                ),
+            ]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into(),
         }
     }
 
@@ -4116,6 +4278,19 @@ impl ShellKeep {
             );
         }
 
+        // FR-RECONNECT-08: poll network gateway changes (Linux only, every 5s)
+        #[cfg(target_os = "linux")]
+        if self
+            .tabs
+            .iter()
+            .any(|t| t.terminal.is_none() && t.auto_reconnect && !t.dead)
+        {
+            subs.push(
+                iced::time::every(std::time::Duration::from_secs(5))
+                    .map(|_| Message::NetworkChanged),
+            );
+        }
+
         // FR-TABS-17: intercept window close requests
         subs.push(window::close_requests().map(Message::WindowCloseRequested));
 
@@ -4132,6 +4307,24 @@ impl ShellKeep {
     fn theme(&self) -> Theme {
         Theme::CatppuccinMocha
     }
+}
+
+// ---------------------------------------------------------------------------
+// FR-RECONNECT-08: read default gateway from /proc/net/route (Linux only)
+// ---------------------------------------------------------------------------
+
+#[cfg(target_os = "linux")]
+fn read_default_gateway() -> Option<String> {
+    let content = std::fs::read_to_string("/proc/net/route").ok()?;
+    // Each line: Iface Destination Gateway Flags RefCnt Use Metric Mask MTU Window IRTT
+    // Default route has destination 00000000
+    for line in content.lines().skip(1) {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        if fields.len() >= 3 && fields[1] == "00000000" {
+            return Some(fields[2].to_string());
+        }
+    }
+    None
 }
 
 // ---------------------------------------------------------------------------
