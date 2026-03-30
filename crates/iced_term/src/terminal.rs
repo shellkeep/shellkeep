@@ -105,6 +105,11 @@ impl Terminal {
         self.backend.terminal_size()
     }
 
+    /// FR-TERMINAL-18 / FR-TABS-12: Get all scrollback + visible text.
+    pub fn scrollback_text(&self) -> String {
+        self.backend.scrollback_text()
+    }
+
     pub fn widget_id(&self) -> &iced::widget::Id {
         &self.widget_id
     }

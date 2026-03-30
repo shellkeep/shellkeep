@@ -22,6 +22,8 @@ pub struct BackendSettings {
     pub args: Vec<String>,
     pub env: HashMap<String, String>,
     pub working_directory: Option<PathBuf>,
+    /// Cursor shape: "block", "ibeam"/"bar", or "underline".
+    pub cursor_shape: String,
 }
 
 impl Default for BackendSettings {
@@ -31,6 +33,7 @@ impl Default for BackendSettings {
             args: vec![],
             env: HashMap::new(),
             working_directory: None,
+            cursor_shape: "block".to_string(),
         }
     }
 }
@@ -40,6 +43,8 @@ pub struct FontSettings {
     pub size: f32,
     pub scale_factor: f32,
     pub font_type: Font,
+    /// Font family name (e.g. "JetBrains Mono", "Fira Code").
+    pub font_family: Option<String>,
 }
 
 impl Default for FontSettings {
@@ -48,6 +53,7 @@ impl Default for FontSettings {
             size: 14.0,
             scale_factor: 1.3,
             font_type: Font::MONOSPACE,
+            font_family: None,
         }
     }
 }

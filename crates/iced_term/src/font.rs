@@ -17,14 +17,25 @@ pub struct TermFont {
 
 impl TermFont {
     pub fn new(settings: FontSettings) -> Self {
+        // FR-TERMINAL-10: If a font family name is specified, create a named font.
+        let font_type = if let Some(ref family) = settings.font_family {
+            Font {
+                family: iced::font::Family::Name(
+                    Box::leak(family.clone().into_boxed_str()),
+                ),
+                ..Font::MONOSPACE
+            }
+        } else {
+            settings.font_type
+        };
         Self {
             size: settings.size,
-            font_type: settings.font_type,
+            font_type,
             scale_factor: settings.scale_factor,
             measure: font_measure(
                 settings.size,
                 settings.scale_factor,
-                settings.font_type,
+                font_type,
             ),
         }
     }

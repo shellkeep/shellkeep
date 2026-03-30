@@ -14,7 +14,7 @@ const SSH_USER: &str = "root";
 #[ignore]
 async fn test_russh_connect() {
     let handle =
-        shellkeep::ssh::connection::connect(SSH_HOST, SSH_PORT, SSH_USER, Some(SSH_KEY), 15)
+        shellkeep::ssh::connection::connect(SSH_HOST, SSH_PORT, SSH_USER, Some(SSH_KEY), None, 15)
             .await
             .expect("failed to connect");
 
@@ -33,7 +33,7 @@ async fn test_russh_connect() {
 #[ignore]
 async fn test_russh_list_tmux_sessions() {
     let handle =
-        shellkeep::ssh::connection::connect(SSH_HOST, SSH_PORT, SSH_USER, Some(SSH_KEY), 15)
+        shellkeep::ssh::connection::connect(SSH_HOST, SSH_PORT, SSH_USER, Some(SSH_KEY), None, 15)
             .await
             .expect("failed to connect");
 
@@ -64,7 +64,7 @@ async fn test_russh_list_tmux_sessions() {
 #[ignore]
 async fn test_russh_open_shell() {
     let handle =
-        shellkeep::ssh::connection::connect(SSH_HOST, SSH_PORT, SSH_USER, Some(SSH_KEY), 15)
+        shellkeep::ssh::connection::connect(SSH_HOST, SSH_PORT, SSH_USER, Some(SSH_KEY), None, 15)
             .await
             .expect("failed to connect");
 

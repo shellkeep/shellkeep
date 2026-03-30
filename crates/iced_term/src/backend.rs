@@ -12,6 +12,7 @@ use alacritty_terminal::term::search::{Match, RegexIter, RegexSearch};
 use alacritty_terminal::term::{
     self, cell::Cell, test::TermSize, viewport_to_point, Term, TermMode,
 };
+use alacritty_terminal::vte::ansi::{CursorShape, CursorStyle};
 use alacritty_terminal::{tty, Grid};
 use iced::keyboard::Modifiers;
 use iced_core::Size;
@@ -142,6 +143,15 @@ pub struct Backend {
     pub(crate) url_regex: RegexSearch,
 }
 
+/// Parse a cursor shape string into alacritty's CursorShape.
+fn parse_cursor_shape(shape: &str) -> CursorShape {
+    match shape.to_lowercase().as_str() {
+        "ibeam" | "bar" | "beam" => CursorShape::Beam,
+        "underline" => CursorShape::Underline,
+        _ => CursorShape::Block,
+    }
+}
+
 impl Backend {
     pub fn new(
         id: u64,
@@ -155,7 +165,11 @@ impl Backend {
             ..tty::Options::default()
         };
 
-        let config = term::Config::default();
+        let mut config = term::Config::default();
+        config.default_cursor_style = CursorStyle {
+            shape: parse_cursor_shape(&settings.cursor_shape),
+            blinking: false,
+        };
         let terminal_size = TerminalSize::default();
         let pty = tty::new(&pty_config, terminal_size.into(), id)?;
 
@@ -165,12 +179,14 @@ impl Backend {
 
         let cursor = term.grid_mut().cursor_cell().clone();
 
+        let cursor_shape = term.cursor_style().shape;
         let initial_content = RenderableContent {
             grid: term.grid().clone(),
             selectable_range: None,
             terminal_mode: *term.mode(),
             terminal_size,
             cursor: cursor.clone(),
+            cursor_shape,
             hovered_hyperlink: None,
         };
 
@@ -207,6 +223,7 @@ impl Backend {
 
         let mut term = Term::new(config, &terminal_size, event_proxy);
         let cursor = term.grid_mut().cursor_cell().clone();
+        let cursor_shape = term.cursor_style().shape;
 
         let initial_content = RenderableContent {
             grid: term.grid().clone(),
@@ -214,6 +231,7 @@ impl Backend {
             terminal_mode: *term.mode(),
             terminal_size,
             cursor,
+            cursor_shape,
             hovered_hyperlink: None,
         };
 
@@ -542,6 +560,29 @@ impl Backend {
         }
     }
 
+    /// FR-TERMINAL-18 / FR-TABS-12: Extract all scrollback + visible text.
+    pub fn scrollback_text(&self) -> String {
+        let term = self.term.lock();
+        let grid = term.grid();
+        let total = grid.total_lines();
+        let cols = grid.columns();
+        let mut result = String::new();
+        for line_idx in 0..total {
+            // Grid lines: topmost scrollback is -(total-screen_lines), bottommost visible is screen_lines-1.
+            let line = Line(line_idx as i32 - (total as i32 - grid.screen_lines() as i32));
+            let mut row_text = String::new();
+            for col in 0..cols {
+                let cell = &grid[line][Column(col)];
+                row_text.push(cell.c);
+            }
+            // Trim trailing spaces per line
+            let trimmed = row_text.trim_end();
+            result.push_str(trimmed);
+            result.push('\n');
+        }
+        result
+    }
+
     pub fn selectable_content(&self) -> String {
         let content = self.renderable_content();
         let mut result = String::new();
@@ -571,6 +612,7 @@ impl Backend {
         self.last_content.grid = terminal.grid().clone();
         self.last_content.selectable_range = selectable_range;
         self.last_content.cursor = cursor.clone();
+        self.last_content.cursor_shape = terminal.cursor_style().shape;
         self.last_content.terminal_mode = *terminal.mode();
         self.last_content.terminal_size = self.size;
     }
@@ -660,6 +702,7 @@ pub struct RenderableContent {
     pub hovered_hyperlink: Option<RangeInclusive<Point>>,
     pub selectable_range: Option<SelectionRange>,
     pub cursor: Cell,
+    pub cursor_shape: CursorShape,
     pub terminal_mode: TermMode,
     pub terminal_size: TerminalSize,
 }
@@ -671,6 +714,7 @@ impl Default for RenderableContent {
             hovered_hyperlink: None,
             selectable_range: None,
             cursor: Cell::default(),
+            cursor_shape: CursorShape::Block,
             terminal_mode: TermMode::empty(),
             terminal_size: TerminalSize::default(),
         }

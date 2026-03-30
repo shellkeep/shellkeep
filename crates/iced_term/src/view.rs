@@ -7,7 +7,7 @@ use crate::theme::TerminalStyle;
 use alacritty_terminal::index::Point as TerminalGridPoint;
 use alacritty_terminal::selection::SelectionType;
 use alacritty_terminal::term::{cell, TermMode};
-use alacritty_terminal::vte::ansi::{self as ansi, NamedColor};
+use alacritty_terminal::vte::ansi::{self as ansi, CursorShape, NamedColor};
 use iced::alignment::Vertical;
 use iced::font::{Style as FontStyle, Weight as FontWeight};
 use iced::mouse::{Cursor, ScrollDelta};
@@ -577,15 +577,39 @@ impl Widget<Event, Theme, iced::Renderer> for TerminalView<'_> {
                     );
                 }
 
-                // Handle cursor rendering
+                // Handle cursor rendering (FR-TERMINAL-13)
                 if content.grid.cursor.point == indexed.point
                     && content.terminal_mode.contains(TermMode::SHOW_CURSOR)
                 {
                     let cursor_color =
                         self.term.theme.get_color(content.cursor.fg);
-                    let cursor_rect =
-                        Path::rectangle(Point::new(x, y), cell_size);
-                    frame.fill(&cursor_rect, cursor_color);
+                    match content.cursor_shape {
+                        CursorShape::Block => {
+                            let cursor_rect =
+                                Path::rectangle(Point::new(x, y), cell_size);
+                            frame.fill(&cursor_rect, cursor_color);
+                        }
+                        CursorShape::Beam => {
+                            let beam = Path::rectangle(
+                                Point::new(x, y),
+                                Size::new(2.0, cell_size.height),
+                            );
+                            frame.fill(&beam, cursor_color);
+                        }
+                        CursorShape::Underline => {
+                            let underline_y = y + cell_size.height - 2.0;
+                            let ul = Path::rectangle(
+                                Point::new(x, underline_y),
+                                Size::new(cell_size.width, 2.0),
+                            );
+                            frame.fill(&ul, cursor_color);
+                        }
+                        _ => {
+                            let cursor_rect =
+                                Path::rectangle(Point::new(x, y), cell_size);
+                            frame.fill(&cursor_rect, cursor_color);
+                        }
+                    }
                 }
 
                 // Draw text

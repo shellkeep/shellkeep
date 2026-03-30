@@ -16,7 +16,6 @@ use iced::widget::{
 };
 use iced::window;
 use iced::{Color, Element, Length, Point, Size, Subscription, Task, Theme};
-use iced_term::ColorPalette;
 use iced_term::settings::{BackendSettings, FontSettings, Settings, ThemeSettings};
 use iced_term::{AlacrittyColumn, AlacrittyLine, AlacrittyPoint, RegexSearch, SearchMatch};
 use notify::{Event, EventKind, RecursiveMode, Watcher};
@@ -516,6 +515,7 @@ fn ssh_channel_stream(data: &SshSubscriptionData) -> BoxStream<'static, Message>
 
 /// Establish an SSH session: connect, acquire lock, create tmux session, open PTY channel.
 /// Returns the raw russh Channel on success.
+#[allow(clippy::too_many_arguments)]
 async fn establish_ssh_session(
     conn_manager: Arc<Mutex<ConnectionManager>>,
     conn: ConnParams,
@@ -2238,7 +2238,7 @@ impl ShellKeep {
                         .map(|t| t.elapsed().as_millis() as u64)
                         .unwrap_or(0);
                     let remaining_ms = tab.reconnect_delay_ms.saturating_sub(elapsed);
-                    let remaining_secs = (remaining_ms + 999) / 1000;
+                    let remaining_secs = remaining_ms.div_ceil(1000);
                     if remaining_secs > 0 {
                         format!("Next retry in {}s", remaining_secs)
                     } else {
@@ -3376,10 +3376,10 @@ fn watch_config(path: std::path::PathBuf) -> std::sync::mpsc::Receiver<()> {
     std::thread::spawn(move || {
         let (notify_tx, notify_rx) = std::sync::mpsc::channel();
         let mut watcher = match notify::recommended_watcher(move |res: Result<Event, _>| {
-            if let Ok(event) = res {
-                if matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_)) {
-                    let _ = notify_tx.send(());
-                }
+            if let Ok(event) = res
+                && matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_))
+            {
+                let _ = notify_tx.send(());
             }
         }) {
             Ok(w) => w,
@@ -3421,29 +3421,26 @@ impl Drop for PidGuard {
 /// or None if another instance holds the PID file.
 fn check_single_instance() -> Option<PidGuard> {
     let runtime_dir = dirs::runtime_dir()
-        .unwrap_or_else(|| std::env::temp_dir())
+        .unwrap_or_else(std::env::temp_dir)
         .join("shellkeep");
     let _ = std::fs::create_dir_all(&runtime_dir);
     let pid_path = runtime_dir.join("shellkeep.pid");
 
-    if pid_path.exists() {
-        if let Ok(pid_str) = std::fs::read_to_string(&pid_path) {
-            if let Ok(pid) = pid_str.trim().parse::<u32>() {
-                #[cfg(unix)]
-                if std::path::Path::new(&format!("/proc/{pid}")).exists() {
-                    return None;
-                }
-                #[cfg(windows)]
-                {
-                    // On Windows, check if PID file is very recent as a heuristic
-                    if let Ok(meta) = std::fs::metadata(&pid_path) {
-                        if let Ok(modified) = meta.modified() {
-                            if modified.elapsed().unwrap_or_default()
-                                < std::time::Duration::from_secs(5)
-                            {
-                                return None;
-                            }
-                        }
+    if pid_path.exists()
+        && let Ok(pid_str) = std::fs::read_to_string(&pid_path)
+        && let Ok(pid) = pid_str.trim().parse::<u32>()
+    {
+        #[cfg(unix)]
+        if std::path::Path::new(&format!("/proc/{pid}")).exists() {
+            return None;
+        }
+        #[cfg(windows)]
+        {
+            // On Windows, check if PID file is very recent as a heuristic
+            if let Ok(meta) = std::fs::metadata(&pid_path) {
+                if let Ok(modified) = meta.modified() {
+                    if modified.elapsed().unwrap_or_default() < std::time::Duration::from_secs(5) {
+                        return None;
                     }
                 }
             }
