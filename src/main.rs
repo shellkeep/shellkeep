@@ -857,37 +857,55 @@ impl ShellKeep {
         // FR-HISTORY-11: clean up old history files on startup
         history::cleanup_old_history(app.config.state.history_max_days);
         if let Some(ssh_args) = initial_ssh_args {
-            // Parse connection params from CLI args
-            let host_arg = ssh_args
-                .iter()
-                .find(|a| !a.starts_with('-'))
-                .cloned()
-                .unwrap_or_default();
-            let label = host_arg.clone();
-            let (parsed_user, parsed_host, parsed_port) = parse_host_input(&host_arg);
+            // Parse connection params from CLI args.
+            // First extract flags with values (-p PORT, -i FILE, -l USER)
+            // so we can correctly identify the host argument.
             let mut cli_port = "22".to_string();
             let mut cli_identity = None;
+            let mut cli_user_flag = None;
+            let mut flag_value_indices = std::collections::HashSet::new();
             let mut i = 0;
             while i < ssh_args.len() {
                 match ssh_args[i].as_str() {
                     "-p" if i + 1 < ssh_args.len() => {
                         cli_port = ssh_args[i + 1].clone();
+                        flag_value_indices.insert(i);
+                        flag_value_indices.insert(i + 1);
                         i += 1;
                     }
                     "-i" if i + 1 < ssh_args.len() => {
                         cli_identity = Some(ssh_args[i + 1].clone());
+                        flag_value_indices.insert(i);
+                        flag_value_indices.insert(i + 1);
+                        i += 1;
+                    }
+                    "-l" if i + 1 < ssh_args.len() => {
+                        cli_user_flag = Some(ssh_args[i + 1].clone());
+                        flag_value_indices.insert(i);
+                        flag_value_indices.insert(i + 1);
                         i += 1;
                     }
                     _ => {}
                 }
                 i += 1;
             }
+            // The host is the first non-flag argument
+            let host_arg = ssh_args
+                .iter()
+                .enumerate()
+                .find(|(idx, a)| !a.starts_with('-') && !flag_value_indices.contains(idx))
+                .map(|(_, a)| a.clone())
+                .unwrap_or_default();
+            let label = host_arg.clone();
+            let (parsed_user, parsed_host, parsed_port) = parse_host_input(&host_arg);
             app.current_conn = Some(ConnParams {
                 host: parsed_host,
                 port: parsed_port
                     .and_then(|p| p.parse().ok())
                     .unwrap_or(cli_port.parse().unwrap_or(22)),
-                username: parsed_user.unwrap_or_else(whoami::username),
+                username: cli_user_flag
+                    .or(parsed_user)
+                    .unwrap_or_else(whoami::username),
                 identity_file: cli_identity,
             });
 
@@ -5178,5 +5196,109 @@ mod tests {
         assert_eq!(user, None);
         assert_eq!(host, "::1");
         assert_eq!(port, Some("2222".into()));
+    }
+
+    /// Helper to simulate CLI arg parsing and extract ConnParams
+    fn parse_cli_args(args: &[&str]) -> (String, u16, String, Option<String>) {
+        let ssh_args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        let mut cli_port = "22".to_string();
+        let mut cli_identity = None;
+        let mut cli_user_flag = None;
+        let mut flag_value_indices = std::collections::HashSet::new();
+        let mut i = 0;
+        while i < ssh_args.len() {
+            match ssh_args[i].as_str() {
+                "-p" if i + 1 < ssh_args.len() => {
+                    cli_port = ssh_args[i + 1].clone();
+                    flag_value_indices.insert(i);
+                    flag_value_indices.insert(i + 1);
+                    i += 1;
+                }
+                "-i" if i + 1 < ssh_args.len() => {
+                    cli_identity = Some(ssh_args[i + 1].clone());
+                    flag_value_indices.insert(i);
+                    flag_value_indices.insert(i + 1);
+                    i += 1;
+                }
+                "-l" if i + 1 < ssh_args.len() => {
+                    cli_user_flag = Some(ssh_args[i + 1].clone());
+                    flag_value_indices.insert(i);
+                    flag_value_indices.insert(i + 1);
+                    i += 1;
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        let host_arg = ssh_args
+            .iter()
+            .enumerate()
+            .find(|(idx, a)| !a.starts_with('-') && !flag_value_indices.contains(idx))
+            .map(|(_, a)| a.clone())
+            .unwrap_or_default();
+        let (parsed_user, parsed_host, parsed_port) = parse_host_input(&host_arg);
+        let port = parsed_port
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(cli_port.parse().unwrap_or(22));
+        let username = cli_user_flag
+            .or(parsed_user)
+            .unwrap_or_else(|| "default_user".to_string());
+        (parsed_host, port, username, cli_identity)
+    }
+
+    #[test]
+    fn cli_port_before_host() {
+        // shellkeep -p 2247 tiago@example.com
+        let (host, port, user, _) = parse_cli_args(&["-p", "2247", "tiago@example.com"]);
+        assert_eq!(host, "example.com");
+        assert_eq!(port, 2247);
+        assert_eq!(user, "tiago");
+    }
+
+    #[test]
+    fn cli_host_before_port() {
+        // shellkeep tiago@example.com -p 2247
+        let (host, port, user, _) = parse_cli_args(&["tiago@example.com", "-p", "2247"]);
+        assert_eq!(host, "example.com");
+        assert_eq!(port, 2247);
+        assert_eq!(user, "tiago");
+    }
+
+    #[test]
+    fn cli_identity_and_port() {
+        // shellkeep -i /path/key -p 2222 user@host
+        let (host, port, user, identity) =
+            parse_cli_args(&["-i", "/path/key", "-p", "2222", "user@host"]);
+        assert_eq!(host, "host");
+        assert_eq!(port, 2222);
+        assert_eq!(user, "user");
+        assert_eq!(identity, Some("/path/key".to_string()));
+    }
+
+    #[test]
+    fn cli_user_flag() {
+        // shellkeep -l alice example.com
+        let (host, port, user, _) = parse_cli_args(&["-l", "alice", "example.com"]);
+        assert_eq!(host, "example.com");
+        assert_eq!(port, 22);
+        assert_eq!(user, "alice");
+    }
+
+    #[test]
+    fn cli_host_with_colon_port() {
+        // shellkeep user@example.com:3333
+        let (host, port, user, _) = parse_cli_args(&["user@example.com:3333"]);
+        assert_eq!(host, "example.com");
+        assert_eq!(port, 3333);
+        assert_eq!(user, "user");
+    }
+
+    #[test]
+    fn cli_just_host() {
+        // shellkeep example.com
+        let (host, port, user, _) = parse_cli_args(&["example.com"]);
+        assert_eq!(host, "example.com");
+        assert_eq!(port, 22);
+        assert_eq!(user, "default_user");
     }
 }

@@ -213,17 +213,22 @@ fn terminal_subscription_stream(
                         shutdown = true
                     };
 
-                    output
+                    if output
                         .send(Event::BackendCall(id, backend::Command::ProcessAlacrittyEvent(event)))
                         .await
-                        .unwrap_or_else(|_| {
-                            panic!("iced_term stream {}: sending BackendEventReceived event is failed", id)
-                        });
+                        .is_err()
+                    {
+                        // Receiver dropped — app is shutting down or tab was removed
+                        break;
+                    }
                 },
                 None => {
                     if !shutdown {
-                        panic!("iced_term stream {}: terminal event channel closed unexpected", id);
+                        // Channel closed without Exit event — terminal was dropped
+                        // (e.g., auth failure, tab closed). Don't panic, just stop.
+                        eprintln!("iced_term stream {id}: terminal event channel closed");
                     }
+                    break;
                 },
             }
         }
