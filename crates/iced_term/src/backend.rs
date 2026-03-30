@@ -347,9 +347,9 @@ impl Backend {
                 }
             }
 
-            open::that(url).unwrap_or_else(|_| {
-                panic!("link opening is failed");
-            })
+            if let Err(e) = open::that(&url) {
+                eprintln!("iced_term: failed to open link: {e}");
+            }
         }
     }
 
