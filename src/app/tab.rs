@@ -68,6 +68,30 @@ pub(crate) struct Tab {
     pub(crate) needs_initial_resize: bool,
 }
 
+/// Build terminal font settings from app config and current font size.
+pub(crate) fn make_font_settings(config: &shellkeep::config::Config, font_size: f32) -> iced_term::settings::FontSettings {
+    iced_term::settings::FontSettings {
+        size: font_size,
+        font_family: config.terminal.font_family.clone(),
+        ..iced_term::settings::FontSettings::default()
+    }
+}
+
+/// Build terminal theme settings from app config.
+pub(crate) fn make_theme_settings(config: &shellkeep::config::Config) -> iced_term::settings::ThemeSettings {
+    iced_term::settings::ThemeSettings {
+        color_pallete: Box::new(crate::theme::resolve_theme(&config.general.theme)),
+    }
+}
+
+/// Build backend settings with cursor shape from config.
+pub(crate) fn make_backend_settings(config: &shellkeep::config::Config) -> iced_term::settings::BackendSettings {
+    iced_term::settings::BackendSettings {
+        cursor_shape: config.terminal.cursor_shape.clone(),
+        ..iced_term::settings::BackendSettings::default()
+    }
+}
+
 /// FR-RECONNECT-02: braille spinner frames for reconnection animation
 pub(crate) const SPINNER_FRAMES: &[char] = &[
     '\u{280B}', '\u{2819}', '\u{2839}', '\u{2838}', '\u{283C}', '\u{2834}', '\u{2826}',

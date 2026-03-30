@@ -11,7 +11,10 @@ mod cli;
 mod instance;
 mod theme;
 
-use app::tab::{ChannelHolder, ConnParams, ResizeRxHolder, Tab, WriterRxHolder, SPINNER_FRAMES};
+use app::tab::{
+    ChannelHolder, ConnParams, ResizeRxHolder, Tab, WriterRxHolder, SPINNER_FRAMES,
+    make_backend_settings, make_font_settings, make_theme_settings,
+};
 use app::Message;
 
 use std::hash::{Hash, Hasher};
@@ -23,9 +26,8 @@ use iced::widget::{
     Space, button, center, column, container, mouse_area, row, scrollable, stack, text, text_input,
 };
 use iced::{Color, Element, Length, Point, Size, Subscription, Task, Theme, keyboard, window};
-use iced_term::settings::{BackendSettings, FontSettings, Settings, ThemeSettings};
+use iced_term::settings::{BackendSettings, FontSettings, Settings};
 use iced_term::{AlacrittyColumn, AlacrittyLine, AlacrittyPoint, RegexSearch, SearchMatch};
-use notify::{Event, EventKind, RecursiveMode, Watcher};
 use shellkeep::config::Config;
 use shellkeep::ssh::manager::{ConnKey, ConnectionManager};
 use shellkeep::state::history;
@@ -126,7 +128,7 @@ fn main() -> iced::Result {
     let log_path = log_dir.join("shellkeep.log");
 
     // NFR-OBS-04: rotate log if it exceeds 10 MB
-    rotate_logs(&log_path);
+    shellkeep::crash::rotate_logs(&log_path);
     if let Ok(file) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -676,13 +678,13 @@ impl ShellKeep {
         };
 
         // FR-CONFIG-04: start watching config file for hot reload
-        app.config_reload_rx = Some(watch_config(Config::file_path()));
+        app.config_reload_rx = Some(shellkeep::config::watch_config(Config::file_path()));
 
         // FR-TRAY-01: initialize system tray icon
         app.tray = Tray::new(app.config.tray.enabled);
 
         // FR-STATE-07: clean up orphaned .tmp files from interrupted saves
-        cleanup_tmp_files(&app.client_id);
+        shellkeep::state::state_file::cleanup_tmp_files(&app.client_id);
 
         // FR-HISTORY-11: clean up old history files on startup
         history::cleanup_old_history(app.config.state.history_max_days);
@@ -2432,7 +2434,7 @@ impl ShellKeep {
                     self.search_regex = None;
                     self.search_last_match = None;
                 } else {
-                    let escaped = escape_regex(&self.search_input);
+                    let escaped = app::escape_regex(&self.search_input);
                     self.search_regex = RegexSearch::new(&escaped).ok();
                     if self.search_regex.is_some() {
                         return self.update(Message::SearchNext);
@@ -4910,7 +4912,7 @@ impl ShellKeep {
             .color(Color::from_rgb8(0x89, 0xb4, 0xfa));
 
         // FR-UI-03: first-use experience — show extended welcome on first run
-        let is_first_use = self.recent.connections.is_empty() && !config_file_exists();
+        let is_first_use = self.recent.connections.is_empty() && !shellkeep::config::config_file_exists();
 
         let subtitle: Element<'_, Message> = if is_first_use {
             // FR-UI-03: first-use with client-id naming input
@@ -5294,130 +5296,5 @@ fn read_default_gateway() -> Option<String> {
     None
 }
 
-// ---------------------------------------------------------------------------
-// Regex escaping for search — escape special regex characters for literal matching
-// ---------------------------------------------------------------------------
-
-fn escape_regex(input: &str) -> String {
-    let mut escaped = String::with_capacity(input.len() * 2);
-    for c in input.chars() {
-        if matches!(
-            c,
-            '\\' | '.' | '+' | '*' | '?' | '(' | ')' | '|' | '[' | ']' | '{' | '}' | '^' | '$'
-        ) {
-            escaped.push('\\');
-        }
-        escaped.push(c);
-    }
-    escaped
-}
-
-// ---------------------------------------------------------------------------
-// Theme
-// ---------------------------------------------------------------------------
-
-/// FR-STATE-07: remove orphaned .tmp files from state directory.
-/// NFR-OBS-04: rotate log files when they exceed 10 MB.
-fn rotate_logs(log_path: &std::path::Path) {
-    const MAX_SIZE: u64 = 10 * 1024 * 1024;
-    const MAX_FILES: u32 = 5;
-
-    if let Ok(metadata) = std::fs::metadata(log_path)
-        && metadata.len() > MAX_SIZE
-    {
-        for i in (1..MAX_FILES).rev() {
-            let from = log_path.with_extension(format!("log.{i}"));
-            let to = log_path.with_extension(format!("log.{}", i + 1));
-            let _ = std::fs::rename(&from, &to);
-        }
-        let rotated = log_path.with_extension("log.1");
-        let _ = std::fs::rename(log_path, &rotated);
-    }
-}
-
-fn cleanup_tmp_files(client_id: &str) {
-    let state_path = StateFile::local_cache_path(client_id);
-    if let Some(dir) = state_path.parent()
-        && let Ok(entries) = std::fs::read_dir(dir)
-    {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().is_some_and(|e| e == "tmp") {
-                tracing::info!("cleaning orphaned tmp file: {}", path.display());
-                let _ = std::fs::remove_file(&path);
-            }
-        }
-    }
-}
-
-/// Build terminal font settings from app config and current font size.
-fn make_font_settings(config: &Config, font_size: f32) -> FontSettings {
-    FontSettings {
-        size: font_size,
-        font_family: config.terminal.font_family.clone(),
-        ..FontSettings::default()
-    }
-}
-
-/// Build terminal theme settings from app config.
-fn make_theme_settings(config: &Config) -> ThemeSettings {
-    ThemeSettings {
-        color_pallete: Box::new(theme::resolve_theme(&config.general.theme)),
-    }
-}
-
-/// Build backend settings with cursor shape from config.
-fn make_backend_settings(config: &Config) -> BackendSettings {
-    BackendSettings {
-        cursor_shape: config.terminal.cursor_shape.clone(),
-        ..BackendSettings::default()
-    }
-}
-
-/// FR-UI-03: check if the config file exists (first-use detection)
-fn config_file_exists() -> bool {
-    let path = dirs::config_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("shellkeep")
-        .join("config.toml");
-    path.exists()
-}
-
-// ---------------------------------------------------------------------------
-// FR-CONFIG-04: config file watcher
-// ---------------------------------------------------------------------------
-
-/// Start watching the config file for changes, returning a receiver
-/// that gets notified when the file is modified.
-fn watch_config(path: std::path::PathBuf) -> std::sync::mpsc::Receiver<()> {
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let (notify_tx, notify_rx) = std::sync::mpsc::channel();
-        let mut watcher = match notify::recommended_watcher(move |res: Result<Event, _>| {
-            if let Ok(event) = res
-                && matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_))
-            {
-                let _ = notify_tx.send(());
-            }
-        }) {
-            Ok(w) => w,
-            Err(e) => {
-                tracing::warn!("failed to create config watcher: {e}");
-                return;
-            }
-        };
-        // Watch parent directory — some editors do atomic save (write tmp + rename)
-        let watch_path = path.parent().unwrap_or(&path);
-        if let Err(e) = watcher.watch(watch_path, RecursiveMode::NonRecursive) {
-            tracing::warn!("failed to watch config directory: {e}");
-            return;
-        }
-        tracing::info!("config watcher started for {}", path.display());
-        for () in notify_rx {
-            let _ = tx.send(());
-        }
-    });
-    rx
-}
 
 

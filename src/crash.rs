@@ -7,7 +7,7 @@
 //! NFR-SEC-10: Disable core dumps to prevent leaking sensitive memory.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Disable core dumps (NFR-SEC-10).
 pub fn disable_core_dumps() {
@@ -82,4 +82,22 @@ pub fn install_panic_hook() {
     }));
 
     tracing::debug!("panic hook installed");
+}
+
+/// NFR-OBS-04: rotate log files when they exceed 10 MB.
+pub fn rotate_logs(log_path: &Path) {
+    const MAX_SIZE: u64 = 10 * 1024 * 1024;
+    const MAX_FILES: u32 = 5;
+
+    if let Ok(metadata) = fs::metadata(log_path)
+        && metadata.len() > MAX_SIZE
+    {
+        for i in (1..MAX_FILES).rev() {
+            let from = log_path.with_extension(format!("log.{i}"));
+            let to = log_path.with_extension(format!("log.{}", i + 1));
+            let _ = fs::rename(&from, &to);
+        }
+        let rotated = log_path.with_extension("log.1");
+        let _ = fs::rename(log_path, &rotated);
+    }
 }

@@ -239,6 +239,22 @@ fn chrono_now() -> String {
     format!("{}Z", now.as_secs())
 }
 
+/// FR-STATE-07: remove orphaned .tmp files from state directory.
+pub fn cleanup_tmp_files(client_id: &str) {
+    let state_path = StateFile::local_cache_path(client_id);
+    if let Some(dir) = state_path.parent()
+        && let Ok(entries) = fs::read_dir(dir)
+    {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|e| e == "tmp") {
+                tracing::info!("cleaning orphaned tmp file: {}", path.display());
+                let _ = fs::remove_file(&path);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

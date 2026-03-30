@@ -8,7 +8,9 @@
 
 use std::fs;
 use std::path::PathBuf;
+use std::sync::mpsc;
 
+use notify::{Event, EventKind, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -225,6 +227,44 @@ impl Config {
             .join("shellkeep")
             .join("config.toml")
     }
+}
+
+/// FR-UI-03: check if the config file exists (first-use detection).
+pub fn config_file_exists() -> bool {
+    Config::file_path().exists()
+}
+
+/// FR-CONFIG-04: start watching the config file for changes, returning a receiver
+/// that gets notified when the file is modified.
+pub fn watch_config(path: PathBuf) -> mpsc::Receiver<()> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let (notify_tx, notify_rx) = mpsc::channel();
+        let mut watcher = match notify::recommended_watcher(move |res: Result<Event, _>| {
+            if let Ok(event) = res
+                && matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_))
+            {
+                let _ = notify_tx.send(());
+            }
+        }) {
+            Ok(w) => w,
+            Err(e) => {
+                tracing::warn!("failed to create config watcher: {e}");
+                return;
+            }
+        };
+        // Watch parent directory — some editors do atomic save (write tmp + rename)
+        let watch_path = path.parent().unwrap_or(&path);
+        if let Err(e) = watcher.watch(watch_path, RecursiveMode::NonRecursive) {
+            tracing::warn!("failed to watch config directory: {e}");
+            return;
+        }
+        tracing::info!("config watcher started for {}", path.display());
+        for () in notify_rx {
+            let _ = tx.send(());
+        }
+    });
+    rx
 }
 
 #[cfg(test)]
