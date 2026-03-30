@@ -11,10 +11,12 @@ pub(crate) mod view;
 
 pub(crate) use message::Message;
 
-use tab::{ChannelHolder, ConnParams, TabId, make_backend_settings, make_font_settings, make_theme_settings};
 use session::{EstablishParams, SshSubscriptionData, establish_ssh_session, ssh_channel_stream};
+use tab::{
+    ChannelHolder, ConnParams, TabId, make_backend_settings, make_font_settings,
+    make_theme_settings,
+};
 
-use std::sync::Arc;
 use iced::{Subscription, Task, Theme, keyboard, window};
 use iced_term::settings::{BackendSettings, Settings};
 use iced_term::{RegexSearch, SearchMatch};
@@ -25,6 +27,7 @@ use shellkeep::state::recent::RecentConnections;
 use shellkeep::state::state_file::{StateFile, TabState, WindowState};
 use shellkeep::tray::Tray;
 use shellkeep::{i18n, ssh};
+use std::sync::Arc;
 use tokio::sync::Mutex;
 
 // ---------------------------------------------------------------------------
@@ -316,8 +319,7 @@ impl ShellKeep {
                 .map(|(_, a)| a.clone())
                 .unwrap_or_default();
             let label = host_arg.clone();
-            let (parsed_user, parsed_host, parsed_port) =
-                crate::cli::parse_host_input(&host_arg);
+            let (parsed_user, parsed_host, parsed_port) = crate::cli::parse_host_input(&host_arg);
             app.current_conn = Some(ConnParams {
                 key: ConnKey {
                     host: parsed_host,
@@ -484,7 +486,11 @@ impl ShellKeep {
             },
             backend: tab::TabBackend::Russh {
                 conn_params: self.current_conn.clone().unwrap_or_else(|| ConnParams {
-                    key: ConnKey { host: String::new(), port: 22, username: String::new() },
+                    key: ConnKey {
+                        host: String::new(),
+                        port: 22,
+                        username: String::new(),
+                    },
                     identity_file: None,
                 }),
                 writer_rx: Some(writer_rx_holder),

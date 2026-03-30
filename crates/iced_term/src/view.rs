@@ -3,15 +3,13 @@
 
 //! Iced widget implementation for rendering the terminal grid.
 
-use crate::backend::{
-    Backend, Command, LinkAction, MouseButton, RenderableContent,
-};
+use crate::backend::{Backend, Command, LinkAction, MouseButton, RenderableContent};
 use crate::bindings::{BindingAction, BindingsLayout, InputKind};
 use crate::terminal::{Event, Terminal};
 use crate::theme::TerminalStyle;
 use alacritty_terminal::index::Point as TerminalGridPoint;
 use alacritty_terminal::selection::SelectionType;
-use alacritty_terminal::term::{cell, TermMode};
+use alacritty_terminal::term::{TermMode, cell};
 use alacritty_terminal::vte::ansi::{self as ansi, CursorShape, NamedColor};
 use iced::alignment::Vertical;
 use iced::font::{Style as FontStyle, Weight as FontWeight};
@@ -24,8 +22,8 @@ use iced_core::keyboard::{Key, Modifiers};
 use iced_core::mouse::{self, Click};
 use iced_core::text::{Alignment, LineHeight, Shaping};
 use iced_core::widget::operation::{self, Focusable};
-use iced_graphics::core::widget::{tree, Tree};
 use iced_graphics::core::Widget;
+use iced_graphics::core::widget::{Tree, tree};
 use iced_graphics::geometry::Stroke;
 
 pub struct TerminalView<'a> {
@@ -41,17 +39,11 @@ impl<'a> TerminalView<'a> {
             .into()
     }
 
-    pub fn focus<Message: 'static>(
-        id: iced::widget::Id,
-    ) -> iced::Task<Message> {
+    pub fn focus<Message: 'static>(id: iced::widget::Id) -> iced::Task<Message> {
         iced::widget::operation::focus(id)
     }
 
-    fn is_cursor_in_layout(
-        &self,
-        cursor: Cursor,
-        layout: iced_graphics::core::Layout<'_>,
-    ) -> bool {
+    fn is_cursor_in_layout(&self, cursor: Cursor, layout: iced_graphics::core::Layout<'_>) -> bool {
         if let Some(cursor_position) = cursor.position() {
             let layout_position = layout.position();
             let layout_size = layout.bounds();
@@ -84,10 +76,7 @@ impl<'a> TerminalView<'a> {
         let layout_size = layout.bounds().size();
         if state.size != layout_size {
             state.size = layout_size;
-            let cmd = Command::Resize(
-                Some(layout_size),
-                Some(self.term.font.measure),
-            );
+            let cmd = Command::Resize(Some(layout_size), Some(self.term.font.measure));
             shell.publish(Event::BackendCall(self.term.id, cmd));
         }
     }
@@ -118,9 +107,7 @@ impl<'a> TerminalView<'a> {
         let terminal_mode = terminal_content.terminal_mode;
 
         match event {
-            iced_core::mouse::Event::ButtonPressed(
-                iced_core::mouse::Button::Left,
-            ) => {
+            iced_core::mouse::Event::ButtonPressed(iced_core::mouse::Button::Left) => {
                 if !state.is_focused() {
                     return Vec::default();
                 }
@@ -132,7 +119,7 @@ impl<'a> TerminalView<'a> {
                     layout_position,
                     &mut commands,
                 );
-            },
+            }
             iced_core::mouse::Event::CursorMoved { position } => {
                 if !state.is_focused() {
                     return Vec::default();
@@ -145,10 +132,8 @@ impl<'a> TerminalView<'a> {
                     layout_position,
                     &mut commands,
                 );
-            },
-            iced_core::mouse::Event::ButtonReleased(
-                iced_core::mouse::Button::Left,
-            ) => {
+            }
+            iced_core::mouse::Event::ButtonReleased(iced_core::mouse::Button::Left) => {
                 if !state.is_focused() {
                     return Vec::default();
                 }
@@ -159,16 +144,11 @@ impl<'a> TerminalView<'a> {
                     &self.term.bindings,
                     &mut commands,
                 );
-            },
+            }
             iced::mouse::Event::WheelScrolled { delta } => {
-                Self::handle_wheel_scrolled(
-                    state,
-                    *delta,
-                    &self.term.font.measure,
-                    &mut commands,
-                );
-            },
-            _ => {},
+                Self::handle_wheel_scrolled(state, *delta, &self.term.font.measure, &mut commands);
+            }
+            _ => {}
         }
 
         commands
@@ -189,11 +169,7 @@ impl<'a> TerminalView<'a> {
                 true,
             )
         } else {
-            let current_click = Click::new(
-                cursor_position,
-                mouse::Button::Left,
-                state.last_click,
-            );
+            let current_click = Click::new(cursor_position, mouse::Button::Left, state.last_click);
             let selection_type = match current_click.kind() {
                 mouse::click::Kind::Single => SelectionType::Simple,
                 mouse::click::Kind::Double => SelectionType::Semantic,
@@ -293,7 +269,7 @@ impl<'a> TerminalView<'a> {
             ScrollDelta::Lines { y, .. } => {
                 let lines = y.signum() * y.abs().round();
                 commands.push(Command::Scroll(lines as i32));
-            },
+            }
             ScrollDelta::Pixels { y, .. } => {
                 state.scroll_pixels -= y;
                 let line_height = font_measure.height; // Assume this method exists and gives the height of a line
@@ -302,7 +278,7 @@ impl<'a> TerminalView<'a> {
                 if lines != 0.0 {
                     commands.push(Command::Scroll(lines as i32));
                 }
-            },
+            }
         }
     }
 
@@ -322,11 +298,8 @@ impl<'a> TerminalView<'a> {
                 } else {
                     LinkAction::Clear
                 };
-                return Some(Command::ProcessLink(
-                    action,
-                    state.mouse_position_on_grid,
-                ));
-            },
+                return Some(Command::ProcessLink(action, state.mouse_position_on_grid));
+            }
             iced::keyboard::Event::KeyPressed {
                 key,
                 modifiers,
@@ -351,18 +324,20 @@ impl<'a> TerminalView<'a> {
                     {
                         return Some(Command::Write(c.as_bytes().to_vec()));
                     }
-                },
+                }
                 Key::Named(code) => {
                     // Shift+PageUp/Down: scroll scrollback buffer
-                    if modifiers.shift() && !last_content.terminal_mode.contains(TermMode::ALT_SCREEN) {
+                    if modifiers.shift()
+                        && !last_content.terminal_mode.contains(TermMode::ALT_SCREEN)
+                    {
                         match code {
                             iced_core::keyboard::key::Named::PageUp => {
                                 return Some(Command::Scroll(-25));
-                            },
+                            }
                             iced_core::keyboard::key::Named::PageDown => {
                                 return Some(Command::Scroll(25));
-                            },
-                            _ => {},
+                            }
+                            _ => {}
                         }
                     }
 
@@ -371,10 +346,10 @@ impl<'a> TerminalView<'a> {
                         *modifiers,
                         last_content.terminal_mode,
                     );
-                },
-                _ => {},
+                }
+                _ => {}
             },
-            _ => {},
+            _ => {}
         }
 
         match binding_action {
@@ -382,23 +357,23 @@ impl<'a> TerminalView<'a> {
                 let mut buf = [0, 0, 0, 0];
                 let str = c.encode_utf8(&mut buf);
                 return Some(Command::Write(str.as_bytes().to_vec()));
-            },
+            }
             BindingAction::Esc(seq) => {
                 return Some(Command::Write(seq.as_bytes().to_vec()));
-            },
+            }
             BindingAction::Paste => {
                 if let Some(data) = clipboard.read(ClipboardKind::Standard) {
                     let input: Vec<u8> = data.bytes().collect();
                     return Some(Command::Write(input));
                 }
-            },
+            }
             BindingAction::Copy => {
                 clipboard.write(
                     ClipboardKind::Standard,
                     self.term.backend.selectable_content(),
                 );
-            },
-            _ => {},
+            }
+            _ => {}
         };
 
         None
@@ -486,8 +461,7 @@ impl Widget<Event, Theme, iced::Renderer> for TerminalView<'_> {
 
                 // Resolve position point for this cell
                 let x = layout_offset_x + (col * cell_width);
-                let y = layout_offset_y
-                    + (((line as f32) + display_offset) * cell_height);
+                let y = layout_offset_y + (((line as f32) + display_offset) * cell_height);
                 let cell_center_y = y + half_h;
                 let cell_center_x = x + half_w;
 
@@ -500,10 +474,7 @@ impl Widget<Event, Theme, iced::Renderer> for TerminalView<'_> {
                 if last_line != Some(line) {
                     if bg_batch_rect.can_flush() {
                         let line = last_line.unwrap_or(line);
-                        frame.fill(
-                            &bg_batch_rect.build(line),
-                            bg_batch_rect.color,
-                        );
+                        frame.fill(&bg_batch_rect.build(line), bg_batch_rect.color);
                     }
 
                     last_line = Some(line);
@@ -537,10 +508,7 @@ impl Widget<Event, Theme, iced::Renderer> for TerminalView<'_> {
                     } else {
                         // New colored run (or non-contiguous): flush previous run if any
                         if bg_batch_rect.can_flush() {
-                            frame.fill(
-                                &bg_batch_rect.build(line),
-                                bg_batch_rect.color,
-                            );
+                            frame.fill(&bg_batch_rect.build(line), bg_batch_rect.color);
                         }
 
                         // Start a new run but do not draw yet; wait for potential extensions
@@ -565,8 +533,7 @@ impl Widget<Event, Theme, iced::Renderer> for TerminalView<'_> {
 
                 // Draw hovered hyperlink underline (rare; keep per-cell for correctness)
                 if content.hovered_hyperlink.as_ref().is_some_and(|range| {
-                    range.contains(&indexed.point)
-                        && range.contains(&state.mouse_position_on_grid)
+                    range.contains(&indexed.point) && range.contains(&state.mouse_position_on_grid)
                 }) || indexed.cell.flags.contains(cell::Flags::UNDERLINE)
                 {
                     let underline_height = y + cell_size.height;
@@ -586,19 +553,15 @@ impl Widget<Event, Theme, iced::Renderer> for TerminalView<'_> {
                 if content.grid.cursor.point == indexed.point
                     && content.terminal_mode.contains(TermMode::SHOW_CURSOR)
                 {
-                    let cursor_color =
-                        self.term.theme.get_color(content.cursor.fg);
+                    let cursor_color = self.term.theme.get_color(content.cursor.fg);
                     match content.cursor_shape {
                         CursorShape::Block => {
-                            let cursor_rect =
-                                Path::rectangle(Point::new(x, y), cell_size);
+                            let cursor_rect = Path::rectangle(Point::new(x, y), cell_size);
                             frame.fill(&cursor_rect, cursor_color);
                         }
                         CursorShape::Beam => {
-                            let beam = Path::rectangle(
-                                Point::new(x, y),
-                                Size::new(2.0, cell_size.height),
-                            );
+                            let beam =
+                                Path::rectangle(Point::new(x, y), Size::new(2.0, cell_size.height));
                             frame.fill(&beam, cursor_color);
                         }
                         CursorShape::Underline => {
@@ -610,8 +573,7 @@ impl Widget<Event, Theme, iced::Renderer> for TerminalView<'_> {
                             frame.fill(&ul, cursor_color);
                         }
                         _ => {
-                            let cursor_rect =
-                                Path::rectangle(Point::new(x, y), cell_size);
+                            let cursor_rect = Path::rectangle(Point::new(x, y), cell_size);
                             frame.fill(&cursor_rect, cursor_color);
                         }
                     }
@@ -683,9 +645,8 @@ impl Widget<Event, Theme, iced::Renderer> for TerminalView<'_> {
         self.handle_focus(event, state, is_cursor_in_layout);
 
         // Emit context menu event on right-click
-        if let iced::Event::Mouse(iced::mouse::Event::ButtonPressed(
-            iced::mouse::Button::Right,
-        )) = event
+        if let iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Right)) =
+            event
             && is_cursor_in_layout
             && let Some(pos) = cursor.position()
         {
@@ -697,13 +658,8 @@ impl Widget<Event, Theme, iced::Renderer> for TerminalView<'_> {
                 // SAFETY: is_cursor_in_layout is true only when cursor.position() is Some
                 #[allow(clippy::unwrap_used)]
                 let cursor_pos = cursor.position().unwrap();
-                self.handle_mouse_event(
-                    state,
-                    layout.position(),
-                    cursor_pos,
-                    mouse_event,
-                )
-            },
+                self.handle_mouse_event(state, layout.position(), cursor_pos, mouse_event)
+            }
             iced::Event::Keyboard(keyboard_event) => {
                 if !state.is_focused() {
                     return;
@@ -712,7 +668,7 @@ impl Widget<Event, Theme, iced::Renderer> for TerminalView<'_> {
                 self.handle_keyboard_event(state, clipboard, keyboard_event)
                     .into_iter()
                     .collect()
-            },
+            }
             _ => Vec::new(),
         };
 
@@ -735,10 +691,8 @@ impl Widget<Event, Theme, iced::Renderer> for TerminalView<'_> {
     ) -> iced_core::mouse::Interaction {
         let state = tree.state.downcast_ref::<TerminalViewState>();
         let mut cursor_mode = iced_core::mouse::Interaction::Idle;
-        let terminal_mode =
-            self.term.backend.renderable_content().terminal_mode;
-        if self.is_cursor_in_layout(cursor, layout)
-            && !terminal_mode.contains(TermMode::SGR_MOUSE)
+        let terminal_mode = self.term.backend.renderable_content().terminal_mode;
+        if self.is_cursor_in_layout(cursor, layout) && !terminal_mode.contains(TermMode::SGR_MOUSE)
         {
             cursor_mode = iced_core::mouse::Interaction::Text;
         }
@@ -850,8 +804,8 @@ impl BackgroundRect {
     }
 
     fn build(&self, line: i32) -> Path {
-        let flush_y = self.layout_offset_y
-            + ((line as f32 + self.display_offset) * self.cell_height);
+        let flush_y =
+            self.layout_offset_y + ((line as f32 + self.display_offset) * self.cell_height);
         Path::rectangle(
             Point::new(self.start_x, flush_y),
             Size::new(self.width, self.cell_height),
@@ -863,9 +817,7 @@ impl BackgroundRect {
     }
 
     fn can_extend(&self, bg: Color, x: f32) -> bool {
-        self.is_active
-            && bg == self.color
-            && (self.start_x + self.width - x).abs() < f32::EPSILON
+        self.is_active && bg == self.color && (self.start_x + self.width - x).abs() < f32::EPSILON
     }
 
     fn extend(&mut self, value: f32) {
@@ -1033,10 +985,7 @@ mod tests {
             );
 
             assert_eq!(commands.len(), 1);
-            assert!(matches!(
-                commands[0],
-                Command::SelectUpdate((95.0, 145.0))
-            ));
+            assert!(matches!(commands[0], Command::SelectUpdate((95.0, 145.0))));
         }
 
         #[test]
@@ -1074,8 +1023,7 @@ mod tests {
         }
 
         #[test]
-        fn generates_drag_update_command_when_dragged_in_srg_mode_with_key_mods(
-        ) {
+        fn generates_drag_update_command_when_dragged_in_srg_mode_with_key_mods() {
             let mut state = TerminalViewState::new();
             state.keyboard_modifiers = Modifiers::SHIFT;
             state.is_dragged = true; // Simulate an ongoing drag operation
@@ -1094,10 +1042,7 @@ mod tests {
             );
 
             assert_eq!(commands.len(), 1);
-            assert!(matches!(
-                commands[0],
-                Command::SelectUpdate((95.0, 145.0))
-            ));
+            assert!(matches!(commands[0], Command::SelectUpdate((95.0, 145.0))));
         }
 
         #[test]
@@ -1120,10 +1065,7 @@ mod tests {
             );
 
             assert_eq!(commands.len(), 2);
-            assert!(matches!(
-                commands[0],
-                Command::SelectUpdate((95.0, 145.0))
-            ));
+            assert!(matches!(commands[0], Command::SelectUpdate((95.0, 145.0))));
             assert!(matches!(
                 commands[1],
                 Command::ProcessLink(

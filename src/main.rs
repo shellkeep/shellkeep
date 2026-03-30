@@ -210,6 +210,3 @@ fn read_default_gateway() -> Option<String> {
     }
     None
 }
-
-
-

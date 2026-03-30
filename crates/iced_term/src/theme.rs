@@ -5,7 +5,7 @@
 
 use crate::settings::ThemeSettings;
 use alacritty_terminal::vte::ansi::{self, NamedColor};
-use iced::{widget::container, Color};
+use iced::{Color, widget::container};
 use std::collections::HashMap;
 
 pub(crate) trait TerminalStyle {
@@ -138,7 +138,7 @@ impl Theme {
                     Some(color) => *color,
                     None => Color::from_rgb8(0, 0, 0),
                 }
-            },
+            }
             ansi::Color::Named(c) => {
                 let color = match c {
                     NamedColor::Foreground => &self.palette.foreground,
@@ -161,11 +161,9 @@ impl Theme {
                     NamedColor::BrightMagenta => &self.palette.bright_magenta,
                     NamedColor::BrightCyan => &self.palette.bright_cyan,
                     NamedColor::BrightWhite => &self.palette.bright_white,
-                    NamedColor::BrightForeground => {
-                        match &self.palette.bright_foreground {
-                            Some(color) => color,
-                            None => &self.palette.foreground,
-                        }
+                    NamedColor::BrightForeground => match &self.palette.bright_foreground {
+                        Some(color) => color,
+                        None => &self.palette.foreground,
                     },
                     // Dim terminal colors
                     NamedColor::DimForeground => &self.palette.dim_foreground,
@@ -180,9 +178,8 @@ impl Theme {
                     _ => &self.palette.background,
                 };
 
-                hex_to_color(color)
-                    .unwrap_or_else(|_| panic!("invalid color {}", color))
-            },
+                hex_to_color(color).unwrap_or_else(|_| panic!("invalid color {}", color))
+            }
         }
     }
 }
@@ -232,10 +229,7 @@ impl TerminalStyle for Theme {
             background: Some(
                 hex_to_color(&self.palette.background)
                     .unwrap_or_else(|_| {
-                        panic!(
-                            "invalid background color {}",
-                            self.palette.background
-                        )
+                        panic!("invalid background color {}", self.palette.background)
                     })
                     .into(),
             ),

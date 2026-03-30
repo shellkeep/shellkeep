@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 shellkeep contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use crate::app::view::styles;
 use crate::app::Message;
+use crate::app::view::styles;
 use crate::{RENAME_INPUT_ID, ShellKeep};
 
 use iced::widget::{button, container, mouse_area, row, text, text_input};

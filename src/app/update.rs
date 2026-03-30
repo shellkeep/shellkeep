@@ -1,21 +1,21 @@
 // SPDX-FileCopyrightText: 2026 shellkeep contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use super::message::Message;
 use super::ShellKeep;
+use super::message::Message;
 use super::session::{EstablishParams, establish_ssh_session};
 use super::tab::{ChannelHolder, SPINNER_FRAMES};
 
-use std::sync::Arc;
 use iced::{Task, keyboard, window};
-use iced_term::{AlacrittyColumn, AlacrittyLine, AlacrittyPoint, RegexSearch};
 use iced_term::settings::FontSettings;
+use iced_term::{AlacrittyColumn, AlacrittyLine, AlacrittyPoint, RegexSearch};
 use shellkeep::config::Config;
+use shellkeep::ssh;
 use shellkeep::ssh::manager::ConnKey;
 use shellkeep::state::recent::RecentConnection;
 use shellkeep::state::state_file::StateFile;
-use shellkeep::ssh;
 use shellkeep::tray::{Tray, TrayAction};
+use std::sync::Arc;
 use tokio::sync::Mutex;
 
 pub(crate) const RENAME_INPUT_ID: &str = "rename-tab-input";
@@ -123,8 +123,9 @@ impl ShellKeep {
             | Message::CopyScrollback => self.handle_search_message(message),
 
             // --- State sync messages ---
-            Message::StateSyncerReady(..)
-            | Message::ServerStateLoaded(..) => self.handle_state_sync_message(message),
+            Message::StateSyncerReady(..) | Message::ServerStateLoaded(..) => {
+                self.handle_state_sync_message(message)
+            }
         }
     }
 
@@ -193,13 +194,9 @@ impl ShellKeep {
                 Task::none()
             }
 
-            Message::SshConnected(tab_id, result) => {
-                self.handle_ssh_connected(tab_id, result)
-            }
+            Message::SshConnected(tab_id, result) => self.handle_ssh_connected(tab_id, result),
 
-            Message::ExistingSessionsFound(result) => {
-                self.handle_existing_sessions(result)
-            }
+            Message::ExistingSessionsFound(result) => self.handle_existing_sessions(result),
 
             Message::PasteToTerminal(tab_id, data) => {
                 if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id)
@@ -243,14 +240,10 @@ impl ShellKeep {
                         {
                             let _ = resize_tx.send((cols as u32, rows as u32));
                             tab.needs_initial_resize = false;
-                            tracing::info!(
-                                "tab {tab_id}: sent initial resize {cols}x{rows}"
-                            );
+                            tracing::info!("tab {tab_id}: sent initial resize {cols}x{rows}");
                         }
                     } else {
-                        tracing::info!(
-                            "tab {tab_id}: no terminal widget yet, resize deferred"
-                        );
+                        tracing::info!("tab {tab_id}: no terminal widget yet, resize deferred");
                     }
                 }
 
@@ -304,12 +297,10 @@ impl ShellKeep {
                                     .await
                                     .map_err(|e| e.to_string())?
                                 };
-                                let syncer = ssh::sftp::StateSyncer::new(
-                                    conn_result.handle,
-                                    &client_id,
-                                )
-                                .await
-                                .map_err(|e| e.to_string())?;
+                                let syncer =
+                                    ssh::sftp::StateSyncer::new(conn_result.handle, &client_id)
+                                        .await
+                                        .map_err(|e| e.to_string())?;
                                 Ok(Arc::new(syncer))
                             },
                             |result: Result<Arc<ssh::sftp::StateSyncer>, String>| {
@@ -374,8 +365,7 @@ impl ShellKeep {
                     self.show_lock_dialog = true;
                     self.lock_info_text = e.clone();
                     self.lock_target_tab = Some(tab_id);
-                } else if el.contains("auth failed") || el.contains("authentication failed")
-                {
+                } else if el.contains("auth failed") || el.contains("authentication failed") {
                     // FR-CONN-17: descriptive auth error (password already tried)
                     self.error = Some(format!(
                         "Authentication failed. Check your SSH key or try a different identity file.\n\
@@ -398,16 +388,12 @@ impl ShellKeep {
         }
     }
 
-    fn handle_existing_sessions(
-        &mut self,
-        result: Result<Vec<String>, String>,
-    ) -> Task<Message> {
+    fn handle_existing_sessions(&mut self, result: Result<Vec<String>, String>) -> Task<Message> {
         if let Err(ref e) = result {
             tracing::warn!("failed to list existing sessions: {e}");
         }
         if let Ok(server_sessions) = result {
-            let saved_state =
-                StateFile::load_local(&StateFile::local_cache_path(&self.client_id));
+            let saved_state = StateFile::load_local(&StateFile::local_cache_path(&self.client_id));
 
             // FR-ENV-05: restore last environment from saved state
             if let Some(ref saved) = saved_state
@@ -1359,9 +1345,7 @@ impl ShellKeep {
                 self.password_input = val;
                 Task::none()
             }
-            Message::PasswordSubmit => {
-                self.handle_password_submit()
-            }
+            Message::PasswordSubmit => self.handle_password_submit(),
             Message::PasswordCancel => {
                 self.show_password_dialog = false;
                 self.password_input.clear();
@@ -1377,9 +1361,7 @@ impl ShellKeep {
             }
 
             // FR-LOCK-05: lock conflict — take over
-            Message::LockTakeOver => {
-                self.handle_lock_takeover()
-            }
+            Message::LockTakeOver => self.handle_lock_takeover(),
             Message::LockCancel => {
                 self.show_lock_dialog = false;
                 if let Some(tab_id) = self.lock_target_tab.take()
@@ -1504,9 +1486,7 @@ impl ShellKeep {
 
     fn handle_timer_message(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::AutoReconnectTick => {
-                self.handle_auto_reconnect()
-            }
+            Message::AutoReconnectTick => self.handle_auto_reconnect(),
 
             // FR-RECONNECT-08: network change detected — force immediate reconnect
             Message::NetworkChanged => {
@@ -1657,9 +1637,7 @@ impl ShellKeep {
             }
 
             // FR-CONFIG-04: config file changed, reload hot-reloadable settings
-            Message::ConfigReloaded => {
-                self.handle_config_reload()
-            }
+            Message::ConfigReloaded => self.handle_config_reload(),
 
             _ => Task::none(),
         }
@@ -1679,9 +1657,7 @@ impl ShellKeep {
             .count();
 
         if reconnecting_count >= 5 {
-            tracing::debug!(
-                "skipping auto-reconnect: {reconnecting_count} already in progress"
-            );
+            tracing::debug!("skipping auto-reconnect: {reconnecting_count} already in progress");
             return Task::none();
         }
 
@@ -1705,8 +1681,7 @@ impl ShellKeep {
             use rand::Rng;
             let jitter_range = capped / 4;
             let jitter = if jitter_range > 0 {
-                rand::rng().random_range(0..jitter_range * 2) as i64
-                    - jitter_range as i64
+                rand::rng().random_range(0..jitter_range * 2) as i64 - jitter_range as i64
             } else {
                 0
             };
@@ -1809,7 +1784,11 @@ impl ShellKeep {
             // FR-TABS-11: context menu paste — read clipboard and send to terminal
             Message::ContextMenuPaste => {
                 self.context_menu = None;
-                let tab_id = self.tabs.get(self.active_tab).map(|t| t.id).unwrap_or(super::tab::TabId(0));
+                let tab_id = self
+                    .tabs
+                    .get(self.active_tab)
+                    .map(|t| t.id)
+                    .unwrap_or(super::tab::TabId(0));
                 iced::clipboard::read().map(move |text| {
                     if let Some(text) = text {
                         Message::PasteToTerminal(tab_id, text.into_bytes())
@@ -1892,8 +1871,7 @@ impl ShellKeep {
         // Handle shutdown after terminal borrow is released
         if shutdown && let Some(tab) = self.tabs.iter_mut().find(|t| t.id == id) {
             tab.terminal = None;
-            if tab.auto_reconnect
-                && tab.reconnect_attempts < self.config.ssh.reconnect_max_attempts
+            if tab.auto_reconnect && tab.reconnect_attempts < self.config.ssh.reconnect_max_attempts
             {
                 tab.reconnect_attempts += 1;
                 tab.reconnect_started = Some(std::time::Instant::now());
@@ -1914,9 +1892,7 @@ impl ShellKeep {
             && let Some(ref resize_tx) = tab.ssh_resize_tx
         {
             if tab.needs_initial_resize {
-                tracing::info!(
-                    "tab {id}: initial terminal size {cols}x{rows}, sending to SSH"
-                );
+                tracing::info!("tab {id}: initial terminal size {cols}x{rows}, sending to SSH");
                 tab.needs_initial_resize = false;
             }
             let _ = resize_tx.send((cols, rows));
@@ -2076,12 +2052,7 @@ impl ShellKeep {
                         self.state_syncer = Some(syncer);
                         // FR-STATE-02: read server state (takes precedence over local)
                         Task::perform(
-                            async move {
-                                syncer_clone
-                                    .read_state()
-                                    .await
-                                    .map_err(|e| e.to_string())
-                            },
+                            async move { syncer_clone.read_state().await.map_err(|e| e.to_string()) },
                             Message::ServerStateLoaded,
                         )
                     }

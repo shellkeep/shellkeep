@@ -41,7 +41,6 @@ pub struct SshHandler {
     pub pending_host_key: Arc<std::sync::Mutex<Option<HostKeyPrompt>>>,
 }
 
-
 impl russh::client::Handler for SshHandler {
     type Error = russh::Error;
 

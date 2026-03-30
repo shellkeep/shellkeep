@@ -6,9 +6,9 @@
 use crate::settings::FontSettings;
 use iced::{Font, Size};
 use iced_core::{
+    Text,
     alignment::Vertical,
     text::{Alignment, LineHeight, Paragraph, Shaping as TextShaping},
-    Text,
 };
 use iced_graphics::text::paragraph;
 
@@ -25,9 +25,7 @@ impl TermFont {
         // FR-TERMINAL-10: If a font family name is specified, create a named font.
         let font_type = if let Some(ref family) = settings.font_family {
             Font {
-                family: iced::font::Family::Name(
-                    Box::leak(family.clone().into_boxed_str()),
-                ),
+                family: iced::font::Family::Name(Box::leak(family.clone().into_boxed_str())),
                 ..Font::MONOSPACE
             }
         } else {
@@ -37,25 +35,16 @@ impl TermFont {
             size: settings.size,
             font_type,
             scale_factor: settings.scale_factor,
-            measure: font_measure(
-                settings.size,
-                settings.scale_factor,
-                font_type,
-            ),
+            measure: font_measure(settings.size, settings.scale_factor, font_type),
         }
     }
 
     pub fn sync(&mut self) {
-        self.measure =
-            font_measure(self.size, self.scale_factor, self.font_type)
+        self.measure = font_measure(self.size, self.scale_factor, self.font_type)
     }
 }
 
-fn font_measure(
-    font_size: f32,
-    scale_factor: f32,
-    font_type: Font,
-) -> Size<f32> {
+fn font_measure(font_size: f32, scale_factor: f32, font_type: Font) -> Size<f32> {
     let paragraph = paragraph::Paragraph::with_text(Text {
         content: "m",
         font: font_type,

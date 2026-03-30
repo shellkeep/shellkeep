@@ -8,9 +8,9 @@ pub(crate) mod styles;
 mod tab_bar;
 mod welcome;
 
-use crate::app::tab::SPINNER_FRAMES;
-use crate::app::Message;
 use crate::ShellKeep;
+use crate::app::Message;
+use crate::app::tab::SPINNER_FRAMES;
 
 use iced::widget::{
     Space, button, center, column, container, mouse_area, row, stack, text, text_input,

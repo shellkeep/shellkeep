@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use iced::{keyboard, window, Point, Size};
+use iced::{Point, Size, keyboard, window};
 
 use shellkeep::ssh;
 

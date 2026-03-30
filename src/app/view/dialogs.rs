@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2026 shellkeep contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use crate::app::view::styles;
-use crate::app::Message;
 use crate::ShellKeep;
+use crate::app::Message;
+use crate::app::view::styles;
 
 use iced::widget::{
     Space, button, center, column, container, mouse_area, row, scrollable, stack, text, text_input,

@@ -22,7 +22,9 @@ const REMOTE_STATE_DIR: &str = ".terminal-state";
 const SYNC_DEBOUNCE: Duration = Duration::from_millis(500);
 
 /// Open an SFTP session on an existing SSH connection.
-pub async fn open_sftp(handle: &russh::client::Handle<SshHandler>) -> Result<SftpSession, SshError> {
+pub async fn open_sftp(
+    handle: &russh::client::Handle<SshHandler>,
+) -> Result<SftpSession, SshError> {
     let channel = handle
         .channel_open_session()
         .await
@@ -47,7 +49,11 @@ pub async fn read_file(sftp: &SftpSession, path: &str) -> Result<Vec<u8>, SshErr
 /// Write a file atomically via SFTP: write to .tmp, then rename.
 /// FR-STATE-05: uses posix-rename semantics (atomic overwrite). Falls back to
 /// unlink + rename if the rename fails (e.g., server lacks posix-rename extension).
-pub async fn write_file_atomic(sftp: &SftpSession, path: &str, data: &[u8]) -> Result<(), SshError> {
+pub async fn write_file_atomic(
+    sftp: &SftpSession,
+    path: &str,
+    data: &[u8],
+) -> Result<(), SshError> {
     let tmp_path = format!("{path}.tmp");
     sftp.write(&tmp_path, data)
         .await
@@ -177,10 +183,14 @@ impl StateSyncer {
         match &self.transport {
             Transport::Sftp(sftp) => match read_file(sftp, &self.state_path).await {
                 Ok(data) => Ok(Some(String::from_utf8_lossy(&data).to_string())),
-                Err(e) if {
-                    let msg = e.to_string();
-                    msg.contains("NoSuchFile") || msg.contains("No such file")
-                } => Ok(None),
+                Err(e)
+                    if {
+                        let msg = e.to_string();
+                        msg.contains("NoSuchFile") || msg.contains("No such file")
+                    } =>
+                {
+                    Ok(None)
+                }
                 Err(e) => Err(e),
             },
             Transport::Shell => {

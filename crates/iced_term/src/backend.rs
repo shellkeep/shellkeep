@@ -5,9 +5,7 @@
 
 use crate::actions::Action;
 use crate::settings::BackendSettings;
-use alacritty_terminal::event::{
-    Event, EventListener, Notify, OnResize, WindowSize,
-};
+use alacritty_terminal::event::{Event, EventListener, Notify, OnResize, WindowSize};
 use alacritty_terminal::event_loop::{EventLoop, Msg, Notifier};
 use alacritty_terminal::grid::{Dimensions, Scroll};
 use alacritty_terminal::index::{Column, Direction, Line, Point, Side};
@@ -15,10 +13,10 @@ use alacritty_terminal::selection::{Selection, SelectionRange, SelectionType};
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::search::{Match, RegexIter, RegexSearch};
 use alacritty_terminal::term::{
-    self, cell::Cell, test::TermSize, viewport_to_point, Term, TermMode,
+    self, Term, TermMode, cell::Cell, test::TermSize, viewport_to_point,
 };
 use alacritty_terminal::vte::ansi::{CursorShape, CursorStyle};
-use alacritty_terminal::{tty, Grid};
+use alacritty_terminal::{Grid, tty};
 use iced::keyboard::Modifiers;
 use iced_core::Size;
 use std::borrow::Cow;
@@ -199,8 +197,7 @@ impl Backend {
 
         let term = Arc::new(FairMutex::new(term));
 
-        let pty_event_loop =
-            EventLoop::new(term.clone(), event_proxy, pty, false, false)?;
+        let pty_event_loop = EventLoop::new(term.clone(), event_proxy, pty, false, false)?;
 
         let notifier = Notifier(pty_event_loop.channel());
 
@@ -279,38 +276,38 @@ impl Backend {
                 match event {
                     Event::Exit => {
                         action = Action::Shutdown;
-                    },
+                    }
                     Event::Title(title) => {
                         action = Action::ChangeTitle(title);
-                    },
+                    }
                     Event::PtyWrite(pty) => {
                         self.write(pty.into_bytes());
-                    },
-                    _ => {},
+                    }
+                    _ => {}
                 };
-            },
+            }
             Command::Write(input) => {
                 self.write(input);
                 term.scroll_display(Scroll::Bottom);
-            },
+            }
             Command::Scroll(delta) => {
                 self.scroll(&mut term, delta);
-            },
+            }
             Command::Resize(layout_size, font_measure) => {
                 self.resize(&mut term, layout_size, font_measure);
-            },
+            }
             Command::SelectStart(selection_type, (x, y)) => {
                 self.start_selection(&mut term, selection_type, x, y);
-            },
+            }
             Command::SelectUpdate((x, y)) => {
                 self.update_selection(&mut term, x, y);
-            },
+            }
             Command::ProcessLink(link_action, point) => {
                 self.process_link_action(&term, link_action, point);
-            },
+            }
             Command::MouseReport(button, modifiers, point, pressed) => {
                 self.process_mouse_report(button, modifiers, point, pressed);
-            },
+            }
         };
 
         action
@@ -324,18 +321,15 @@ impl Backend {
     ) {
         match link_action {
             LinkAction::Hover => {
-                self.last_content.hovered_hyperlink = self.regex_match_at(
-                    terminal,
-                    point,
-                    &mut self.url_regex.clone(),
-                );
-            },
+                self.last_content.hovered_hyperlink =
+                    self.regex_match_at(terminal, point, &mut self.url_regex.clone());
+            }
             LinkAction::Clear => {
                 self.last_content.hovered_hyperlink = None;
-            },
+            }
             LinkAction::Open => {
                 self.open_link();
-            },
+            }
         };
     }
 
@@ -377,20 +371,14 @@ impl Backend {
         }
 
         match MouseMode::from(self.last_content.terminal_mode) {
-            MouseMode::Sgr => {
-                self.sgr_mouse_report(point, button as u8 + mods, pressed)
-            },
+            MouseMode::Sgr => self.sgr_mouse_report(point, button as u8 + mods, pressed),
             MouseMode::Normal(is_utf8) => {
                 if pressed {
-                    self.normal_mouse_report(
-                        point,
-                        button as u8 + mods,
-                        is_utf8,
-                    )
+                    self.normal_mouse_report(point, button as u8 + mods, is_utf8)
                 } else {
                     self.normal_mouse_report(point, 3 + mods, is_utf8)
                 }
-            },
+            }
         }
     }
 
@@ -447,12 +435,7 @@ impl Backend {
         x: f32,
         y: f32,
     ) {
-        let location = Self::selection_point(
-            x,
-            y,
-            &self.size,
-            terminal.grid().display_offset(),
-        );
+        let location = Self::selection_point(x, y, &self.size, terminal.grid().display_offset());
         terminal.selection = Some(Selection::new(
             selection_type,
             location,
@@ -460,16 +443,10 @@ impl Backend {
         ));
     }
 
-    fn update_selection(
-        &mut self,
-        terminal: &mut Term<EventProxy>,
-        x: f32,
-        y: f32,
-    ) {
+    fn update_selection(&mut self, terminal: &mut Term<EventProxy>, x: f32, y: f32) {
         let display_offset = terminal.grid().display_offset();
         if let Some(ref mut selection) = terminal.selection {
-            let location =
-                Self::selection_point(x, y, &self.size, display_offset);
+            let location = Self::selection_point(x, y, &self.size, display_offset);
             selection.update(location, self.selection_side(x));
         }
     }
@@ -516,10 +493,8 @@ impl Backend {
             self.size.cell_width = size.width as u16;
         }
 
-        let lines = (self.size.layout_height / self.size.cell_height as f32)
-            .floor() as u16;
-        let cols = (self.size.layout_width / self.size.cell_width as f32)
-            .floor() as u16;
+        let lines = (self.size.layout_height / self.size.cell_height as f32).floor() as u16;
+        let cols = (self.size.layout_width / self.size.cell_width as f32).floor() as u16;
         if lines > 0 && cols > 0 {
             self.size.num_lines = lines;
             self.size.num_cols = cols;
@@ -678,8 +653,7 @@ impl Backend {
         point: Point,
         regex: &mut RegexSearch,
     ) -> Option<Match> {
-        visible_regex_match_iter(terminal, regex)
-            .find(|rm| rm.contains(&point))
+        visible_regex_match_iter(terminal, regex).find(|rm| rm.contains(&point))
     }
 }
 
@@ -691,8 +665,7 @@ fn visible_regex_match_iter<'a>(
 ) -> impl Iterator<Item = Match> + 'a {
     let viewport_start = Line(-(term.grid().display_offset() as i32));
     let viewport_end = viewport_start + term.bottommost_line();
-    let mut start =
-        term.line_search_left(Point::new(viewport_start, Column(0)));
+    let mut start = term.line_search_left(Point::new(viewport_start, Column(0)));
     let mut end = term.line_search_right(Point::new(viewport_end, Column(0)));
     start.line = start.line.max(viewport_start - 100);
     end.line = end.line.min(viewport_end + 100);

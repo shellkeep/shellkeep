@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2026 shellkeep contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use crate::app::view::styles;
-use crate::app::Message;
 use crate::ShellKeep;
+use crate::app::Message;
+use crate::app::view::styles;
 
 use iced::widget::{Space, button, center, column, row, scrollable, text, text_input};
 use iced::{Color, Element, Length};
@@ -17,7 +17,8 @@ impl ShellKeep {
             .color(Color::from_rgb8(0x89, 0xb4, 0xfa));
 
         // FR-UI-03: first-use experience — show extended welcome on first run
-        let is_first_use = self.recent.connections.is_empty() && !shellkeep::config::config_file_exists();
+        let is_first_use =
+            self.recent.connections.is_empty() && !shellkeep::config::config_file_exists();
 
         let subtitle: Element<'_, Message> = if is_first_use {
             // FR-UI-03: first-use with client-id naming input

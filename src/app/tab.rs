@@ -33,7 +33,6 @@ pub(crate) struct ConnParams {
     pub(crate) identity_file: Option<String>,
 }
 
-
 /// Connection lifecycle state for a tab.
 ///
 /// This enum models the full connection state machine, replacing scattered
@@ -48,9 +47,7 @@ pub(crate) enum ConnectionState {
         pending_channel: ChannelHolder,
     },
     /// Fully connected with an active SSH channel.
-    Connected {
-        channel: ChannelHolder,
-    },
+    Connected { channel: ChannelHolder },
     /// Connection lost; automatic reconnection in progress.
     Reconnecting {
         attempt: u32,
@@ -131,7 +128,10 @@ pub(crate) struct Tab {
 }
 
 /// Build terminal font settings from app config and current font size.
-pub(crate) fn make_font_settings(config: &shellkeep::config::Config, font_size: f32) -> iced_term::settings::FontSettings {
+pub(crate) fn make_font_settings(
+    config: &shellkeep::config::Config,
+    font_size: f32,
+) -> iced_term::settings::FontSettings {
     iced_term::settings::FontSettings {
         size: font_size,
         font_family: config.terminal.font_family.clone(),
@@ -140,14 +140,18 @@ pub(crate) fn make_font_settings(config: &shellkeep::config::Config, font_size: 
 }
 
 /// Build terminal theme settings from app config.
-pub(crate) fn make_theme_settings(config: &shellkeep::config::Config) -> iced_term::settings::ThemeSettings {
+pub(crate) fn make_theme_settings(
+    config: &shellkeep::config::Config,
+) -> iced_term::settings::ThemeSettings {
     iced_term::settings::ThemeSettings {
         color_pallete: Box::new(crate::theme::resolve_theme(&config.general.theme)),
     }
 }
 
 /// Build backend settings with cursor shape from config.
-pub(crate) fn make_backend_settings(config: &shellkeep::config::Config) -> iced_term::settings::BackendSettings {
+pub(crate) fn make_backend_settings(
+    config: &shellkeep::config::Config,
+) -> iced_term::settings::BackendSettings {
     iced_term::settings::BackendSettings {
         cursor_shape: config.terminal.cursor_shape.clone(),
         ..iced_term::settings::BackendSettings::default()
@@ -156,6 +160,6 @@ pub(crate) fn make_backend_settings(config: &shellkeep::config::Config) -> iced_
 
 /// FR-RECONNECT-02: braille spinner frames for reconnection animation
 pub(crate) const SPINNER_FRAMES: &[char] = &[
-    '\u{280B}', '\u{2819}', '\u{2839}', '\u{2838}', '\u{283C}', '\u{2834}', '\u{2826}',
-    '\u{2827}', '\u{2807}', '\u{280F}',
+    '\u{280B}', '\u{2819}', '\u{2839}', '\u{2838}', '\u{283C}', '\u{2834}', '\u{2826}', '\u{2827}',
+    '\u{2807}', '\u{280F}',
 ];

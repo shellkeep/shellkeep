@@ -3,24 +3,24 @@
 
 //! Terminal state, event handling, and command dispatch.
 
+use crate::AlacrittyEvent;
 use crate::actions::Action;
 use crate::backend;
 use crate::bindings::{Binding, BindingAction, BindingsLayout, InputKind};
-use alacritty_terminal::index::Point;
-use alacritty_terminal::term::search::{Match, RegexSearch};
 use crate::font::TermFont;
 use crate::settings::{FontSettings, Settings, ThemeSettings};
 use crate::theme::{ColorPalette, Theme};
-use crate::AlacrittyEvent;
+use alacritty_terminal::index::Point;
+use alacritty_terminal::term::search::{Match, RegexSearch};
+use iced::Subscription;
 use iced::futures::stream::BoxStream;
 use iced::futures::{SinkExt, StreamExt};
 use iced::widget::canvas::Cache;
-use iced::Subscription;
 use std::hash::{Hash, Hasher};
 use std::io::Result;
 use std::sync::Arc;
-use tokio::sync::mpsc::{self, Receiver};
 use tokio::sync::Mutex;
+use tokio::sync::mpsc::{self, Receiver};
 
 #[derive(Debug, Clone)]
 pub enum Event {
@@ -61,11 +61,7 @@ impl Terminal {
             theme,
             bindings: BindingsLayout::default(),
             cache: Cache::default(),
-            backend: backend::Backend::new(
-                id,
-                backend_event_tx,
-                settings.backend,
-            )?,
+            backend: backend::Backend::new(id, backend_event_tx, settings.backend)?,
             backend_event_rx: Arc::new(Mutex::new(backend_event_rx)),
         })
     }
@@ -139,16 +135,16 @@ impl Terminal {
         match cmd {
             Command::ChangeTheme(color_pallete) => {
                 self.theme = Theme::new(ThemeSettings::new(color_pallete));
-            },
+            }
             Command::ChangeFont(font_settings) => {
                 self.font = TermFont::new(font_settings);
-            },
+            }
             Command::AddBindings(bindings) => {
                 self.bindings.add_bindings(bindings);
-            },
+            }
             Command::ProxyToBackend(cmd) => {
                 action = self.backend.handle(cmd);
-            },
+            }
         };
 
         self.sync_and_redraw();
@@ -156,11 +152,7 @@ impl Terminal {
     }
 
     /// Search forward for the next match of the compiled regex, starting from origin.
-    pub fn search_next(
-        &mut self,
-        regex: &mut RegexSearch,
-        origin: Point,
-    ) -> Option<Match> {
+    pub fn search_next(&mut self, regex: &mut RegexSearch, origin: Point) -> Option<Match> {
         let result = self.backend.search_next(regex, origin);
         self.backend.sync();
         self.redraw();
@@ -168,11 +160,7 @@ impl Terminal {
     }
 
     /// Search backward for the previous match of the compiled regex, starting from origin.
-    pub fn search_prev(
-        &mut self,
-        regex: &mut RegexSearch,
-        origin: Point,
-    ) -> Option<Match> {
+    pub fn search_prev(&mut self, regex: &mut RegexSearch, origin: Point) -> Option<Match> {
         let result = self.backend.search_prev(regex, origin);
         self.backend.sync();
         self.redraw();
@@ -208,9 +196,7 @@ impl Hash for TerminalSubscriptionData {
     }
 }
 
-fn terminal_subscription_stream(
-    data: &TerminalSubscriptionData,
-) -> BoxStream<'static, Event> {
+fn terminal_subscription_stream(data: &TerminalSubscriptionData) -> BoxStream<'static, Event> {
     let id = data.id;
     let event_receiver = data.event_receiver.clone();
     iced::stream::channel(1000, async move |mut output| {
@@ -224,14 +210,17 @@ fn terminal_subscription_stream(
                     };
 
                     if output
-                        .send(Event::BackendCall(id, backend::Command::ProcessAlacrittyEvent(event)))
+                        .send(Event::BackendCall(
+                            id,
+                            backend::Command::ProcessAlacrittyEvent(event),
+                        ))
                         .await
                         .is_err()
                     {
                         // Receiver dropped — app is shutting down or tab was removed
                         break;
                     }
-                },
+                }
                 None => {
                     if !shutdown {
                         // Channel closed without Exit event — terminal was dropped
@@ -239,7 +228,7 @@ fn terminal_subscription_stream(
                         eprintln!("iced_term stream {id}: terminal event channel closed");
                     }
                     break;
-                },
+                }
             }
         }
     })

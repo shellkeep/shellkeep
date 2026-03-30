@@ -10,8 +10,8 @@ use iced::futures::stream::BoxStream;
 use iced::futures::{SinkExt, StreamExt};
 use tokio::sync::Mutex;
 
-use crate::app::tab::{ChannelHolder, ConnParams, ResizeRxHolder, TabId, WriterRxHolder};
 use crate::app::Message;
+use crate::app::tab::{ChannelHolder, ConnParams, ResizeRxHolder, TabId, WriterRxHolder};
 use shellkeep::error::SshError;
 use shellkeep::ssh::manager::ConnectionManager;
 use shellkeep::state::history;
@@ -179,7 +179,9 @@ pub(crate) async fn establish_ssh_session(
     };
 
     if tmux_version_output.contains("NOT_FOUND") || tmux_version_output.trim().is_empty() {
-        return Err(SshError::Channel("tmux not found on server — install tmux >= 3.0 to use shellkeep".to_string()));
+        return Err(SshError::Channel(
+            "tmux not found on server — install tmux >= 3.0 to use shellkeep".to_string(),
+        ));
     }
 
     if let Some(ver_str) = tmux_version_output.trim().strip_prefix("tmux ")
@@ -214,8 +216,7 @@ pub(crate) async fn establish_ssh_session(
 
     {
         let h = handle_arc.lock().await;
-        ssh::lock::acquire_lock(&h, &params.client_id, keepalive_timeout)
-            .await?;
+        ssh::lock::acquire_lock(&h, &params.client_id, keepalive_timeout).await?;
     }
 
     // FR-RECONNECT-03: verify tmux session exists before reattaching, create if needed
@@ -239,10 +240,12 @@ pub(crate) async fn establish_ssh_session(
     };
 
     if !check.trim().contains("EXISTS") {
-        tracing::info!("tmux session {} not found, creating new one", params.tmux_session);
+        tracing::info!(
+            "tmux session {} not found, creating new one",
+            params.tmux_session
+        );
         let h = handle_arc.lock().await;
-        ssh::tmux::create_session_russh(&h, &params.tmux_session)
-            .await?;
+        ssh::tmux::create_session_russh(&h, &params.tmux_session).await?;
     }
 
     // Open PTY channel and attach to tmux session
