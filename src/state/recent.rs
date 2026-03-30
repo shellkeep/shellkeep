@@ -43,13 +43,19 @@ impl RecentConnections {
     }
 
     /// Save recent connections to disk.
+    /// NFR-SEC-11: sets 0600 permissions on the file (Unix only).
     pub fn save(&self) {
         let path = Self::file_path();
         if let Some(parent) = path.parent() {
             let _ = fs::create_dir_all(parent);
         }
         if let Ok(data) = serde_json::to_string_pretty(self) {
-            let _ = fs::write(&path, data);
+            let _ = fs::write(&path, &data);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
+            }
         }
     }
 

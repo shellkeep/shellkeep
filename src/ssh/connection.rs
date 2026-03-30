@@ -306,6 +306,9 @@ async fn try_key_auth(
         return Ok(false);
     }
 
+    // NFR-SEC-09: In Rust, private keys are managed by russh-keys which handles
+    // key material. Explicit mlock/bzero is not available for Rust stack vars.
+    // Keys are dropped when the Arc goes out of scope (Rust ownership model).
     tracing::debug!("russh: trying key {key_path}");
     let key = match russh::keys::load_secret_key(path, None) {
         Ok(k) => k,
