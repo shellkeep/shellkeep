@@ -1500,6 +1500,20 @@ impl ShellKeep {
                             tab.ssh_channel_holder = Some(holder);
                             tab.connection_phase = None;
                             tracing::info!("SSH tab {tab_id}: connected, channel ready");
+
+                            // FR-TERMINAL-16: send immediate resize to match actual
+                            // terminal widget size (PTY was opened with default 80x24)
+                            if let Some(ref terminal) = tab.terminal {
+                                let (cols, rows) = terminal.terminal_size();
+                                if cols > 0
+                                    && rows > 0
+                                    && (cols != 80 || rows != 24)
+                                    && let Some(ref resize_tx) = tab.ssh_resize_tx
+                                {
+                                    let _ = resize_tx.send((cols as u32, rows as u32));
+                                    tracing::debug!("tab {tab_id}: initial resize {cols}x{rows}");
+                                }
+                            }
                         }
 
                         // After first successful connect, list existing tmux sessions

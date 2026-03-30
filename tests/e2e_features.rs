@@ -382,3 +382,105 @@ fn test_history_writer_creates_file() {
     // Cleanup
     let _ = std::fs::remove_file(&path);
 }
+
+/// FR-TERMINAL-16: Verify PTY size is correctly set and resize works.
+/// Opens a shell with specific dimensions, checks tput reports match,
+/// then resizes and verifies the new size.
+#[tokio::test]
+#[ignore]
+async fn test_pty_resize() {
+    let handle = connect().await;
+
+    // Open a shell channel with a specific size (120x40)
+    let mut channel = handle.channel_open_session().await.expect("channel open");
+
+    channel
+        .request_pty(false, "xterm-256color", 120, 40, 0, 0, &[])
+        .await
+        .expect("pty request");
+
+    channel.request_shell(false).await.expect("shell request");
+
+    // Wait for shell prompt
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    // Ask the shell for its size
+    channel
+        .data("tput cols; tput lines\n".as_bytes())
+        .await
+        .expect("write tput");
+
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    // Read output
+    let mut output = Vec::new();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        tokio::select! {
+            msg = channel.wait() => {
+                match msg {
+                    Some(russh::ChannelMsg::Data { data }) => {
+                        output.extend_from_slice(&data);
+                        let text = String::from_utf8_lossy(&output);
+                        if text.contains("120") && text.contains("40") {
+                            break;
+                        }
+                    }
+                    Some(russh::ChannelMsg::Eof) | None => break,
+                    _ => {}
+                }
+            }
+            _ = tokio::time::sleep_until(deadline) => break,
+        }
+    }
+
+    let text = String::from_utf8_lossy(&output);
+    assert!(text.contains("120"), "expected 120 cols, got: {text}");
+    assert!(text.contains("40"), "expected 40 lines, got: {text}");
+
+    // Now resize to 80x24 and verify
+    channel
+        .window_change(80, 24, 0, 0)
+        .await
+        .expect("window_change");
+
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+    // Clear output and check again
+    let mut output2 = Vec::new();
+    channel
+        .data("tput cols; tput lines\n".as_bytes())
+        .await
+        .expect("write tput 2");
+
+    let deadline2 = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        tokio::select! {
+            msg = channel.wait() => {
+                match msg {
+                    Some(russh::ChannelMsg::Data { data }) => {
+                        output2.extend_from_slice(&data);
+                        let text = String::from_utf8_lossy(&output2);
+                        // Look for 80 and 24 in the new output
+                        if text.matches("80").count() >= 1 && text.matches("24").count() >= 1 {
+                            break;
+                        }
+                    }
+                    Some(russh::ChannelMsg::Eof) | None => break,
+                    _ => {}
+                }
+            }
+            _ = tokio::time::sleep_until(deadline2) => break,
+        }
+    }
+
+    let text2 = String::from_utf8_lossy(&output2);
+    assert!(
+        text2.contains("80"),
+        "expected 80 cols after resize, got: {text2}"
+    );
+    assert!(
+        text2.contains("24"),
+        "expected 24 lines after resize, got: {text2}"
+    );
+}
