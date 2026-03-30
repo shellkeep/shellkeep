@@ -110,6 +110,11 @@ impl Terminal {
         self.backend.scrollback_text()
     }
 
+    /// FR-TABS-11: Get currently selected text (for context menu copy).
+    pub fn selectable_content(&self) -> String {
+        self.backend.selectable_content()
+    }
+
     pub fn widget_id(&self) -> &iced::widget::Id {
         &self.widget_id
     }

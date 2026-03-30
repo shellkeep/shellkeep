@@ -350,8 +350,17 @@ mod tests {
 
     #[test]
     fn test_tn_plural() {
-        assert_eq!(tn(N_ACTIVE_SESSIONS_1, N_ACTIVE_SESSIONS_N, 1), "1 active session");
-        assert_eq!(tn(N_ACTIVE_SESSIONS_1, N_ACTIVE_SESSIONS_N, 5), "5 active sessions");
-        assert_eq!(tn(N_ACTIVE_SESSIONS_1, N_ACTIVE_SESSIONS_N, 0), "0 active sessions");
+        assert_eq!(
+            tn(N_ACTIVE_SESSIONS_1, N_ACTIVE_SESSIONS_N, 1),
+            "1 active session"
+        );
+        assert_eq!(
+            tn(N_ACTIVE_SESSIONS_1, N_ACTIVE_SESSIONS_N, 5),
+            "5 active sessions"
+        );
+        assert_eq!(
+            tn(N_ACTIVE_SESSIONS_1, N_ACTIVE_SESSIONS_N, 0),
+            "0 active sessions"
+        );
     }
 }

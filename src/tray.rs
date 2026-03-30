@@ -92,11 +92,8 @@ mod real_tray {
             use crate::i18n;
             let tooltip = if count > 0 {
                 // NFR-I18N-03: use ngettext-style plural
-                let sessions = i18n::tn(
-                    i18n::N_ACTIVE_SESSIONS_1,
-                    i18n::N_ACTIVE_SESSIONS_N,
-                    count,
-                );
+                let sessions =
+                    i18n::tn(i18n::N_ACTIVE_SESSIONS_1, i18n::N_ACTIVE_SESSIONS_N, count);
                 format!("shellkeep — {sessions}")
             } else {
                 "shellkeep".to_string()

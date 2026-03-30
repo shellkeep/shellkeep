@@ -1734,21 +1734,30 @@ impl ShellKeep {
                 self.tab_context_menu = None;
             }
 
+            // FR-TABS-11: context menu copy — copy selected text to clipboard
             Message::ContextMenuCopy => {
                 self.context_menu = None;
-                if let Some(tab) = self.tabs.get_mut(self.active_tab)
-                    && let Some(ref mut terminal) = tab.terminal
+                if let Some(tab) = self.tabs.get(self.active_tab)
+                    && let Some(ref terminal) = tab.terminal
                 {
-                    terminal.handle(iced_term::Command::ProxyToBackend(
-                        iced_term::BackendCommand::ProcessAlacrittyEvent(
-                            iced_term::AlacrittyEvent::PtyWrite(String::new()),
-                        ),
-                    ));
+                    let selected = terminal.selectable_content();
+                    if !selected.is_empty() {
+                        return iced::clipboard::write(selected);
+                    }
                 }
             }
 
+            // FR-TABS-11: context menu paste — read clipboard and send to terminal
             Message::ContextMenuPaste => {
                 self.context_menu = None;
+                let tab_id = self.tabs.get(self.active_tab).map(|t| t.id).unwrap_or(0);
+                return iced::clipboard::read().map(move |text| {
+                    if let Some(text) = text {
+                        Message::SshData(tab_id, text.into_bytes())
+                    } else {
+                        Message::ToastDismiss // no-op
+                    }
+                });
             }
 
             Message::ToastDismiss => {
@@ -2097,9 +2106,7 @@ impl ShellKeep {
                 // FR-UI-03: if user provided a client-id name on first use, save it
                 if !self.client_id_input.is_empty() && self.client_id_input != self.client_id {
                     self.client_id = self.client_id_input.clone();
-                    if let Err(e) =
-                        shellkeep::state::client_id::save_client_id(&self.client_id)
-                    {
+                    if let Err(e) = shellkeep::state::client_id::save_client_id(&self.client_id) {
                         tracing::warn!("failed to save client-id: {e}");
                     }
                 }
@@ -4707,12 +4714,11 @@ impl ShellKeep {
 
         let subtitle: Element<'_, Message> = if is_first_use {
             // FR-UI-03: first-use with client-id naming input
-            let client_id_field =
-                text_input(&self.client_id, &self.client_id_input)
-                    .on_input(Message::ClientIdInputChanged)
-                    .size(13)
-                    .padding(8)
-                    .width(250);
+            let client_id_field = text_input(&self.client_id, &self.client_id_input)
+                .on_input(Message::ClientIdInputChanged)
+                .size(13)
+                .padding(8)
+                .width(250);
             column![
                 text(i18n::t(i18n::WELCOME_TEXT))
                     .size(16)
