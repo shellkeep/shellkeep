@@ -645,6 +645,12 @@ impl ShellKeep {
             search_regex: None,
             search_last_match: None,
             config_reload_rx: None,
+            show_close_dialog: false,
+            window_width: 900,
+            window_height: 600,
+            window_x: None,
+            window_y: None,
+            last_geometry_save: None,
         };
 
         // FR-CONFIG-04: start watching config file for hot reload
@@ -762,14 +768,9 @@ impl ShellKeep {
         let (resize_tx, resize_rx) = tokio::sync::mpsc::unbounded_channel::<(u32, u32)>();
 
         let settings = Settings {
-            font: FontSettings {
-                size: self.config.terminal.font_size,
-                ..FontSettings::default()
-            },
-            theme: ThemeSettings {
-                color_pallete: Box::new(catppuccin_mocha()),
-            },
-            backend: BackendSettings::default(),
+            font: make_font_settings(&self.config, self.config.terminal.font_size),
+            theme: make_theme_settings(&self.config),
+            backend: make_backend_settings(&self.config),
         };
 
         let terminal = match iced_term::Terminal::new_ssh(id, settings, ssh_writer_tx) {
@@ -867,16 +868,12 @@ impl ShellKeep {
         full_args.push(tmux_cmd);
 
         let settings = Settings {
-            font: FontSettings {
-                size: self.config.terminal.font_size,
-                ..FontSettings::default()
-            },
-            theme: ThemeSettings {
-                color_pallete: Box::new(catppuccin_mocha()),
-            },
+            font: make_font_settings(&self.config, self.config.terminal.font_size),
+            theme: make_theme_settings(&self.config),
             backend: BackendSettings {
                 program: "ssh".to_string(),
                 args: full_args,
+                cursor_shape: self.config.terminal.cursor_shape.clone(),
                 ..Default::default()
             },
         };
@@ -965,14 +962,9 @@ impl ShellKeep {
             let channel_holder: ChannelHolder = Arc::new(Mutex::new(None));
 
             let settings = Settings {
-                font: FontSettings {
-                    size: self.current_font_size,
-                    ..FontSettings::default()
-                },
-                theme: ThemeSettings {
-                    color_pallete: Box::new(catppuccin_mocha()),
-                },
-                backend: BackendSettings::default(),
+                font: make_font_settings(&self.config, self.current_font_size),
+                theme: make_theme_settings(&self.config),
+                backend: make_backend_settings(&self.config),
             };
 
             match iced_term::Terminal::new_ssh(tab.id, settings, ssh_writer_tx) {
@@ -1048,10 +1040,7 @@ impl ShellKeep {
     }
 
     fn apply_font_to_all_tabs(&mut self) {
-        let font_settings = FontSettings {
-            size: self.current_font_size,
-            ..FontSettings::default()
-        };
+        let font_settings = make_font_settings(&self.config, self.current_font_size);
         for tab in &mut self.tabs {
             if let Some(ref mut terminal) = tab.terminal {
                 terminal.handle(iced_term::Command::ChangeFont(font_settings.clone()));
@@ -1153,8 +1142,6 @@ impl ShellKeep {
                     && let Some(ref mut terminal) = tab.terminal
                 {
                     terminal.process_ssh_data(&data);
-                    // FR-UI-08: store last error for dead tab display
-                    tab.last_error = Some(reason.clone());
                 }
             }
 
@@ -1164,6 +1151,8 @@ impl ShellKeep {
                     tab.ssh_channel_holder = None;
                     tab.ssh_resize_tx = None;
                     tab.connection_phase = None;
+                    // FR-UI-08: store last error for dead tab display
+                    tab.last_error = Some(reason.clone());
 
                     // FR-RECONNECT-07: classify error
                     if ssh::errors::is_permanent(&reason) {
@@ -1257,25 +1246,65 @@ impl ShellKeep {
             }
 
             Message::ExistingSessionsFound(result) => {
-                if let Ok(sessions) = result {
-                    // Filter out sessions we already have a tab for
+                if let Ok(server_sessions) = result {
+                    let saved_state =
+                        StateFile::load_local(&StateFile::local_cache_path(&self.client_id));
+
+                    // FR-SESSION-08: reconcile by UUID — match saved tabs to server sessions
+                    if let Some(ref saved) = saved_state {
+                        for tab in &mut self.tabs {
+                            // Find saved tab entry by UUID
+                            if let Some(saved_tab) = saved
+                                .tabs
+                                .iter()
+                                .find(|st| st.session_uuid == tab.session_uuid)
+                            {
+                                // Check if the tmux session still exists on server
+                                if server_sessions.contains(&tab.tmux_session) {
+                                    // Session exists — check if name was changed externally
+                                    if saved_tab.tmux_session_name != tab.tmux_session {
+                                        tracing::info!(
+                                            "session {} renamed: {} -> {}",
+                                            tab.session_uuid,
+                                            saved_tab.tmux_session_name,
+                                            tab.tmux_session
+                                        );
+                                    }
+                                } else if !tab.dead
+                                    && tab.terminal.is_none()
+                                    && !server_sessions
+                                        .iter()
+                                        .any(|s| s == &saved_tab.tmux_session_name)
+                                {
+                                    // Tmux session is gone — mark tab as dead
+                                    tracing::info!(
+                                        "session {} gone from server, marking dead",
+                                        tab.session_uuid
+                                    );
+                                    tab.dead = true;
+                                    tab.auto_reconnect = false;
+                                }
+                            }
+                        }
+                    }
+
+                    // FR-SESSION-12: find orphaned sessions (on server but not in any tab)
                     let existing_tmux: Vec<String> =
                         self.tabs.iter().map(|t| t.tmux_session.clone()).collect();
-                    let new_sessions: Vec<String> = sessions
+                    let orphaned: Vec<String> = server_sessions
                         .into_iter()
                         .filter(|s| !existing_tmux.contains(s))
                         .collect();
 
-                    if !new_sessions.is_empty() {
+                    if !orphaned.is_empty() {
                         tracing::info!(
-                            "found {} additional tmux session(s): {:?}",
-                            new_sessions.len(),
-                            new_sessions
+                            "found {} orphaned session(s): {:?}",
+                            orphaned.len(),
+                            orphaned
                         );
-                        let saved_state =
-                            StateFile::load_local(&StateFile::local_cache_path(&self.client_id));
                         let mut tasks = Vec::new();
-                        for (i, session_name) in new_sessions.iter().enumerate() {
+                        for (i, session_name) in orphaned.iter().enumerate() {
+                            // Try to match orphan to saved state by tmux session name
                             let tab_label = saved_state
                                 .as_ref()
                                 .and_then(|s| {
@@ -1927,6 +1956,41 @@ impl ShellKeep {
 
                 self.config = new_config;
                 self.toast = Some(("Configuration reloaded".into(), std::time::Instant::now()));
+            }
+
+            // FR-LOCK-04: periodic heartbeat to keep the lock alive
+            Message::LockHeartbeatTick => {
+                let mgr = self.conn_manager.clone();
+                let cid = self.client_id.clone();
+                let conn = match &self.current_conn {
+                    Some(c) => c.clone(),
+                    None => return Task::none(),
+                };
+                let conn_key = ConnKey {
+                    host: conn.host.clone(),
+                    port: conn.port,
+                    username: conn.username.clone(),
+                };
+                return Task::perform(
+                    async move {
+                        let mgr = mgr.lock().await;
+                        if let Some(handle_arc) = mgr.get_cached(&conn_key) {
+                            let handle = handle_arc.lock().await;
+                            ssh::lock::heartbeat(&handle, &cid)
+                                .await
+                                .map_err(|e| e.to_string())
+                        } else {
+                            Ok(()) // No connection, skip heartbeat
+                        }
+                    },
+                    Message::LockHeartbeatDone,
+                );
+            }
+
+            Message::LockHeartbeatDone(result) => {
+                if let Err(e) = result {
+                    tracing::warn!("lock heartbeat failed: {e}");
+                }
             }
         }
         Task::none()
@@ -2793,6 +2857,15 @@ impl ShellKeep {
             );
         }
 
+        // FR-LOCK-04: heartbeat timer — keepalive_interval * 2
+        if self.current_conn.is_some() && !self.tabs.is_empty() {
+            let heartbeat_secs = (self.config.ssh.keepalive_interval as u64) * 2;
+            subs.push(
+                iced::time::every(std::time::Duration::from_secs(heartbeat_secs))
+                    .map(|_| Message::LockHeartbeatTick),
+            );
+        }
+
         // FR-TRAY-01: poll tray events
         if self.tray.is_some() {
             subs.push(
@@ -2919,27 +2992,27 @@ fn cleanup_tmp_files(client_id: &str) {
     }
 }
 
-fn catppuccin_mocha() -> ColorPalette {
-    ColorPalette {
-        foreground: "#cdd6f4".into(),
-        background: "#1e1e2e".into(),
-        black: "#45475a".into(),
-        red: "#f38ba8".into(),
-        green: "#a6e3a1".into(),
-        yellow: "#f9e2af".into(),
-        blue: "#89b4fa".into(),
-        magenta: "#f5c2e7".into(),
-        cyan: "#94e2d5".into(),
-        white: "#bac2de".into(),
-        bright_black: "#585b70".into(),
-        bright_red: "#f38ba8".into(),
-        bright_green: "#a6e3a1".into(),
-        bright_yellow: "#f9e2af".into(),
-        bright_blue: "#89b4fa".into(),
-        bright_magenta: "#f5c2e7".into(),
-        bright_cyan: "#94e2d5".into(),
-        bright_white: "#a6adc8".into(),
-        ..Default::default()
+/// Build terminal font settings from app config and current font size.
+fn make_font_settings(config: &Config, font_size: f32) -> FontSettings {
+    FontSettings {
+        size: font_size,
+        font_family: config.terminal.font_family.clone(),
+        ..FontSettings::default()
+    }
+}
+
+/// Build terminal theme settings from app config.
+fn make_theme_settings(config: &Config) -> ThemeSettings {
+    ThemeSettings {
+        color_pallete: Box::new(theme::resolve_theme(&config.general.theme)),
+    }
+}
+
+/// Build backend settings with cursor shape from config.
+fn make_backend_settings(config: &Config) -> BackendSettings {
+    BackendSettings {
+        cursor_shape: config.terminal.cursor_shape.clone(),
+        ..BackendSettings::default()
     }
 }
 
