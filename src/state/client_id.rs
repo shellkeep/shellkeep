@@ -11,6 +11,8 @@
 use std::fs;
 use std::path::PathBuf;
 
+use crate::error::StateError;
+
 /// Resolve the client ID.
 pub fn resolve(config_client_id: Option<&str>) -> String {
     // 1. Config file
@@ -59,15 +61,15 @@ pub fn is_valid(id: &str) -> bool {
 
 /// Save a client ID to the persistent file.
 /// FR-UI-03: allows user to set a friendly client name on first use.
-pub fn save_client_id(id: &str) -> Result<(), String> {
+pub fn save_client_id(id: &str) -> Result<(), StateError> {
     if !is_valid(id) {
-        return Err(format!("invalid client-id: {id}"));
+        return Err(StateError::Validation(format!("invalid client-id: {id}")));
     }
     let path = file_path();
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        fs::create_dir_all(parent)?;
     }
-    fs::write(&path, id).map_err(|e| e.to_string())?;
+    fs::write(&path, id)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

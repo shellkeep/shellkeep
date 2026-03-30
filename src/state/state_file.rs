@@ -102,11 +102,11 @@ impl StateFile {
     }
 
     /// Save state to a local file atomically (tmp + rename).
-    pub fn save_local(&self, path: &std::path::Path) -> std::io::Result<()> {
+    pub fn save_local(&self, path: &std::path::Path) -> Result<(), crate::error::StateError> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let json = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
+        let json = serde_json::to_string_pretty(self)?;
         let tmp = path.with_extension("tmp");
         fs::write(&tmp, &json)?;
         fs::rename(&tmp, path)?;

@@ -4,15 +4,20 @@
 //! FR-ENV-01: environment management — CRUD operations for named session groupings.
 
 use super::state_file::{Environment, StateFile};
+use crate::error::StateError;
 
 /// FR-ENV-01: create a new empty environment.
-pub fn create_environment(state: &mut StateFile, name: &str) -> Result<(), String> {
+pub fn create_environment(state: &mut StateFile, name: &str) -> Result<(), StateError> {
     let name = name.trim();
     if name.is_empty() {
-        return Err("environment name cannot be empty".to_string());
+        return Err(StateError::Validation(
+            "environment name cannot be empty".to_string(),
+        ));
     }
     if state.environments.contains_key(name) {
-        return Err(format!("environment '{name}' already exists"));
+        return Err(StateError::Validation(format!(
+            "environment '{name}' already exists"
+        )));
     }
     state.environments.insert(
         name.to_string(),
@@ -25,12 +30,16 @@ pub fn create_environment(state: &mut StateFile, name: &str) -> Result<(), Strin
 }
 
 /// FR-ENV-01: delete an environment. Cannot delete the last remaining environment.
-pub fn delete_environment(state: &mut StateFile, name: &str) -> Result<(), String> {
+pub fn delete_environment(state: &mut StateFile, name: &str) -> Result<(), StateError> {
     if !state.environments.contains_key(name) {
-        return Err(format!("environment '{name}' does not exist"));
+        return Err(StateError::Validation(format!(
+            "environment '{name}' does not exist"
+        )));
     }
     if state.environments.len() <= 1 {
-        return Err("cannot delete the last environment".to_string());
+        return Err(StateError::Validation(
+            "cannot delete the last environment".to_string(),
+        ));
     }
     state.environments.remove(name);
     // If the deleted environment was the last active, switch to another
@@ -41,16 +50,22 @@ pub fn delete_environment(state: &mut StateFile, name: &str) -> Result<(), Strin
 }
 
 /// FR-ENV-01: rename an environment.
-pub fn rename_environment(state: &mut StateFile, old: &str, new: &str) -> Result<(), String> {
+pub fn rename_environment(state: &mut StateFile, old: &str, new: &str) -> Result<(), StateError> {
     let new = new.trim();
     if new.is_empty() {
-        return Err("environment name cannot be empty".to_string());
+        return Err(StateError::Validation(
+            "environment name cannot be empty".to_string(),
+        ));
     }
     if !state.environments.contains_key(old) {
-        return Err(format!("environment '{old}' does not exist"));
+        return Err(StateError::Validation(format!(
+            "environment '{old}' does not exist"
+        )));
     }
     if old != new && state.environments.contains_key(new) {
-        return Err(format!("environment '{new}' already exists"));
+        return Err(StateError::Validation(format!(
+            "environment '{new}' already exists"
+        )));
     }
     if let Some(mut env) = state.environments.remove(old) {
         env.name = new.to_string();
@@ -94,14 +109,14 @@ mod tests {
     fn create_duplicate_fails() {
         let mut state = make_state();
         let err = create_environment(&mut state, "Default").unwrap_err();
-        assert!(err.contains("already exists"));
+        assert!(err.to_string().contains("already exists"));
     }
 
     #[test]
     fn create_empty_name_fails() {
         let mut state = make_state();
         let err = create_environment(&mut state, "  ").unwrap_err();
-        assert!(err.contains("cannot be empty"));
+        assert!(err.to_string().contains("cannot be empty"));
     }
 
     #[test]
@@ -116,14 +131,14 @@ mod tests {
     fn delete_last_environment_fails() {
         let mut state = make_state();
         let err = delete_environment(&mut state, "Default").unwrap_err();
-        assert!(err.contains("cannot delete the last"));
+        assert!(err.to_string().contains("cannot delete the last"));
     }
 
     #[test]
     fn delete_nonexistent_fails() {
         let mut state = make_state();
         let err = delete_environment(&mut state, "nope").unwrap_err();
-        assert!(err.contains("does not exist"));
+        assert!(err.to_string().contains("does not exist"));
     }
 
     #[test]
@@ -150,14 +165,14 @@ mod tests {
         let mut state = make_state();
         create_environment(&mut state, "Other").unwrap();
         let err = rename_environment(&mut state, "Default", "Other").unwrap_err();
-        assert!(err.contains("already exists"));
+        assert!(err.to_string().contains("already exists"));
     }
 
     #[test]
     fn rename_nonexistent_fails() {
         let mut state = make_state();
         let err = rename_environment(&mut state, "nope", "new").unwrap_err();
-        assert!(err.contains("does not exist"));
+        assert!(err.to_string().contains("does not exist"));
     }
 
     #[test]
