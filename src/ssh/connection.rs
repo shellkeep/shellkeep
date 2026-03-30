@@ -12,7 +12,7 @@ use russh::keys::PrivateKeyWithHashAlg;
 #[cfg(unix)]
 use russh::keys::agent::client::AgentClient;
 use russh::keys::ssh_key;
-use ssh_key::Algorithm;
+use ssh_key::{Algorithm, HashAlg};
 
 use super::known_hosts::HostKeyStatus;
 use super::proxy;
@@ -522,21 +522,42 @@ async fn try_key_auth(
         }
     }
 
-    let key_with_alg = PrivateKeyWithHashAlg::new(Arc::new(key), None);
-    match handle.authenticate_publickey(username, key_with_alg).await {
-        Ok(result) => {
-            if result.success() {
-                tracing::info!("russh: authenticated with key {key_path}");
-            } else {
-                tracing::info!("russh: key {key_path} rejected by server");
+    let key_arc = Arc::new(key);
+
+    // For RSA keys, modern servers require rsa-sha2-256 or rsa-sha2-512 (not legacy ssh-rsa/SHA-1).
+    // Try SHA-512 first (strongest), then SHA-256, then legacy SHA-1 as last resort.
+    let hash_algs: Vec<Option<HashAlg>> = if key_arc.algorithm().is_rsa() {
+        vec![
+            Some(HashAlg::Sha512),
+            Some(HashAlg::Sha256),
+            None, // legacy ssh-rsa (SHA-1) as fallback for old servers
+        ]
+    } else {
+        vec![None] // non-RSA keys don't use hash_alg
+    };
+
+    for hash_alg in hash_algs {
+        let alg_name: &str = match hash_alg {
+            Some(HashAlg::Sha512) => "rsa-sha2-512",
+            Some(HashAlg::Sha256) => "rsa-sha2-256",
+            _ => "default",
+        };
+        let key_with_alg = PrivateKeyWithHashAlg::new(key_arc.clone(), hash_alg);
+        match handle.authenticate_publickey(username, key_with_alg).await {
+            Ok(result) if result.success() => {
+                tracing::info!("russh: authenticated with key {key_path} ({alg_name})");
+                return Ok(true);
             }
-            Ok(result.success())
-        }
-        Err(e) => {
-            tracing::info!("russh: key {key_path} auth error: {e}");
-            Ok(false)
+            Ok(_) => {
+                tracing::debug!("russh: key {key_path} ({alg_name}) rejected by server");
+            }
+            Err(e) => {
+                tracing::debug!("russh: key {key_path} ({alg_name}) auth error: {e}");
+            }
         }
     }
+    tracing::info!("russh: key {key_path} rejected by server (all algorithms tried)");
+    Ok(false)
 }
 
 /// Try password-based authentication. /* FR-CONN-09 */
