@@ -60,14 +60,12 @@ jobs:
 
       - name: Clippy
         run: cargo clippy -- -D warnings
-        continue-on-error: true
 
       - name: Build
         run: cargo build --release
 
       - name: Test
         run: cargo test
-        continue-on-error: true
 
       - name: Upload binary (Linux)
         if: runner.os == 'Linux'
