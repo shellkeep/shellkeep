@@ -443,22 +443,27 @@ enum Message {
     /// FR-TABS-12: copy entire scrollback to clipboard
     CopyScrollback,
     /// FR-STATE-06: async state write completed
+    #[allow(dead_code)]
     StateSaved,
     // FR-ENV-03: environment selection dialog
+    #[allow(dead_code)]
     ShowEnvDialog,
     EnvFilterChanged(String),
     SelectEnv(String),
     ConfirmEnv,
     NewEnvFromDialog,
     // FR-ENV-07..09: environment management
+    #[allow(dead_code)]
     ShowNewEnvDialog,
     NewEnvInputChanged(String),
     ConfirmNewEnv,
     CancelNewEnv,
+    #[allow(dead_code)]
     ShowRenameEnvDialog(String),
     RenameEnvInputChanged(String),
     ConfirmRenameEnv,
     CancelRenameEnv,
+    #[allow(dead_code)]
     ShowDeleteEnvDialog(String),
     ConfirmDeleteEnv,
     CancelDeleteEnv,
@@ -470,6 +475,7 @@ enum Message {
     /// FR-STATE-02: server state loaded (takes precedence over local)
     ServerStateLoaded(Result<Option<String>, String>),
     /// FR-CONN-20: remote state write completed
+    #[allow(dead_code)]
     ServerStateSaved(Result<(), String>),
 }
 
@@ -1493,10 +1499,10 @@ impl ShellKeep {
                         StateFile::load_local(&StateFile::local_cache_path(&self.client_id));
 
                     // FR-ENV-05: restore last environment from saved state
-                    if let Some(ref saved) = saved_state {
-                        if let Some(ref env_name) = saved.last_environment {
-                            self.current_environment = env_name.clone();
-                        }
+                    if let Some(ref saved) = saved_state
+                        && let Some(ref env_name) = saved.last_environment
+                    {
+                        self.current_environment = env_name.clone();
                     }
 
                     // FR-SESSION-08: reconcile by UUID — match saved tabs to server sessions
@@ -2471,22 +2477,23 @@ impl ShellKeep {
 
             Message::ConfirmRenameEnv => {
                 let new_name = self.rename_env_input.trim().to_string();
-                if let Some(ref old_name) = self.rename_env_target {
-                    if !new_name.is_empty() && new_name != *old_name {
-                        if let Some(entry) = self.env_list.iter_mut().find(|e| *e == old_name) {
-                            *entry = new_name.clone();
-                        }
-                        self.env_list.sort();
-                        if self.current_environment == *old_name {
-                            self.current_environment = new_name.clone();
-                        }
-                        self.toast = Some((
-                            format!("Environment renamed to \"{new_name}\""),
-                            std::time::Instant::now(),
-                        ));
-                        self.state_dirty = true;
-                        self.flush_state();
+                if let Some(ref old_name) = self.rename_env_target
+                    && !new_name.is_empty()
+                    && new_name != *old_name
+                {
+                    if let Some(entry) = self.env_list.iter_mut().find(|e| *e == old_name) {
+                        *entry = new_name.clone();
                     }
+                    self.env_list.sort();
+                    if self.current_environment == *old_name {
+                        self.current_environment = new_name.clone();
+                    }
+                    self.toast = Some((
+                        format!("Environment renamed to \"{new_name}\""),
+                        std::time::Instant::now(),
+                    ));
+                    self.state_dirty = true;
+                    self.flush_state();
                 }
                 self.show_rename_env_dialog = false;
                 self.rename_env_input.clear();
