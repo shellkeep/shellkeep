@@ -394,6 +394,9 @@ struct ShellKeep {
     #[allow(dead_code)]
     lock_target_tab: Option<u64>,
 
+    /// FR-SESSION-10a: close-tab confirmation dialog
+    pending_close_tabs: Option<Vec<usize>>,
+
     /// FR-RECONNECT-08: last known default gateway (Linux network monitoring)
     #[cfg(target_os = "linux")]
     last_gateway: Option<String>,
@@ -432,6 +435,10 @@ enum Message {
     CloseOtherTabs(usize),
     /// Close all tabs to the right of this index
     CloseTabsToRight(usize),
+    /// FR-SESSION-10a: confirm close tab(s) — user clicked Terminate
+    ConfirmCloseTabs,
+    /// FR-SESSION-10a: cancel close tab(s)
+    CancelCloseTabs,
     StartRename(usize),
     ConnectRecent(usize),
     RenameInputChanged(String),
@@ -873,6 +880,7 @@ impl ShellKeep {
             show_lock_dialog: false,
             lock_info_text: String::new(),
             lock_target_tab: None,
+            pending_close_tabs: None,
             #[cfg(target_os = "linux")]
             last_gateway: read_default_gateway(),
         };
@@ -1934,27 +1942,45 @@ impl ShellKeep {
 
             Message::CloseOtherTabs(keep_index) => {
                 self.tab_context_menu = None;
-                // Collect IDs of tabs to close (all except the one at keep_index)
                 let keep_id = self.tabs.get(keep_index).map(|t| t.id);
                 let to_close: Vec<usize> = (0..self.tabs.len())
                     .filter(|&i| self.tabs.get(i).map(|t| t.id) != keep_id)
-                    .rev() // close from end to avoid index shifting
                     .collect();
-                let mut tasks = Vec::new();
-                for idx in to_close {
-                    tasks.push(self.close_tab(idx));
+                // FR-SESSION-10a: if any active tabs, ask confirmation
+                let has_active = to_close.iter().any(|&i| {
+                    self.tabs
+                        .get(i)
+                        .is_some_and(|t| !t.dead && t.terminal.is_some())
+                });
+                if has_active {
+                    self.pending_close_tabs = Some(to_close);
+                } else {
+                    let mut tasks = Vec::new();
+                    for idx in to_close.into_iter().rev() {
+                        tasks.push(self.close_tab(idx));
+                    }
+                    self.active_tab = 0;
+                    return Task::batch(tasks);
                 }
-                self.active_tab = 0;
-                return Task::batch(tasks);
             }
 
             Message::CloseTabsToRight(index) => {
                 self.tab_context_menu = None;
-                let mut tasks = Vec::new();
-                for idx in (index + 1..self.tabs.len()).rev() {
-                    tasks.push(self.close_tab(idx));
+                let to_close: Vec<usize> = (index + 1..self.tabs.len()).collect();
+                let has_active = to_close.iter().any(|&i| {
+                    self.tabs
+                        .get(i)
+                        .is_some_and(|t| !t.dead && t.terminal.is_some())
+                });
+                if has_active {
+                    self.pending_close_tabs = Some(to_close);
+                } else {
+                    let mut tasks = Vec::new();
+                    for idx in to_close.into_iter().rev() {
+                        tasks.push(self.close_tab(idx));
+                    }
+                    return Task::batch(tasks);
                 }
-                return Task::batch(tasks);
             }
 
             Message::TerminalEvent(iced_term::Event::BackendCall(id, cmd)) => {
@@ -2036,8 +2062,34 @@ impl ShellKeep {
                 }
             }
 
+            // FR-SESSION-10a: close tab with confirmation for active sessions
             Message::CloseTab(index) => {
+                self.tab_context_menu = None;
+                if let Some(tab) = self.tabs.get(index)
+                    && !tab.dead
+                    && tab.terminal.is_some()
+                {
+                    // Active session — ask confirmation
+                    self.pending_close_tabs = Some(vec![index]);
+                    return Task::none();
+                }
+                // Dead/disconnected — close immediately
                 return self.close_tab(index);
+            }
+
+            Message::ConfirmCloseTabs => {
+                if let Some(indices) = self.pending_close_tabs.take() {
+                    let mut tasks = Vec::new();
+                    // Close from end to avoid index shifting
+                    for idx in indices.into_iter().rev() {
+                        tasks.push(self.close_tab(idx));
+                    }
+                    return Task::batch(tasks);
+                }
+            }
+
+            Message::CancelCloseTabs => {
+                self.pending_close_tabs = None;
             }
 
             Message::NewTab => {
@@ -2419,13 +2471,13 @@ impl ShellKeep {
                     {
                         let _ = std::process::Command::new(exe).spawn();
                     }
-                    // Ctrl+Shift+W — close current tab
+                    // Ctrl+Shift+W — close current tab (goes through confirmation)
                     if modifiers.control()
                         && modifiers.shift()
                         && key == keyboard::Key::Character("w".into())
                         && !self.tabs.is_empty()
                     {
-                        return self.close_tab(self.active_tab);
+                        return self.update(Message::CloseTab(self.active_tab));
                     }
                     // Ctrl+Tab — next tab
                     if modifiers.control()
@@ -3758,7 +3810,83 @@ impl ShellKeep {
         };
 
         // FR-TABS-17: close confirmation dialog overlay
-        let main_view: Element<'_, Message> = if self.show_close_dialog {
+        // FR-SESSION-10a: close-tab confirmation dialog
+        let main_view: Element<'_, Message> = if self.pending_close_tabs.is_some() {
+            let count = self
+                .pending_close_tabs
+                .as_ref()
+                .map(|v| v.len())
+                .unwrap_or(0);
+            let msg = if count == 1 {
+                "This will terminate the session on the server.\nThis cannot be undone.".to_string()
+            } else {
+                format!(
+                    "This will terminate {count} sessions on the server.\nThis cannot be undone."
+                )
+            };
+            let dialog_style = |_theme: &Theme| container::Style {
+                background: Some(iced::Background::Color(Color::from_rgb8(0x24, 0x24, 0x36))),
+                border: iced::Border {
+                    radius: 12.0.into(),
+                    width: 1.0,
+                    color: Color::from_rgb8(0x45, 0x47, 0x5a),
+                },
+                shadow: iced::Shadow {
+                    color: Color::from_rgba8(0, 0, 0, 0.6),
+                    offset: iced::Vector::new(0.0, 4.0),
+                    blur_radius: 16.0,
+                },
+                ..Default::default()
+            };
+            let cancel_style = |_theme: &Theme, _status: button::Status| button::Style {
+                background: Some(iced::Background::Color(Color::from_rgb8(0x31, 0x32, 0x44))),
+                text_color: Color::from_rgb8(0xcd, 0xd6, 0xf4),
+                border: iced::Border {
+                    radius: 6.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let terminate_style = |_theme: &Theme, _status: button::Status| button::Style {
+                background: Some(iced::Background::Color(Color::from_rgb8(0xf3, 0x8b, 0xa8))),
+                text_color: Color::from_rgb8(0x1e, 0x1e, 0x2e),
+                border: iced::Border {
+                    radius: 6.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let dialog = container(
+                column![
+                    text("Terminate session?")
+                        .size(18)
+                        .color(Color::from_rgb8(0xcd, 0xd6, 0xf4)),
+                    text(msg).size(13).color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
+                    Space::new().height(12),
+                    row![
+                        button(text("Cancel").size(14))
+                            .on_press(Message::CancelCloseTabs)
+                            .padding([10, 24])
+                            .style(cancel_style),
+                        Space::new().width(Length::Fill),
+                        button(
+                            text("Terminate")
+                                .size(14)
+                                .color(Color::from_rgb8(0x1e, 0x1e, 0x2e))
+                        )
+                        .on_press(Message::ConfirmCloseTabs)
+                        .padding([10, 24])
+                        .style(terminate_style),
+                    ]
+                    .width(Length::Fill),
+                ]
+                .spacing(8)
+                .padding(24)
+                .width(380),
+            )
+            .style(dialog_style);
+            center(dialog).into()
+        } else if self.show_close_dialog {
             let active_count = self
                 .tabs
                 .iter()
