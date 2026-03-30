@@ -20,8 +20,10 @@ use iced_term::settings::{BackendSettings, FontSettings, Settings, ThemeSettings
 use iced_term::{AlacrittyColumn, AlacrittyLine, AlacrittyPoint, RegexSearch, SearchMatch};
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use shellkeep::config::Config;
+use shellkeep::i18n;
 use shellkeep::ssh;
 use shellkeep::ssh::manager::{ConnKey, ConnectionManager};
+use shellkeep::state::history;
 use shellkeep::state::recent::{RecentConnection, RecentConnections};
 use shellkeep::state::state_file::{StateFile, TabState, WindowState};
 use shellkeep::tray::{Tray, TrayAction};
@@ -165,6 +167,11 @@ fn main() -> iced::Result {
 
     tracing::info!("shellkeep v{} starting", env!("CARGO_PKG_VERSION"));
 
+    // NFR-I18N-07: detect and initialize locale
+    let locale = i18n::detect_locale();
+    i18n::init(&locale);
+    tracing::info!("locale: {locale}");
+
     // NFR-SEC-10: disable core dumps
     shellkeep::crash::disable_core_dumps();
 
@@ -267,6 +274,8 @@ struct Tab {
     pending_channel: Option<ChannelHolder>,
     /// FR-CONN-16: connection phase text, shared with async task
     connection_phase: Option<Arc<std::sync::Mutex<String>>>,
+    /// FR-HISTORY-02: client-side JSONL history writer
+    history_writer: Option<history::HistoryWriter>,
 }
 
 // ---------------------------------------------------------------------------
@@ -297,6 +306,8 @@ struct ShellKeep {
     current_conn: Option<ConnParams>,
     /// Client identifier for state persistence
     client_id: String,
+    /// FR-ENV-06: one environment active per instance
+    current_environment: String,
     /// Shared SSH connection manager
     conn_manager: Arc<Mutex<ConnectionManager>>,
     /// Whether we've already listed existing sessions after first connect
@@ -340,6 +351,25 @@ struct ShellKeep {
     window_y: Option<i32>,
     /// FR-STATE-14: debounce timer for geometry saves
     last_geometry_save: Option<std::time::Instant>,
+    /// FR-CONN-20: remote state syncer (SFTP or shell fallback)
+    state_syncer: Option<Arc<ssh::sftp::StateSyncer>>,
+
+    // FR-ENV-03: environment selection dialog state
+    show_env_dialog: bool,
+    env_list: Vec<String>,
+    env_filter: String,
+    selected_env: Option<String>,
+    /// FR-ENV-01: current active environment name
+    current_environment: String,
+
+    // FR-ENV-07..09: environment management modals
+    show_new_env_dialog: bool,
+    new_env_input: String,
+    show_rename_env_dialog: bool,
+    rename_env_input: String,
+    rename_env_target: Option<String>,
+    show_delete_env_dialog: bool,
+    delete_env_target: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -414,6 +444,35 @@ enum Message {
     ExportScrollback,
     /// FR-TABS-12: copy entire scrollback to clipboard
     CopyScrollback,
+    /// FR-STATE-06: async state write completed
+    StateSaved,
+    // FR-ENV-03: environment selection dialog
+    ShowEnvDialog,
+    EnvFilterChanged(String),
+    SelectEnv(String),
+    ConfirmEnv,
+    NewEnvFromDialog,
+    // FR-ENV-07..09: environment management
+    ShowNewEnvDialog,
+    NewEnvInputChanged(String),
+    ConfirmNewEnv,
+    CancelNewEnv,
+    ShowRenameEnvDialog(String),
+    RenameEnvInputChanged(String),
+    ConfirmRenameEnv,
+    CancelRenameEnv,
+    ShowDeleteEnvDialog(String),
+    ConfirmDeleteEnv,
+    CancelDeleteEnv,
+    CancelEnvDialog,
+    /// FR-ENV-10: switch to a different environment
+    SwitchEnvironment(String),
+    /// FR-CONN-20: remote state syncer initialized
+    StateSyncerReady(Result<Arc<ssh::sftp::StateSyncer>, String>),
+    /// FR-STATE-02: server state loaded (takes precedence over local)
+    ServerStateLoaded(Result<Option<String>, String>),
+    /// FR-CONN-20: remote state write completed
+    ServerStateSaved(Result<(), String>),
 }
 
 // ---------------------------------------------------------------------------
@@ -532,7 +591,7 @@ async fn establish_ssh_session(
         username: conn.username.clone(),
     };
 
-    *phase.lock().unwrap() = "Authenticating...".to_string();
+    *phase.lock().unwrap() = i18n::t(i18n::AUTHENTICATING).to_string();
 
     let handle_arc = {
         let mut mgr = conn_manager.lock().await;
@@ -549,7 +608,7 @@ async fn establish_ssh_session(
     let handle = handle_arc.lock().await;
 
     // FR-CONN-13..15: check tmux availability and version
-    *phase.lock().unwrap() = "Checking tmux...".to_string();
+    *phase.lock().unwrap() = i18n::t(i18n::CHECKING_TMUX).to_string();
 
     let tmux_version_output =
         ssh::connection::exec_command(&handle, "tmux -V 2>/dev/null || echo 'NOT_FOUND'")
@@ -568,7 +627,7 @@ async fn establish_ssh_session(
     }
 
     // FR-LOCK-01: acquire client-ID lock before reading state or creating sessions
-    *phase.lock().unwrap() = "Acquiring lock...".to_string();
+    *phase.lock().unwrap() = i18n::t("Acquiring lock...").to_string();
 
     let keepalive_timeout = if keepalive_secs > 0 {
         Some(keepalive_secs as u64)
@@ -580,7 +639,7 @@ async fn establish_ssh_session(
         .map_err(|e| e.to_string())?;
 
     // FR-RECONNECT-03: verify tmux session exists before reattaching, create if needed
-    *phase.lock().unwrap() = "Opening session...".to_string();
+    *phase.lock().unwrap() = i18n::t(i18n::OPENING_SESSION).to_string();
 
     let check = ssh::connection::exec_command(
         &handle,
@@ -647,6 +706,7 @@ impl ShellKeep {
             toast: None,
             current_conn: None,
             client_id: shellkeep::state::client_id::resolve(config.general.client_id.as_deref()),
+            current_environment: "Default".to_string(),
             conn_manager: Arc::new(Mutex::new(ConnectionManager::new())),
             sessions_listed: false,
             last_state_save: None,
@@ -672,6 +732,19 @@ impl ShellKeep {
             window_x: None,
             window_y: None,
             last_geometry_save: None,
+            state_syncer: None,
+            show_env_dialog: false,
+            env_list: Vec::new(),
+            env_filter: String::new(),
+            selected_env: None,
+            current_environment: "default".to_string(),
+            show_new_env_dialog: false,
+            new_env_input: String::new(),
+            show_rename_env_dialog: false,
+            rename_env_input: String::new(),
+            rename_env_target: None,
+            show_delete_env_dialog: false,
+            delete_env_target: None,
         };
 
         // FR-CONFIG-04: start watching config file for hot reload
@@ -682,6 +755,9 @@ impl ShellKeep {
 
         // FR-STATE-07: clean up orphaned .tmp files from interrupted saves
         cleanup_tmp_files(&app.client_id);
+
+        // FR-HISTORY-11: clean up old history files on startup
+        history::cleanup_old_history(app.config.state.history_max_days);
         if let Some(ssh_args) = initial_ssh_args {
             // Parse connection params from CLI args
             let host_arg = ssh_args
@@ -765,10 +841,10 @@ impl ShellKeep {
     }
 
     /// Open a new tab, assigning it the next unused tmux session name.
-    /// FR-SESSION-04, FR-SESSION-05: generate tmux session name with client-id and timestamp
+    /// FR-SESSION-04, FR-SESSION-05, FR-ENV-02: generate tmux session name with client-id,
+    /// environment, and timestamp.
     fn next_tmux_session(&self) -> String {
-        let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
-        format!("{}--shellkeep-{}", self.client_id, timestamp)
+        shellkeep::ssh::tmux::env_tmux_session_name(&self.client_id, &self.current_environment)
     }
 
     /// Open a tab using russh SSH. Returns a Task that establishes the connection.
@@ -808,7 +884,7 @@ impl ShellKeep {
         let writer_rx_holder = Arc::new(Mutex::new(Some(ssh_writer_rx)));
         let resize_rx_holder = Arc::new(Mutex::new(Some(resize_rx)));
         let channel_holder: ChannelHolder = Arc::new(Mutex::new(None));
-        let phase = Arc::new(std::sync::Mutex::new("Connecting...".to_string()));
+        let phase = Arc::new(std::sync::Mutex::new(i18n::t(i18n::CONNECTING).to_string()));
 
         let ssh_args = self
             .current_conn
@@ -816,10 +892,16 @@ impl ShellKeep {
             .map(|c| self.build_ssh_args_from_conn(c))
             .unwrap_or_default();
 
+        // FR-HISTORY-02: create history writer (None if disabled via config)
+        let session_uuid = uuid::Uuid::new_v4().to_string();
+        let history_writer = history::HistoryWriter::new(
+            &session_uuid,
+            self.config.state.history_max_size_mb,
+        );
         self.tabs.push(Tab {
             id,
             label: label.to_string(),
-            session_uuid: uuid::Uuid::new_v4().to_string(),
+            session_uuid,
             terminal: Some(terminal),
             ssh_args,
             conn_params: self.current_conn.clone(),
@@ -839,6 +921,7 @@ impl ShellKeep {
             conn_key: None,
             pending_channel: Some(channel_holder.clone()),
             connection_phase: Some(phase.clone()),
+            history_writer,
         });
         self.active_tab = self.tabs.len() - 1;
         self.error = None;
@@ -924,6 +1007,7 @@ impl ShellKeep {
                     conn_key: None,
                     pending_channel: None,
                     connection_phase: None,
+                    history_writer: None,
                 });
                 self.active_tab = self.tabs.len() - 1;
                 self.error = None;
@@ -957,7 +1041,7 @@ impl ShellKeep {
                     ));
                 } else {
                     self.toast = Some((
-                        "Session kept on server — you can restore it later".into(),
+                        i18n::t(i18n::SESSION_KEPT).into(),
                         std::time::Instant::now(),
                     ));
                 }
@@ -994,7 +1078,9 @@ impl ShellKeep {
                     tab.ssh_writer_rx_holder = Some(Arc::new(Mutex::new(Some(ssh_writer_rx))));
                     tab.ssh_resize_tx = Some(resize_tx);
                     tab.ssh_resize_rx_holder = Some(Arc::new(Mutex::new(Some(resize_rx))));
-                    let phase = Arc::new(std::sync::Mutex::new("Reconnecting...".to_string()));
+                    let phase = Arc::new(std::sync::Mutex::new(
+                        i18n::t(i18n::RECONNECTING).to_string(),
+                    ));
                     tab.pending_channel = Some(channel_holder.clone());
                     tab.connection_phase = Some(phase.clone());
                     tab.dead = false;
@@ -1087,13 +1173,33 @@ impl ShellKeep {
         self.state_dirty = false;
         self.last_state_save = Some(std::time::Instant::now());
         let mut state = StateFile::new(&self.client_id);
-        for (i, tab) in self.tabs.iter().enumerate() {
-            state.tabs.push(TabState {
+        // FR-ENV-06: save tabs into the current environment
+        let env_tabs: Vec<TabState> = self
+            .tabs
+            .iter()
+            .enumerate()
+            .map(|(i, tab)| TabState {
                 session_uuid: tab.session_uuid.clone(),
                 tmux_session_name: tab.tmux_session.clone(),
                 title: tab.label.clone(),
                 position: i,
-            });
+            })
+            .collect();
+        state.environments.insert(
+            self.current_environment.clone(),
+            shellkeep::state::state_file::Environment {
+                name: self.current_environment.clone(),
+                tabs: env_tabs,
+            },
+        );
+        state.last_environment = Some(self.current_environment.clone());
+        // Preserve other environments from the previously loaded state
+        if let Some(prev) = StateFile::load_local(&StateFile::local_cache_path(&self.client_id)) {
+            for (name, env) in &prev.environments {
+                if name != &self.current_environment {
+                    state.environments.insert(name.clone(), env.clone());
+                }
+            }
         }
         // FR-STATE-14: persist window geometry
         state.window = Some(WindowState {
@@ -1103,15 +1209,32 @@ impl ShellKeep {
             height: self.window_height,
         });
         let path = StateFile::local_cache_path(&self.client_id);
-        if let Err(e) = state.save_local(&path) {
-            tracing::warn!("failed to save state: {e}");
-        } else {
-            tracing::debug!("state saved to {}", path.display());
-        }
 
         // FR-TRAY-02: update tray tooltip with session count
         if let Some(ref tray) = self.tray {
             tray.set_session_count(self.tabs.iter().filter(|t| !t.dead).count());
+        }
+
+        // FR-STATE-06: write state to disk asynchronously to avoid blocking the UI
+        match serde_json::to_string_pretty(&state) {
+            Ok(state_json) => {
+                tokio::task::spawn_blocking(move || {
+                    let tmp = path.with_extension("tmp");
+                    if let Some(parent) = path.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    if let Err(e) = std::fs::write(&tmp, &state_json) {
+                        tracing::warn!("failed to write state tmp: {e}");
+                    } else if let Err(e) = std::fs::rename(&tmp, &path) {
+                        tracing::warn!("failed to rename state file: {e}");
+                    } else {
+                        tracing::debug!("state saved to {}", path.display());
+                    }
+                });
+            }
+            Err(e) => {
+                tracing::warn!("failed to serialize state: {e}");
+            }
         }
     }
 
@@ -1228,26 +1351,61 @@ impl ShellKeep {
                                 port: conn.port,
                                 username: conn.username.clone(),
                             };
-                            return Task::perform(
-                                async move {
-                                    let handle_arc = {
-                                        let mut m = mgr.lock().await;
-                                        m.get_or_connect(
-                                            &conn_key,
-                                            conn.identity_file.as_deref(),
-                                            None,
-                                            15,
-                                        )
-                                        .await
-                                        .map_err(|e| e.to_string())?
-                                    };
-                                    let handle = handle_arc.lock().await;
-                                    Ok(ssh::tmux::list_sessions_russh(&handle).await)
-                                },
-                                |result: Result<Vec<String>, String>| {
-                                    Message::ExistingSessionsFound(result)
-                                },
-                            );
+                            // FR-CONN-20: open a separate connection for SFTP state sync
+                            let mgr2 = self.conn_manager.clone();
+                            let conn2 = self.current_conn.clone().unwrap();
+                            let conn_key2 = ConnKey {
+                                host: conn2.host.clone(),
+                                port: conn2.port,
+                                username: conn2.username.clone(),
+                            };
+                            let client_id = self.client_id.clone();
+
+                            return Task::batch([
+                                Task::perform(
+                                    async move {
+                                        let handle_arc = {
+                                            let mut m = mgr.lock().await;
+                                            m.get_or_connect(
+                                                &conn_key,
+                                                conn.identity_file.as_deref(),
+                                                None,
+                                                15,
+                                            )
+                                            .await
+                                            .map_err(|e| e.to_string())?
+                                        };
+                                        let handle = handle_arc.lock().await;
+                                        Ok(ssh::tmux::list_sessions_russh(&handle).await)
+                                    },
+                                    |result: Result<Vec<String>, String>| {
+                                        Message::ExistingSessionsFound(result)
+                                    },
+                                ),
+                                Task::perform(
+                                    async move {
+                                        let handle_arc = {
+                                            let mut m = mgr2.lock().await;
+                                            m.get_or_connect(
+                                                &conn_key2,
+                                                conn2.identity_file.as_deref(),
+                                                None,
+                                                15,
+                                            )
+                                            .await
+                                            .map_err(|e| e.to_string())?
+                                        };
+                                        let handle = handle_arc.lock().await;
+                                        let syncer = ssh::sftp::StateSyncer::new(
+                                            handle.clone(), &client_id,
+                                        ).await?;
+                                        Ok(Arc::new(syncer))
+                                    },
+                                    |result: Result<Arc<ssh::sftp::StateSyncer>, String>| {
+                                        Message::StateSyncerReady(result)
+                                    },
+                                ),
+                            ]);
                         }
                     }
                     Err(e) => {
@@ -1269,7 +1427,35 @@ impl ShellKeep {
                                 tab.reconnect_started = Some(std::time::Instant::now());
                             }
                         }
-                        self.error = Some(format!("Connection failed: {e}"));
+                        // FR-CONN-14: helpful message when tmux is not installed
+                        let el = e.to_lowercase();
+                        if el.contains("tmux not found") || el.contains("tmux: not found") {
+                            self.error = Some(
+                                "tmux not found on server. Install it:\n\
+                                 \u{2022} Debian/Ubuntu: sudo apt install tmux\n\
+                                 \u{2022} Fedora/RHEL: sudo dnf install tmux\n\
+                                 \u{2022} Arch: sudo pacman -S tmux\n\
+                                 \u{2022} macOS: brew install tmux"
+                                    .to_string(),
+                            );
+                        } else if el.contains("auth failed") || el.contains("authentication failed")
+                        {
+                            // FR-CONN-17: descriptive auth error with guidance
+                            self.error = Some(format!(
+                                "Authentication failed. Check your SSH key or try a different identity file.\n\
+                                 Detail: {e}"
+                            ));
+                        } else if el.contains("connection refused") {
+                            self.error = Some(format!(
+                                "Connection refused. Check the hostname and port.\nDetail: {e}"
+                            ));
+                        } else if el.contains("timeout") || el.contains("timed out") {
+                            self.error = Some(format!(
+                                "Connection timed out. The server may be down or unreachable.\nDetail: {e}"
+                            ));
+                        } else {
+                            self.error = Some(format!("Connection failed: {e}"));
+                        }
                         self.update_title();
                     }
                 }
@@ -1385,6 +1571,9 @@ impl ShellKeep {
             Message::FlushState => {
                 self.flush_state();
             }
+
+            // FR-STATE-06: async state write completed (no-op)
+            Message::StateSaved => {}
 
             Message::ContextMenuDismiss => {
                 self.context_menu = None;
@@ -2167,6 +2356,171 @@ impl ShellKeep {
                 self.window_height = size.height as u32;
                 self.save_geometry();
             }
+
+            // FR-ENV-03: environment selection dialog
+            Message::ShowEnvDialog => {
+                self.show_env_dialog = true;
+                self.env_filter.clear();
+                // Pre-select current environment
+                self.selected_env = Some(self.current_environment.clone());
+            }
+
+            Message::EnvFilterChanged(filter) => {
+                self.env_filter = filter;
+            }
+
+            Message::SelectEnv(name) => {
+                self.selected_env = Some(name);
+            }
+
+            Message::ConfirmEnv => {
+                if let Some(ref env_name) = self.selected_env {
+                    let env_name = env_name.clone();
+                    self.show_env_dialog = false;
+                    if env_name != self.current_environment {
+                        return self.update(Message::SwitchEnvironment(env_name));
+                    }
+                }
+            }
+
+            Message::NewEnvFromDialog => {
+                // Close env selection, open new-env creation
+                self.show_env_dialog = false;
+                self.new_env_input.clear();
+                self.show_new_env_dialog = true;
+            }
+
+            Message::CancelEnvDialog => {
+                self.show_env_dialog = false;
+            }
+
+            // FR-ENV-07: create new environment
+            Message::ShowNewEnvDialog => {
+                self.new_env_input.clear();
+                self.show_new_env_dialog = true;
+            }
+
+            Message::NewEnvInputChanged(input) => {
+                self.new_env_input = input;
+            }
+
+            Message::ConfirmNewEnv => {
+                let name = self.new_env_input.trim().to_string();
+                if !name.is_empty() && !self.env_list.contains(&name) {
+                    self.env_list.push(name.clone());
+                    self.env_list.sort();
+                    self.current_environment = name;
+                    self.toast = Some((
+                        format!("Environment "{}" created", self.current_environment),
+                        std::time::Instant::now(),
+                    ));
+                    self.state_dirty = true;
+                    self.flush_state();
+                }
+                self.show_new_env_dialog = false;
+                self.new_env_input.clear();
+            }
+
+            Message::CancelNewEnv => {
+                self.show_new_env_dialog = false;
+                self.new_env_input.clear();
+            }
+
+            // FR-ENV-08: rename environment
+            Message::ShowRenameEnvDialog(name) => {
+                self.rename_env_target = Some(name.clone());
+                self.rename_env_input = name;
+                self.show_rename_env_dialog = true;
+            }
+
+            Message::RenameEnvInputChanged(input) => {
+                self.rename_env_input = input;
+            }
+
+            Message::ConfirmRenameEnv => {
+                let new_name = self.rename_env_input.trim().to_string();
+                if let Some(ref old_name) = self.rename_env_target {
+                    if !new_name.is_empty() && new_name != *old_name {
+                        if let Some(entry) = self.env_list.iter_mut().find(|e| *e == old_name) {
+                            *entry = new_name.clone();
+                        }
+                        self.env_list.sort();
+                        if self.current_environment == *old_name {
+                            self.current_environment = new_name.clone();
+                        }
+                        self.toast = Some((
+                            format!("Environment renamed to "{new_name}""),
+                            std::time::Instant::now(),
+                        ));
+                        self.state_dirty = true;
+                        self.flush_state();
+                    }
+                }
+                self.show_rename_env_dialog = false;
+                self.rename_env_input.clear();
+                self.rename_env_target = None;
+            }
+
+            Message::CancelRenameEnv => {
+                self.show_rename_env_dialog = false;
+                self.rename_env_input.clear();
+                self.rename_env_target = None;
+            }
+
+            // FR-ENV-09: delete environment
+            Message::ShowDeleteEnvDialog(name) => {
+                self.delete_env_target = Some(name);
+                self.show_delete_env_dialog = true;
+            }
+
+            Message::ConfirmDeleteEnv => {
+                if let Some(ref name) = self.delete_env_target {
+                    let name = name.clone();
+                    self.env_list.retain(|e| *e != name);
+                    if self.current_environment == name {
+                        self.current_environment = self
+                            .env_list
+                            .first()
+                            .cloned()
+                            .unwrap_or_else(|| "default".to_string());
+                    }
+                    self.toast = Some((
+                        format!("Environment "{}" deleted", name),
+                        std::time::Instant::now(),
+                    ));
+                    self.state_dirty = true;
+                    self.flush_state();
+                }
+                self.show_delete_env_dialog = false;
+                self.delete_env_target = None;
+            }
+
+            Message::CancelDeleteEnv => {
+                self.show_delete_env_dialog = false;
+                self.delete_env_target = None;
+            }
+
+            // FR-ENV-10: switch active environment
+            Message::SwitchEnvironment(name) => {
+                if name != self.current_environment {
+                    tracing::info!(
+                        "switching environment: {} -> {}",
+                        self.current_environment,
+                        name
+                    );
+                    // Save current tabs for the current environment
+                    self.flush_state();
+                    // Switch to the new environment
+                    self.current_environment = name;
+                    // TODO: load tabs for the new environment from state
+                    self.state_dirty = true;
+                    self.update_title();
+                    self.toast = Some((
+                        format!("Switched to "{}" environment", self.current_environment),
+                        std::time::Instant::now(),
+                    ));
+                }
+            }
         }
         Task::none()
     }
@@ -2205,7 +2559,7 @@ impl ShellKeep {
                         .connection_phase
                         .as_ref()
                         .map(|p| p.lock().unwrap().clone())
-                        .unwrap_or_else(|| "Connecting...".to_string());
+                        .unwrap_or_else(|| i18n::t(i18n::CONNECTING).to_string());
                     stack![
                         container(
                             iced_term::TerminalView::show(terminal).map(Message::TerminalEvent)
@@ -2229,8 +2583,10 @@ impl ShellKeep {
                 // FR-RECONNECT-02: spinner overlay with attempt count and countdown
                 let spinner = SPINNER_FRAMES[self.spinner_frame % SPINNER_FRAMES.len()];
                 let attempt_text = format!(
-                    "Reconnecting... attempt {}/{}",
-                    tab.reconnect_attempts, self.config.ssh.reconnect_max_attempts
+                    "{} {}/{}",
+                    i18n::t(i18n::RECONNECTING),
+                    tab.reconnect_attempts,
+                    self.config.ssh.reconnect_max_attempts
                 );
                 let countdown_text = if tab.reconnect_delay_ms > 0 {
                     let elapsed = tab
@@ -2245,12 +2601,12 @@ impl ShellKeep {
                         "Retrying now...".to_string()
                     }
                 } else {
-                    "Connecting...".to_string()
+                    i18n::t(i18n::CONNECTING).to_string()
                 };
                 center(
                     column![
                         text(format!("{spinner}")).size(48),
-                        text("Connection lost")
+                        text(i18n::t(i18n::CONNECTION_LOST))
                             .size(20)
                             .color(Color::from_rgb8(0xf9, 0xe2, 0xaf)),
                         text(attempt_text)
@@ -2265,10 +2621,10 @@ impl ShellKeep {
                 )
                 .into()
             } else {
-                center(text("Terminal not available")).into()
+                center(text(i18n::t(i18n::TERMINAL_NOT_AVAILABLE))).into()
             }
         } else {
-            center(text("No active tab")).into()
+            center(text(i18n::t(i18n::NO_ACTIVE_TAB))).into()
         };
 
         // FR-TABS-09: search bar overlay
@@ -2292,12 +2648,12 @@ impl ShellKeep {
                 ..Default::default()
             };
             let match_info: Element<'_, Message> = if self.search_last_match.is_some() {
-                text("Match found")
+                text(i18n::t(i18n::MATCH_FOUND))
                     .size(11)
                     .color(Color::from_rgb8(0xa6, 0xe3, 0xa1))
                     .into()
             } else if !self.search_input.is_empty() {
-                text("No matches")
+                text(i18n::t(i18n::NO_MATCHES))
                     .size(11)
                     .color(Color::from_rgb8(0xf3, 0x8b, 0xa8))
                     .into()
@@ -2313,17 +2669,17 @@ impl ShellKeep {
                         .size(13)
                         .padding(6)
                         .width(280),
-                    button(text("Previous").size(11))
+                    button(text(i18n::t(i18n::PREVIOUS)).size(11))
                         .on_press(Message::SearchPrev)
                         .padding([4, 8])
                         .style(btn_style),
-                    button(text("Next").size(11))
+                    button(text(i18n::t(i18n::NEXT)).size(11))
                         .on_press(Message::SearchNext)
                         .padding([4, 8])
                         .style(btn_style),
                     match_info,
                     Space::new().width(Length::Fill),
-                    button(text("Close").size(11))
+                    button(text(i18n::t(i18n::CLOSE)).size(11))
                         .on_press(Message::SearchClose)
                         .padding([4, 8])
                         .style(btn_style),
@@ -2362,7 +2718,7 @@ impl ShellKeep {
 
             if tab_idx > 0 {
                 menu_items.push(
-                    button(text("Move left").size(13))
+                    button(text(i18n::t(i18n::MOVE_LEFT)).size(13))
                         .on_press(Message::TabMoveLeft(tab_idx))
                         .padding([8, 16])
                         .width(180)
@@ -2372,7 +2728,7 @@ impl ShellKeep {
             }
             if tab_idx + 1 < self.tabs.len() {
                 menu_items.push(
-                    button(text("Move right").size(13))
+                    button(text(i18n::t(i18n::MOVE_RIGHT)).size(13))
                         .on_press(Message::TabMoveRight(tab_idx))
                         .padding([8, 16])
                         .width(180)
@@ -2381,7 +2737,7 @@ impl ShellKeep {
                 );
             }
             menu_items.push(
-                button(text("Rename         F2").size(13))
+                button(text(format!("{}         F2", i18n::t(i18n::RENAME))).size(13))
                     .on_press(Message::StartRename(tab_idx))
                     .padding([8, 16])
                     .width(180)
@@ -2389,7 +2745,7 @@ impl ShellKeep {
                     .into(),
             );
             menu_items.push(
-                button(text("Close tab").size(13))
+                button(text(i18n::t(i18n::CLOSE_TAB)).size(13))
                     .on_press(Message::CloseTab(tab_idx))
                     .padding([8, 16])
                     .width(180)
@@ -2452,12 +2808,12 @@ impl ShellKeep {
 
             let menu = container(
                 column![
-                    button(text("Copy        Ctrl+Shift+C").size(13))
+                    button(text(format!("{}        Ctrl+Shift+C", i18n::t(i18n::COPY))).size(13))
                         .on_press(Message::ContextMenuCopy)
                         .padding([8, 16])
                         .width(250)
                         .style(ctx_style),
-                    button(text("Paste       Ctrl+Shift+V").size(13))
+                    button(text(format!("{}       Ctrl+Shift+V", i18n::t(i18n::PASTE))).size(13))
                         .on_press(Message::ContextMenuPaste)
                         .padding([8, 16])
                         .width(250)
@@ -2558,7 +2914,7 @@ impl ShellKeep {
             };
             let dialog = container(
                 column![
-                    text("Close shellkeep?")
+                    text(i18n::t(i18n::CLOSE_SHELLKEEP))
                         .size(18)
                         .color(Color::from_rgb8(0xcd, 0xd6, 0xf4)),
                     text(format!(
@@ -2568,15 +2924,15 @@ impl ShellKeep {
                     .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
                     Space::new().height(12),
                     row![
-                        button(text("Hide").size(13))
+                        button(text(i18n::t(i18n::HIDE)).size(13))
                             .on_press(Message::CloseDialogHide)
                             .padding([8, 16])
                             .style(primary_btn_style),
-                        button(text("Close anyway").size(13))
+                        button(text(i18n::t(i18n::CLOSE_ANYWAY)).size(13))
                             .on_press(Message::CloseDialogClose)
                             .padding([8, 16])
                             .style(close_btn_style),
-                        button(text("Cancel").size(13))
+                        button(text(i18n::t(i18n::CANCEL)).size(13))
                             .on_press(Message::CloseDialogCancel)
                             .padding([8, 16])
                             .style(btn_style),
@@ -2644,14 +3000,14 @@ impl ShellKeep {
 
         // FR-UI-07..08: enhanced dead session banner
         let banner_text = if tab.reconnect_attempts > 0 {
-            "Session disconnected — it may still be running on the server."
+            i18n::t(i18n::DEAD_SESSION_RECONNECTABLE)
         } else {
-            "This session was terminated on the server. Output history is preserved below."
+            i18n::t(i18n::DEAD_SESSION_TERMINATED)
         };
 
         let mut items: Vec<Element<'a, Message>> = vec![
             text("⚠").size(48).into(),
-            text("Session disconnected")
+            text(i18n::t(i18n::SESSION_DISCONNECTED))
                 .size(20)
                 .color(Color::from_rgb8(0xf9, 0xe2, 0xaf))
                 .into(),
@@ -2691,9 +3047,9 @@ impl ShellKeep {
 
         // FR-RECONNECT-04: reconnect button — label varies based on context
         let reconnect_label = if tab.reconnect_attempts > 0 {
-            "Try again"
+            i18n::t(i18n::TRY_AGAIN)
         } else {
-            "Reconnect"
+            i18n::t(i18n::RECONNECT)
         };
         items.push(
             button(
@@ -2719,7 +3075,7 @@ impl ShellKeep {
         if self.current_conn.is_some() {
             items.push(
                 button(
-                    text("Create new session")
+                    text(i18n::t(i18n::CREATE_NEW_SESSION))
                         .size(13)
                         .color(Color::from_rgb8(0xcd, 0xd6, 0xf4)),
                 )
@@ -2741,7 +3097,7 @@ impl ShellKeep {
 
         // Close tab button
         items.push(
-            button(text("Close tab").size(12))
+            button(text(i18n::t(i18n::CLOSE_TAB)).size(12))
                 .on_press(Message::CloseTab(index))
                 .padding([6, 16])
                 .style(|_theme: &Theme, _status| button::Style {
@@ -2752,7 +3108,54 @@ impl ShellKeep {
                 .into(),
         );
 
-        center(column(items).spacing(12).align_x(iced::Alignment::Center)).into()
+        // FR-UI-09..10: show preserved session history if available
+        let history_output = history::reconstruct_output(&tab.session_uuid);
+        let banner = column(items).spacing(12).align_x(iced::Alignment::Center);
+
+        match history_output {
+            Some(output) if !output.is_empty() => {
+                let history_view = container(
+                    scrollable(
+                        container(
+                            text(output)
+                                .size(13)
+                                .font(iced::Font::MONOSPACE)
+                                .color(Color::from_rgb8(0xcd, 0xd6, 0xf4)),
+                        )
+                        .padding(12),
+                    )
+                    .height(Length::Fill),
+                )
+                .style(|_theme: &Theme| container::Style {
+                    background: Some(iced::Background::Color(Color::from_rgb8(0x18, 0x18, 0x25))),
+                    border: iced::Border {
+                        radius: 8.0.into(),
+                        width: 1.0,
+                        color: Color::from_rgb8(0x31, 0x32, 0x44),
+                    },
+                    ..Default::default()
+                })
+                .width(Length::Fill)
+                .height(Length::Fill);
+
+                column![container(banner).padding(iced::Padding { top: 24.0, right: 0.0, bottom: 8.0, left: 0.0 }), history_view,]
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .into()
+            }
+            Some(_) => column![
+                container(banner).padding(iced::Padding { top: 24.0, right: 0.0, bottom: 8.0, left: 0.0 }),
+                center(
+                    text("History file is empty.")
+                        .size(12)
+                        .color(Color::from_rgb8(0x6c, 0x70, 0x86)),
+                ),
+            ]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into(),
+            None => center(banner).into(),
+        }
     }
 
     fn view_tab_bar(&self) -> Element<'_, Message> {
@@ -2890,11 +3293,18 @@ impl ShellKeep {
             String::new()
         };
 
+        // FR-ENV-01: environment indicator
+        let env_indicator = text(format!("env: {}", self.current_environment))
+            .size(11)
+            .color(Color::from_rgb8(0x89, 0xb4, 0xfa));
+
         container(
             row![
                 text(active_label)
                     .size(11)
                     .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
+                Space::new().width(16),
+                env_indicator,
                 Space::new().width(Length::Fill),
                 text(status_text)
                     .size(11)
@@ -2920,37 +3330,36 @@ impl ShellKeep {
         // FR-UI-03: first-use experience — show extended welcome on first run
         let is_first_use = self.recent.connections.is_empty() && !config_file_exists();
 
-        let subtitle: Element<'_, Message> =
-            if is_first_use {
-                column![
-                text("Welcome to shellkeep")
+        let subtitle: Element<'_, Message> = if is_first_use {
+            column![
+                text(i18n::t(i18n::WELCOME_TEXT))
                     .size(16)
                     .color(Color::from_rgb8(0xf9, 0xe2, 0xaf)),
-                text("Your SSH sessions survive everything — network drops, laptop sleep, reboots.")
+                text(i18n::t(i18n::WELCOME_DESCRIPTION))
                     .size(13)
                     .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
-                text("Connect to a server to get started.")
+                text(i18n::t(i18n::WELCOME_PROMPT))
                     .size(13)
                     .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
                 text(format!("Client name: {}", self.client_id))
                     .size(11)
                     .color(Color::from_rgb8(0x6c, 0x70, 0x86)),
             ]
-                .spacing(6)
-                .align_x(iced::Alignment::Center)
+            .spacing(6)
+            .align_x(iced::Alignment::Center)
+            .into()
+        } else {
+            let version = format!(
+                "v{} — SSH sessions that survive everything",
+                env!("CARGO_PKG_VERSION")
+            );
+            text(version)
+                .size(14)
+                .color(Color::from_rgb8(0xa6, 0xad, 0xc8))
                 .into()
-            } else {
-                let version = format!(
-                    "v{} — SSH sessions that survive everything",
-                    env!("CARGO_PKG_VERSION")
-                );
-                text(version)
-                    .size(14)
-                    .color(Color::from_rgb8(0xa6, 0xad, 0xc8))
-                    .into()
-            };
+        };
 
-        let host_field = text_input("user@host or just hostname", &self.host_input)
+        let host_field = text_input(i18n::t(i18n::HOST_PLACEHOLDER), &self.host_input)
             .on_input(Message::HostInputChanged)
             .on_submit(Message::Connect)
             .size(14)
@@ -2969,14 +3378,14 @@ impl ShellKeep {
             .padding(10)
             .width(80);
 
-        let identity_field = text_input("~/.ssh/id_ed25519 (optional)", &self.identity_input)
+        let identity_field = text_input(i18n::t(i18n::IDENTITY_PLACEHOLDER), &self.identity_input)
             .on_input(Message::IdentityInputChanged)
             .on_submit(Message::Connect)
             .size(14)
             .padding(10);
 
         let connect_btn = button(
-            text("Connect")
+            text(i18n::t(i18n::CONNECT))
                 .size(14)
                 .color(Color::from_rgb8(0x1e, 0x1e, 0x2e)),
         )
@@ -2993,15 +3402,16 @@ impl ShellKeep {
         });
 
         let host_row = row![
-            column![text("Host").size(12), host_field]
+            column![text(i18n::t(i18n::HOST_LABEL)).size(12), host_field]
                 .spacing(4)
                 .width(Length::Fill),
-            column![text("Port").size(12), port_field].spacing(4),
+            column![text(i18n::t(i18n::PORT_LABEL)).size(12), port_field].spacing(4),
         ]
         .spacing(8);
 
-        let user_row = column![text("Username").size(12), user_field].spacing(4);
-        let identity_row = column![text("Identity file").size(12), identity_field].spacing(4);
+        let user_row = column![text(i18n::t(i18n::USERNAME_LABEL)).size(12), user_field].spacing(4);
+        let identity_row =
+            column![text(i18n::t(i18n::IDENTITY_LABEL)).size(12), identity_field].spacing(4);
 
         let error_text: Element<'_, Message> = if let Some(ref err) = self.error {
             text(err)
@@ -3018,7 +3428,7 @@ impl ShellKeep {
         } else {
             let mut recent_items: Vec<Element<'_, Message>> = Vec::new();
             recent_items.push(
-                text("Recent connections")
+                text(i18n::t(i18n::RECENT_CONNECTIONS))
                     .size(12)
                     .color(Color::from_rgb8(0x6c, 0x70, 0x86))
                     .into(),
@@ -3030,15 +3440,7 @@ impl ShellKeep {
                         .unwrap_or_default()
                         .as_secs();
                     let ago = now.saturating_sub(ts);
-                    let time_str = if ago < 60 {
-                        "just now".to_string()
-                    } else if ago < 3600 {
-                        format!("{}m ago", ago / 60)
-                    } else if ago < 86400 {
-                        format!("{}h ago", ago / 3600)
-                    } else {
-                        format!("{}d ago", ago / 86400)
-                    };
+                    let time_str = i18n::format_relative_time(ago);
                     format!("{}  ({})", conn.label, time_str)
                 } else {
                     conn.label.clone()
