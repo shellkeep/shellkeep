@@ -4,6 +4,8 @@
 pub mod connection;
 pub mod errors;
 pub mod known_hosts;
+pub mod lock;
 pub mod manager;
+pub mod ssh_config;
 pub mod tmux;
 pub mod validate;

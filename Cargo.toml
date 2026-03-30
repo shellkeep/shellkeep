@@ -54,8 +54,14 @@ rand = "0.8"
 # Date/time formatting
 chrono = "0.4"
 
+# File watching (config hot reload)
+notify = "7"
+
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"
 
 [profile.release]
 lto = "thin"
