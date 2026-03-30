@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use crate::app::tab::Tab;
+use crate::app::view::styles;
 use crate::app::Message;
 use crate::ShellKeep;
 
 use iced::widget::{Space, button, center, column, container, scrollable, text};
-use iced::{Color, Element, Length, Theme};
+use iced::{Color, Element, Length};
 use shellkeep::i18n;
 use shellkeep::state::history;
 
@@ -75,15 +76,7 @@ impl ShellKeep {
             )
             .on_press(Message::ReconnectTab(index))
             .padding([10, 24])
-            .style(|_theme, _status| button::Style {
-                background: Some(iced::Background::Color(Color::from_rgb8(0xa6, 0xe3, 0xa1))),
-                text_color: Color::from_rgb8(0x1e, 0x1e, 0x2e),
-                border: iced::Border {
-                    radius: 6.0.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            })
+            .style(styles::reconnect_button_style)
             .into(),
         );
 
@@ -97,16 +90,7 @@ impl ShellKeep {
                 )
                 .on_press(Message::CreateNewSession(index))
                 .padding([8, 20])
-                .style(|_theme: &Theme, _status| button::Style {
-                    background: Some(iced::Background::Color(Color::from_rgb8(0x31, 0x32, 0x44))),
-                    text_color: Color::from_rgb8(0xcd, 0xd6, 0xf4),
-                    border: iced::Border {
-                        radius: 6.0.into(),
-                        width: 1.0,
-                        color: Color::from_rgb8(0x45, 0x47, 0x5a),
-                    },
-                    ..Default::default()
-                })
+                .style(styles::new_session_button_style)
                 .into(),
             );
         }
@@ -116,11 +100,7 @@ impl ShellKeep {
             button(text(i18n::t(i18n::CLOSE_TAB)).size(12))
                 .on_press(Message::CloseTab(index))
                 .padding([6, 16])
-                .style(|_theme: &Theme, _status| button::Style {
-                    background: None,
-                    text_color: Color::from_rgb8(0x6c, 0x70, 0x86),
-                    ..Default::default()
-                })
+                .style(styles::ghost_button_style)
                 .into(),
         );
 
@@ -142,15 +122,7 @@ impl ShellKeep {
                     )
                     .height(Length::Fill),
                 )
-                .style(|_theme: &Theme| container::Style {
-                    background: Some(iced::Background::Color(Color::from_rgb8(0x18, 0x18, 0x25))),
-                    border: iced::Border {
-                        radius: 8.0.into(),
-                        width: 1.0,
-                        color: Color::from_rgb8(0x31, 0x32, 0x44),
-                    },
-                    ..Default::default()
-                })
+                .style(styles::history_container_style)
                 .width(Length::Fill)
                 .height(Length::Fill);
 

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 shellkeep contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+use crate::app::view::styles;
 use crate::app::Message;
 use crate::{RENAME_INPUT_ID, ShellKeep};
 
@@ -63,11 +64,7 @@ impl ShellKeep {
                 let close_btn = button(text("×").size(12))
                     .on_press(Message::CloseTab(i))
                     .padding([0, 4])
-                    .style(|_theme: &Theme, _status| button::Style {
-                        background: None,
-                        text_color: Color::from_rgb8(0x6c, 0x70, 0x86),
-                        ..Default::default()
-                    });
+                    .style(styles::ghost_button_style);
 
                 // FR-UI-05: build tab content with optional latency display
                 let mut tab_items: Vec<Element<'_, Message>> = vec![
@@ -115,11 +112,7 @@ impl ShellKeep {
         let new_tab_btn = button(text("+").size(14))
             .on_press(Message::NewTab)
             .padding([6, 10])
-            .style(|_theme: &Theme, _status| button::Style {
-                background: None,
-                text_color: Color::from_rgb8(0x6c, 0x70, 0x86),
-                ..Default::default()
-            });
+            .style(styles::ghost_button_style);
 
         let bar = row![row(tabs_row).spacing(1), new_tab_btn]
             .width(Length::Fill)
@@ -127,10 +120,7 @@ impl ShellKeep {
 
         container(bar)
             .width(Length::Fill)
-            .style(|_theme: &Theme| container::Style {
-                background: Some(iced::Background::Color(Color::from_rgb8(0x18, 0x18, 0x25))),
-                ..Default::default()
-            })
+            .style(styles::bar_background_style)
             .into()
     }
 }

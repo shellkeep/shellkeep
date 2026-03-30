@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: 2026 shellkeep contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+use crate::app::view::styles;
 use crate::app::Message;
 use crate::ShellKeep;
 
 use iced::widget::{Space, container, row, text};
-use iced::{Color, Element, Length, Theme};
+use iced::{Color, Element, Length};
 
 impl ShellKeep {
     pub(crate) fn view_status_bar(&self) -> Element<'_, Message> {
@@ -55,10 +56,7 @@ impl ShellKeep {
             .width(Length::Fill),
         )
         .width(Length::Fill)
-        .style(|_theme: &Theme| container::Style {
-            background: Some(iced::Background::Color(Color::from_rgb8(0x18, 0x18, 0x25))),
-            ..Default::default()
-        })
+        .style(styles::bar_background_style)
         .into()
     }
 }

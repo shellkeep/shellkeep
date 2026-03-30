@@ -1,50 +1,18 @@
 // SPDX-FileCopyrightText: 2026 shellkeep contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+use crate::app::view::styles;
 use crate::app::Message;
 use crate::ShellKeep;
 
 use iced::widget::{
     Space, button, center, column, container, mouse_area, row, scrollable, stack, text, text_input,
 };
-use iced::{Color, Element, Length, Theme};
+use iced::{Color, Element, Length};
 
 impl ShellKeep {
     /// FR-ENV-03: environment selection dialog overlay
     pub(crate) fn view_env_dialog(&self) -> Element<'_, Message> {
-        let dialog_style = |_theme: &Theme| container::Style {
-            background: Some(iced::Background::Color(Color::from_rgb8(0x24, 0x24, 0x36))),
-            border: iced::Border {
-                radius: 12.0.into(),
-                width: 1.0,
-                color: Color::from_rgb8(0x45, 0x47, 0x5a),
-            },
-            shadow: iced::Shadow {
-                color: Color::from_rgba8(0, 0, 0, 0.6),
-                offset: iced::Vector::new(0.0, 4.0),
-                blur_radius: 16.0,
-            },
-            ..Default::default()
-        };
-        let btn_style = |_theme: &Theme, _status: button::Status| button::Style {
-            background: Some(iced::Background::Color(Color::from_rgb8(0x31, 0x32, 0x44))),
-            text_color: Color::from_rgb8(0xcd, 0xd6, 0xf4),
-            border: iced::Border {
-                radius: 6.0.into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let primary_btn_style = |_theme: &Theme, _status: button::Status| button::Style {
-            background: Some(iced::Background::Color(Color::from_rgb8(0x89, 0xb4, 0xfa))),
-            text_color: Color::from_rgb8(0x1e, 0x1e, 0x2e),
-            border: iced::Border {
-                radius: 6.0.into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
         let filter = self.env_filter.to_lowercase();
         let filtered: Vec<&String> = self
             .env_list
@@ -61,7 +29,7 @@ impl ShellKeep {
             } else {
                 (*env).clone()
             };
-            let item_style = move |_theme: &Theme, _status: button::Status| {
+            let item_style = move |_theme: &iced::Theme, _status: button::Status| {
                 let bg = if is_selected {
                     Color::from_rgb8(0x45, 0x47, 0x5a)
                 } else {
@@ -104,16 +72,16 @@ impl ShellKeep {
                     button(text("New environment").size(13))
                         .on_press(Message::NewEnvFromDialog)
                         .padding([8, 16])
-                        .style(btn_style),
+                        .style(styles::secondary_button_style),
                     Space::new().width(Length::Fill),
                     button(text("Cancel").size(13))
                         .on_press(Message::CancelEnvDialog)
                         .padding([8, 16])
-                        .style(btn_style),
+                        .style(styles::secondary_button_style),
                     button(text("Connect").size(13))
                         .on_press(Message::ConfirmEnv)
                         .padding([8, 16])
-                        .style(primary_btn_style),
+                        .style(styles::primary_button_style),
                 ]
                 .spacing(8),
             ]
@@ -121,16 +89,13 @@ impl ShellKeep {
             .padding(24)
             .width(400),
         )
-        .style(dialog_style);
+        .style(styles::dialog_container_style);
 
         let scrim = mouse_area(
             container(Space::new().width(Length::Fill).height(Length::Fill))
                 .width(Length::Fill)
                 .height(Length::Fill)
-                .style(|_theme: &Theme| container::Style {
-                    background: Some(iced::Background::Color(Color::from_rgba8(0, 0, 0, 0.5))),
-                    ..Default::default()
-                }),
+                .style(styles::scrim_style),
         )
         .on_press(Message::CancelEnvDialog);
 
@@ -139,39 +104,6 @@ impl ShellKeep {
 
     /// FR-ENV-07: new environment creation dialog
     pub(crate) fn view_new_env_dialog(&self) -> Element<'_, Message> {
-        let dialog_style = |_theme: &Theme| container::Style {
-            background: Some(iced::Background::Color(Color::from_rgb8(0x24, 0x24, 0x36))),
-            border: iced::Border {
-                radius: 12.0.into(),
-                width: 1.0,
-                color: Color::from_rgb8(0x45, 0x47, 0x5a),
-            },
-            shadow: iced::Shadow {
-                color: Color::from_rgba8(0, 0, 0, 0.6),
-                offset: iced::Vector::new(0.0, 4.0),
-                blur_radius: 16.0,
-            },
-            ..Default::default()
-        };
-        let btn_style = |_theme: &Theme, _status: button::Status| button::Style {
-            background: Some(iced::Background::Color(Color::from_rgb8(0x31, 0x32, 0x44))),
-            text_color: Color::from_rgb8(0xcd, 0xd6, 0xf4),
-            border: iced::Border {
-                radius: 6.0.into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let primary_btn_style = |_theme: &Theme, _status: button::Status| button::Style {
-            background: Some(iced::Background::Color(Color::from_rgb8(0x89, 0xb4, 0xfa))),
-            text_color: Color::from_rgb8(0x1e, 0x1e, 0x2e),
-            border: iced::Border {
-                radius: 6.0.into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
         let dialog = container(
             column![
                 text("New environment")
@@ -191,11 +123,11 @@ impl ShellKeep {
                     button(text("Cancel").size(13))
                         .on_press(Message::CancelNewEnv)
                         .padding([8, 16])
-                        .style(btn_style),
+                        .style(styles::secondary_button_style),
                     button(text("Create").size(13))
                         .on_press(Message::ConfirmNewEnv)
                         .padding([8, 16])
-                        .style(primary_btn_style),
+                        .style(styles::primary_button_style),
                 ]
                 .spacing(8),
             ]
@@ -203,16 +135,13 @@ impl ShellKeep {
             .padding(24)
             .width(360),
         )
-        .style(dialog_style);
+        .style(styles::dialog_container_style);
 
         let scrim = mouse_area(
             container(Space::new().width(Length::Fill).height(Length::Fill))
                 .width(Length::Fill)
                 .height(Length::Fill)
-                .style(|_theme: &Theme| container::Style {
-                    background: Some(iced::Background::Color(Color::from_rgba8(0, 0, 0, 0.5))),
-                    ..Default::default()
-                }),
+                .style(styles::scrim_style),
         )
         .on_press(Message::CancelNewEnv);
 
@@ -221,39 +150,6 @@ impl ShellKeep {
 
     /// FR-ENV-08: rename environment dialog
     pub(crate) fn view_rename_env_dialog(&self) -> Element<'_, Message> {
-        let dialog_style = |_theme: &Theme| container::Style {
-            background: Some(iced::Background::Color(Color::from_rgb8(0x24, 0x24, 0x36))),
-            border: iced::Border {
-                radius: 12.0.into(),
-                width: 1.0,
-                color: Color::from_rgb8(0x45, 0x47, 0x5a),
-            },
-            shadow: iced::Shadow {
-                color: Color::from_rgba8(0, 0, 0, 0.6),
-                offset: iced::Vector::new(0.0, 4.0),
-                blur_radius: 16.0,
-            },
-            ..Default::default()
-        };
-        let btn_style = |_theme: &Theme, _status: button::Status| button::Style {
-            background: Some(iced::Background::Color(Color::from_rgb8(0x31, 0x32, 0x44))),
-            text_color: Color::from_rgb8(0xcd, 0xd6, 0xf4),
-            border: iced::Border {
-                radius: 6.0.into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let primary_btn_style = |_theme: &Theme, _status: button::Status| button::Style {
-            background: Some(iced::Background::Color(Color::from_rgb8(0x89, 0xb4, 0xfa))),
-            text_color: Color::from_rgb8(0x1e, 0x1e, 0x2e),
-            border: iced::Border {
-                radius: 6.0.into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
         let target_name = self.rename_env_target.as_deref().unwrap_or("unknown");
 
         let dialog = container(
@@ -275,11 +171,11 @@ impl ShellKeep {
                     button(text("Cancel").size(13))
                         .on_press(Message::CancelRenameEnv)
                         .padding([8, 16])
-                        .style(btn_style),
+                        .style(styles::secondary_button_style),
                     button(text("Rename").size(13))
                         .on_press(Message::ConfirmRenameEnv)
                         .padding([8, 16])
-                        .style(primary_btn_style),
+                        .style(styles::primary_button_style),
                 ]
                 .spacing(8),
             ]
@@ -287,16 +183,13 @@ impl ShellKeep {
             .padding(24)
             .width(360),
         )
-        .style(dialog_style);
+        .style(styles::dialog_container_style);
 
         let scrim = mouse_area(
             container(Space::new().width(Length::Fill).height(Length::Fill))
                 .width(Length::Fill)
                 .height(Length::Fill)
-                .style(|_theme: &Theme| container::Style {
-                    background: Some(iced::Background::Color(Color::from_rgba8(0, 0, 0, 0.5))),
-                    ..Default::default()
-                }),
+                .style(styles::scrim_style),
         )
         .on_press(Message::CancelRenameEnv);
 
@@ -305,39 +198,6 @@ impl ShellKeep {
 
     /// FR-ENV-09: delete environment confirmation dialog
     pub(crate) fn view_delete_env_dialog(&self) -> Element<'_, Message> {
-        let dialog_style = |_theme: &Theme| container::Style {
-            background: Some(iced::Background::Color(Color::from_rgb8(0x24, 0x24, 0x36))),
-            border: iced::Border {
-                radius: 12.0.into(),
-                width: 1.0,
-                color: Color::from_rgb8(0x45, 0x47, 0x5a),
-            },
-            shadow: iced::Shadow {
-                color: Color::from_rgba8(0, 0, 0, 0.6),
-                offset: iced::Vector::new(0.0, 4.0),
-                blur_radius: 16.0,
-            },
-            ..Default::default()
-        };
-        let btn_style = |_theme: &Theme, _status: button::Status| button::Style {
-            background: Some(iced::Background::Color(Color::from_rgb8(0x31, 0x32, 0x44))),
-            text_color: Color::from_rgb8(0xcd, 0xd6, 0xf4),
-            border: iced::Border {
-                radius: 6.0.into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let danger_btn_style = |_theme: &Theme, _status: button::Status| button::Style {
-            background: Some(iced::Background::Color(Color::from_rgb8(0xf3, 0x8b, 0xa8))),
-            text_color: Color::from_rgb8(0x1e, 0x1e, 0x2e),
-            border: iced::Border {
-                radius: 6.0.into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
         let target_name = self.delete_env_target.as_deref().unwrap_or("unknown");
         // Count sessions in the target environment (stub: 0 for now)
         let session_count = 0_usize;
@@ -367,11 +227,11 @@ impl ShellKeep {
                     button(text("Cancel").size(13))
                         .on_press(Message::CancelDeleteEnv)
                         .padding([8, 16])
-                        .style(btn_style),
+                        .style(styles::secondary_button_style),
                     button(text("Delete").size(13))
                         .on_press(Message::ConfirmDeleteEnv)
                         .padding([8, 16])
-                        .style(danger_btn_style),
+                        .style(styles::danger_button_style),
                 ]
                 .spacing(8),
             ]
@@ -379,16 +239,13 @@ impl ShellKeep {
             .padding(24)
             .width(360),
         )
-        .style(dialog_style);
+        .style(styles::dialog_container_style);
 
         let scrim = mouse_area(
             container(Space::new().width(Length::Fill).height(Length::Fill))
                 .width(Length::Fill)
                 .height(Length::Fill)
-                .style(|_theme: &Theme| container::Style {
-                    background: Some(iced::Background::Color(Color::from_rgba8(0, 0, 0, 0.5))),
-                    ..Default::default()
-                }),
+                .style(styles::scrim_style),
         )
         .on_press(Message::CancelDeleteEnv);
 

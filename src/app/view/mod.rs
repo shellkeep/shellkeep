@@ -4,6 +4,7 @@
 mod dead_tab;
 mod dialogs;
 mod status_bar;
+pub(crate) mod styles;
 mod tab_bar;
 mod welcome;
 
@@ -14,7 +15,7 @@ use crate::ShellKeep;
 use iced::widget::{
     Space, button, center, column, container, mouse_area, row, stack, text, text_input,
 };
-use iced::{Color, Element, Length, Theme};
+use iced::{Color, Element, Length};
 use shellkeep::i18n;
 
 impl ShellKeep {
@@ -115,24 +116,6 @@ impl ShellKeep {
 
         // FR-TABS-09: search bar overlay
         let content: Element<'_, Message> = if self.search_active {
-            let search_bar_style = |_theme: &Theme| container::Style {
-                background: Some(iced::Background::Color(Color::from_rgb8(0x24, 0x24, 0x36))),
-                border: iced::Border {
-                    radius: 0.0.into(),
-                    width: 0.0,
-                    color: Color::TRANSPARENT,
-                },
-                ..Default::default()
-            };
-            let btn_style = |_theme: &Theme, _status: button::Status| button::Style {
-                background: Some(iced::Background::Color(Color::from_rgb8(0x31, 0x32, 0x44))),
-                text_color: Color::from_rgb8(0xcd, 0xd6, 0xf4),
-                border: iced::Border {
-                    radius: 4.0.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            };
             let match_info: Element<'_, Message> = if self.search_last_match.is_some() {
                 text(i18n::t(i18n::MATCH_FOUND))
                     .size(11)
@@ -158,24 +141,24 @@ impl ShellKeep {
                     button(text(i18n::t(i18n::PREVIOUS)).size(11))
                         .on_press(Message::SearchPrev)
                         .padding([4, 8])
-                        .style(btn_style),
+                        .style(styles::search_button_style),
                     button(text(i18n::t(i18n::NEXT)).size(11))
                         .on_press(Message::SearchNext)
                         .padding([4, 8])
-                        .style(btn_style),
+                        .style(styles::search_button_style),
                     match_info,
                     Space::new().width(Length::Fill),
                     button(text(i18n::t(i18n::CLOSE)).size(11))
                         .on_press(Message::SearchClose)
                         .padding([4, 8])
-                        .style(btn_style),
+                        .style(styles::search_button_style),
                 ]
                 .spacing(6)
                 .align_y(iced::Alignment::Center)
                 .padding([4, 8]),
             )
             .width(Length::Fill)
-            .style(search_bar_style);
+            .style(styles::search_bar_style);
             column![search_bar, content].into()
         } else {
             content
@@ -186,20 +169,6 @@ impl ShellKeep {
         // Wrap with tab context menu if active
         let main_view: Element<'_, Message> = if let Some((tab_idx, _x, _y)) = self.tab_context_menu
         {
-            let ctx_style = |_theme: &Theme, status: button::Status| {
-                let bg = match status {
-                    button::Status::Hovered | button::Status::Pressed => {
-                        Color::from_rgb8(0x45, 0x47, 0x5a)
-                    }
-                    _ => Color::from_rgb8(0x24, 0x24, 0x36),
-                };
-                button::Style {
-                    background: Some(iced::Background::Color(bg)),
-                    text_color: Color::from_rgb8(0xcd, 0xd6, 0xf4),
-                    ..Default::default()
-                }
-            };
-
             let mut menu_items: Vec<Element<'_, Message>> = Vec::new();
 
             if tab_idx > 0 {
@@ -208,7 +177,7 @@ impl ShellKeep {
                         .on_press(Message::TabMoveLeft(tab_idx))
                         .padding([8, 16])
                         .width(200)
-                        .style(ctx_style)
+                        .style(styles::context_menu_style)
                         .into(),
                 );
             }
@@ -218,7 +187,7 @@ impl ShellKeep {
                         .on_press(Message::TabMoveRight(tab_idx))
                         .padding([8, 16])
                         .width(200)
-                        .style(ctx_style)
+                        .style(styles::context_menu_style)
                         .into(),
                 );
             }
@@ -227,7 +196,7 @@ impl ShellKeep {
                     .on_press(Message::StartRename(tab_idx))
                     .padding([8, 16])
                     .width(200)
-                    .style(ctx_style)
+                    .style(styles::context_menu_style)
                     .into(),
             );
             menu_items.push(
@@ -235,19 +204,14 @@ impl ShellKeep {
                     .on_press(Message::HideTab(tab_idx))
                     .padding([8, 16])
                     .width(200)
-                    .style(ctx_style)
+                    .style(styles::context_menu_style)
                     .into(),
             );
             // Separator
             menu_items.push(
                 container(Space::new().height(1))
                     .width(Length::Fill)
-                    .style(|_theme: &Theme| container::Style {
-                        background: Some(iced::Background::Color(Color::from_rgb8(
-                            0x45, 0x47, 0x5a,
-                        ))),
-                        ..Default::default()
-                    })
+                    .style(styles::separator_style)
                     .into(),
             );
             if self.tabs.len() > 1 {
@@ -256,7 +220,7 @@ impl ShellKeep {
                         .on_press(Message::CloseOtherTabs(tab_idx))
                         .padding([8, 16])
                         .width(200)
-                        .style(ctx_style)
+                        .style(styles::context_menu_style)
                         .into(),
                 );
             }
@@ -266,7 +230,7 @@ impl ShellKeep {
                         .on_press(Message::CloseTabsToRight(tab_idx))
                         .padding([8, 16])
                         .width(200)
-                        .style(ctx_style)
+                        .style(styles::context_menu_style)
                         .into(),
                 );
             }
@@ -279,29 +243,13 @@ impl ShellKeep {
                 .on_press(Message::CloseTab(tab_idx))
                 .padding([8, 16])
                 .width(200)
-                .style(ctx_style)
+                .style(styles::context_menu_style)
                 .into(),
             );
 
-            let tab_menu =
-                container(column(menu_items).spacing(1))
-                    .padding(4)
-                    .style(|_theme: &Theme| container::Style {
-                        background: Some(iced::Background::Color(Color::from_rgb8(
-                            0x24, 0x24, 0x36,
-                        ))),
-                        border: iced::Border {
-                            radius: 8.0.into(),
-                            width: 1.0,
-                            color: Color::from_rgb8(0x45, 0x47, 0x5a),
-                        },
-                        shadow: iced::Shadow {
-                            color: Color::from_rgba8(0, 0, 0, 0.5),
-                            offset: iced::Vector::new(2.0, 2.0),
-                            blur_radius: 8.0,
-                        },
-                        ..Default::default()
-                    });
+            let tab_menu = container(column(menu_items).spacing(1))
+                .padding(4)
+                .style(styles::context_menu_container_style);
 
             let dismiss = mouse_area(
                 container(Space::new().width(Length::Fill).height(Length::Fill))
@@ -322,50 +270,23 @@ impl ShellKeep {
             ]
             .into()
         } else if let Some((x, y)) = self.context_menu {
-            let ctx_style = |_theme: &Theme, status: button::Status| {
-                let bg = match status {
-                    button::Status::Hovered | button::Status::Pressed => {
-                        Color::from_rgb8(0x45, 0x47, 0x5a)
-                    }
-                    _ => Color::from_rgb8(0x24, 0x24, 0x36),
-                };
-                button::Style {
-                    background: Some(iced::Background::Color(bg)),
-                    text_color: Color::from_rgb8(0xcd, 0xd6, 0xf4),
-                    ..Default::default()
-                }
-            };
-
             let menu = container(
                 column![
                     button(text(format!("{}        Ctrl+Shift+C", i18n::t(i18n::COPY))).size(13))
                         .on_press(Message::ContextMenuCopy)
                         .padding([8, 16])
                         .width(250)
-                        .style(ctx_style),
+                        .style(styles::context_menu_style),
                     button(text(format!("{}       Ctrl+Shift+V", i18n::t(i18n::PASTE))).size(13))
                         .on_press(Message::ContextMenuPaste)
                         .padding([8, 16])
                         .width(250)
-                        .style(ctx_style),
+                        .style(styles::context_menu_style),
                 ]
                 .spacing(1),
             )
             .padding(4)
-            .style(|_theme: &Theme| container::Style {
-                background: Some(iced::Background::Color(Color::from_rgb8(0x24, 0x24, 0x36))),
-                border: iced::Border {
-                    radius: 8.0.into(),
-                    width: 1.0,
-                    color: Color::from_rgb8(0x45, 0x47, 0x5a),
-                },
-                shadow: iced::Shadow {
-                    color: Color::from_rgba8(0, 0, 0, 0.5),
-                    offset: iced::Vector::new(2.0, 2.0),
-                    blur_radius: 8.0,
-                },
-                ..Default::default()
-            });
+            .style(styles::context_menu_container_style);
 
             let dismiss_area = mouse_area(
                 container(Space::new().width(Length::Fill).height(Length::Fill))
@@ -404,38 +325,6 @@ impl ShellKeep {
                     "This will terminate {count} sessions on the server.\nThis cannot be undone."
                 )
             };
-            let dialog_style = |_theme: &Theme| container::Style {
-                background: Some(iced::Background::Color(Color::from_rgb8(0x24, 0x24, 0x36))),
-                border: iced::Border {
-                    radius: 12.0.into(),
-                    width: 1.0,
-                    color: Color::from_rgb8(0x45, 0x47, 0x5a),
-                },
-                shadow: iced::Shadow {
-                    color: Color::from_rgba8(0, 0, 0, 0.6),
-                    offset: iced::Vector::new(0.0, 4.0),
-                    blur_radius: 16.0,
-                },
-                ..Default::default()
-            };
-            let cancel_style = |_theme: &Theme, _status: button::Status| button::Style {
-                background: Some(iced::Background::Color(Color::from_rgb8(0x31, 0x32, 0x44))),
-                text_color: Color::from_rgb8(0xcd, 0xd6, 0xf4),
-                border: iced::Border {
-                    radius: 6.0.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            };
-            let terminate_style = |_theme: &Theme, _status: button::Status| button::Style {
-                background: Some(iced::Background::Color(Color::from_rgb8(0xf3, 0x8b, 0xa8))),
-                text_color: Color::from_rgb8(0x1e, 0x1e, 0x2e),
-                border: iced::Border {
-                    radius: 6.0.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            };
             let dialog = container(
                 column![
                     text("Terminate session?")
@@ -447,7 +336,7 @@ impl ShellKeep {
                         button(text("Cancel").size(14))
                             .on_press(Message::CancelCloseTabs)
                             .padding([10, 24])
-                            .style(cancel_style),
+                            .style(styles::secondary_button_style),
                         Space::new().width(Length::Fill),
                         button(
                             text("Terminate")
@@ -456,7 +345,7 @@ impl ShellKeep {
                         )
                         .on_press(Message::ConfirmCloseTabs)
                         .padding([10, 24])
-                        .style(terminate_style),
+                        .style(styles::danger_button_style),
                     ]
                     .width(Length::Fill),
                 ]
@@ -464,7 +353,7 @@ impl ShellKeep {
                 .padding(24)
                 .width(380),
             )
-            .style(dialog_style);
+            .style(styles::dialog_container_style);
             center(dialog).into()
         } else if self.show_close_dialog {
             let active_count = self
@@ -472,38 +361,6 @@ impl ShellKeep {
                 .iter()
                 .filter(|t| !t.dead && t.terminal.is_some())
                 .count();
-            let dialog_style = |_theme: &Theme| container::Style {
-                background: Some(iced::Background::Color(Color::from_rgb8(0x24, 0x24, 0x36))),
-                border: iced::Border {
-                    radius: 12.0.into(),
-                    width: 1.0,
-                    color: Color::from_rgb8(0x45, 0x47, 0x5a),
-                },
-                shadow: iced::Shadow {
-                    color: Color::from_rgba8(0, 0, 0, 0.6),
-                    offset: iced::Vector::new(0.0, 4.0),
-                    blur_radius: 16.0,
-                },
-                ..Default::default()
-            };
-            let btn_style = |_theme: &Theme, _status: button::Status| button::Style {
-                background: Some(iced::Background::Color(Color::from_rgb8(0x31, 0x32, 0x44))),
-                text_color: Color::from_rgb8(0xcd, 0xd6, 0xf4),
-                border: iced::Border {
-                    radius: 6.0.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            };
-            let primary_btn_style = |_theme: &Theme, _status: button::Status| button::Style {
-                background: Some(iced::Background::Color(Color::from_rgb8(0x89, 0xb4, 0xfa))),
-                text_color: Color::from_rgb8(0x1e, 0x1e, 0x2e),
-                border: iced::Border {
-                    radius: 6.0.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            };
             let session_word = if active_count == 1 {
                 "session"
             } else {
@@ -527,7 +384,7 @@ impl ShellKeep {
                         button(text(i18n::t(i18n::CANCEL)).size(13))
                             .on_press(Message::CloseDialogCancel)
                             .padding([8, 16])
-                            .style(btn_style),
+                            .style(styles::secondary_button_style),
                         Space::new().width(Length::Fill),
                         button(
                             text("Close")
@@ -536,23 +393,20 @@ impl ShellKeep {
                         )
                         .on_press(Message::CloseDialogClose)
                         .padding([8, 16])
-                        .style(primary_btn_style),
+                        .style(styles::primary_button_style),
                     ]
                     .width(Length::Fill),
                 ]
                 .spacing(8)
                 .padding(24),
             )
-            .style(dialog_style);
+            .style(styles::dialog_container_style);
 
             let scrim = mouse_area(
                 container(Space::new().width(Length::Fill).height(Length::Fill))
                     .width(Length::Fill)
                     .height(Length::Fill)
-                    .style(|_theme: &Theme| container::Style {
-                        background: Some(iced::Background::Color(Color::from_rgba8(0, 0, 0, 0.5))),
-                        ..Default::default()
-                    }),
+                    .style(styles::scrim_style),
             )
             .on_press(Message::CloseDialogCancel);
 
@@ -578,47 +432,6 @@ impl ShellKeep {
         let main_view: Element<'_, Message> = if let Some(ref prompt) = self.pending_host_key_prompt
         {
             use shellkeep::ssh::known_hosts::HostKeyStatus;
-            let dialog_style = |_theme: &Theme| container::Style {
-                background: Some(iced::Background::Color(Color::from_rgb8(0x24, 0x24, 0x36))),
-                border: iced::Border {
-                    radius: 12.0.into(),
-                    width: 1.0,
-                    color: Color::from_rgb8(0x45, 0x47, 0x5a),
-                },
-                shadow: iced::Shadow {
-                    color: Color::from_rgba8(0, 0, 0, 0.6),
-                    offset: iced::Vector::new(0.0, 4.0),
-                    blur_radius: 16.0,
-                },
-                ..Default::default()
-            };
-            let btn_style = |_theme: &Theme, _status: button::Status| button::Style {
-                background: Some(iced::Background::Color(Color::from_rgb8(0x31, 0x32, 0x44))),
-                text_color: Color::from_rgb8(0xcd, 0xd6, 0xf4),
-                border: iced::Border {
-                    radius: 6.0.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            };
-            let warn_btn_style = |_theme: &Theme, _status: button::Status| button::Style {
-                background: Some(iced::Background::Color(Color::from_rgb8(0xf3, 0x8b, 0xa8))),
-                text_color: Color::from_rgb8(0x1e, 0x1e, 0x2e),
-                border: iced::Border {
-                    radius: 6.0.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            };
-            let primary_btn_style = |_theme: &Theme, _status: button::Status| button::Style {
-                background: Some(iced::Background::Color(Color::from_rgb8(0x89, 0xb4, 0xfa))),
-                text_color: Color::from_rgb8(0x1e, 0x1e, 0x2e),
-                border: iced::Border {
-                    radius: 6.0.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            };
             let label_color = Color::from_rgb8(0xa6, 0xad, 0xc8);
             let text_color = Color::from_rgb8(0xcd, 0xd6, 0xf4);
 
@@ -641,22 +454,22 @@ impl ShellKeep {
                                 button(text("Accept and save").size(13))
                                     .on_press(Message::HostKeyAcceptSave)
                                     .padding([8, 16])
-                                    .style(primary_btn_style),
+                                    .style(styles::primary_button_style),
                                 button(text("Connect once").size(13))
                                     .on_press(Message::HostKeyConnectOnce)
                                     .padding([8, 16])
-                                    .style(btn_style),
+                                    .style(styles::secondary_button_style),
                                 button(text("Cancel").size(13))
                                     .on_press(Message::HostKeyReject)
                                     .padding([8, 16])
-                                    .style(warn_btn_style),
+                                    .style(styles::danger_button_style),
                             ]
                             .spacing(8),
                         ]
                         .spacing(4)
                         .padding(24),
                     )
-                    .style(dialog_style)
+                    .style(styles::dialog_container_style)
                 }
                 HostKeyStatus::Changed => {
                     let host_label = format!("Host: {}:{}", prompt.host, prompt.port);
@@ -686,12 +499,12 @@ impl ShellKeep {
                             button(text("Disconnect").size(13))
                                 .on_press(Message::HostKeyChangedDismiss)
                                 .padding([8, 16])
-                                .style(warn_btn_style),
+                                .style(styles::danger_button_style),
                         ]
                         .spacing(4)
                         .padding(24),
                     )
-                    .style(dialog_style)
+                    .style(styles::dialog_container_style)
                 }
                 HostKeyStatus::Known => {
                     // Should not happen, but dismiss gracefully
@@ -703,10 +516,7 @@ impl ShellKeep {
                 container(Space::new().width(Length::Fill).height(Length::Fill))
                     .width(Length::Fill)
                     .height(Length::Fill)
-                    .style(|_theme: &Theme| container::Style {
-                        background: Some(iced::Background::Color(Color::from_rgba8(0, 0, 0, 0.5))),
-                        ..Default::default()
-                    }),
+                    .style(styles::scrim_style),
             )
             .on_press(Message::HostKeyReject);
 
@@ -717,38 +527,6 @@ impl ShellKeep {
 
         // FR-CONN-09: password prompt dialog overlay
         let main_view: Element<'_, Message> = if self.show_password_dialog {
-            let dialog_style = |_theme: &Theme| container::Style {
-                background: Some(iced::Background::Color(Color::from_rgb8(0x24, 0x24, 0x36))),
-                border: iced::Border {
-                    radius: 12.0.into(),
-                    width: 1.0,
-                    color: Color::from_rgb8(0x45, 0x47, 0x5a),
-                },
-                shadow: iced::Shadow {
-                    color: Color::from_rgba8(0, 0, 0, 0.6),
-                    offset: iced::Vector::new(0.0, 4.0),
-                    blur_radius: 16.0,
-                },
-                ..Default::default()
-            };
-            let btn_style = |_theme: &Theme, _status: button::Status| button::Style {
-                background: Some(iced::Background::Color(Color::from_rgb8(0x31, 0x32, 0x44))),
-                text_color: Color::from_rgb8(0xcd, 0xd6, 0xf4),
-                border: iced::Border {
-                    radius: 6.0.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            };
-            let primary_btn_style = |_theme: &Theme, _status: button::Status| button::Style {
-                background: Some(iced::Background::Color(Color::from_rgb8(0x89, 0xb4, 0xfa))),
-                text_color: Color::from_rgb8(0x1e, 0x1e, 0x2e),
-                border: iced::Border {
-                    radius: 6.0.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            };
             let label_color = Color::from_rgb8(0xa6, 0xad, 0xc8);
             let text_color = Color::from_rgb8(0xcd, 0xd6, 0xf4);
 
@@ -777,27 +555,24 @@ impl ShellKeep {
                         button(text("Connect").size(13))
                             .on_press(Message::PasswordSubmit)
                             .padding([8, 16])
-                            .style(primary_btn_style),
+                            .style(styles::primary_button_style),
                         button(text("Cancel").size(13))
                             .on_press(Message::PasswordCancel)
                             .padding([8, 16])
-                            .style(btn_style),
+                            .style(styles::secondary_button_style),
                     ]
                     .spacing(8),
                 ]
                 .spacing(4)
                 .padding(24),
             )
-            .style(dialog_style);
+            .style(styles::dialog_container_style);
 
             let scrim = mouse_area(
                 container(Space::new().width(Length::Fill).height(Length::Fill))
                     .width(Length::Fill)
                     .height(Length::Fill)
-                    .style(|_theme: &Theme| container::Style {
-                        background: Some(iced::Background::Color(Color::from_rgba8(0, 0, 0, 0.5))),
-                        ..Default::default()
-                    }),
+                    .style(styles::scrim_style),
             )
             .on_press(Message::PasswordCancel);
 
@@ -808,38 +583,6 @@ impl ShellKeep {
 
         // FR-LOCK-05: lock conflict dialog overlay
         let main_view: Element<'_, Message> = if self.show_lock_dialog {
-            let dialog_style = |_theme: &Theme| container::Style {
-                background: Some(iced::Background::Color(Color::from_rgb8(0x24, 0x24, 0x36))),
-                border: iced::Border {
-                    radius: 12.0.into(),
-                    width: 1.0,
-                    color: Color::from_rgb8(0x45, 0x47, 0x5a),
-                },
-                shadow: iced::Shadow {
-                    color: Color::from_rgba8(0, 0, 0, 0.6),
-                    offset: iced::Vector::new(0.0, 4.0),
-                    blur_radius: 16.0,
-                },
-                ..Default::default()
-            };
-            let btn_style = |_theme: &Theme, _status: button::Status| button::Style {
-                background: Some(iced::Background::Color(Color::from_rgb8(0x31, 0x32, 0x44))),
-                text_color: Color::from_rgb8(0xcd, 0xd6, 0xf4),
-                border: iced::Border {
-                    radius: 6.0.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            };
-            let warn_btn_style = |_theme: &Theme, _status: button::Status| button::Style {
-                background: Some(iced::Background::Color(Color::from_rgb8(0xfa, 0xb3, 0x87))),
-                text_color: Color::from_rgb8(0x1e, 0x1e, 0x2e),
-                border: iced::Border {
-                    radius: 6.0.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            };
             let text_color = Color::from_rgb8(0xcd, 0xd6, 0xf4);
             let label_color = Color::from_rgb8(0xa6, 0xad, 0xc8);
 
@@ -859,27 +602,24 @@ impl ShellKeep {
                         button(text("Take over").size(13))
                             .on_press(Message::LockTakeOver)
                             .padding([8, 16])
-                            .style(warn_btn_style),
+                            .style(styles::warn_button_style),
                         button(text("Cancel").size(13))
                             .on_press(Message::LockCancel)
                             .padding([8, 16])
-                            .style(btn_style),
+                            .style(styles::secondary_button_style),
                     ]
                     .spacing(8),
                 ]
                 .spacing(4)
                 .padding(24),
             )
-            .style(dialog_style);
+            .style(styles::dialog_container_style);
 
             let scrim = mouse_area(
                 container(Space::new().width(Length::Fill).height(Length::Fill))
                     .width(Length::Fill)
                     .height(Length::Fill)
-                    .style(|_theme: &Theme| container::Style {
-                        background: Some(iced::Background::Color(Color::from_rgba8(0, 0, 0, 0.5))),
-                        ..Default::default()
-                    }),
+                    .style(styles::scrim_style),
             )
             .on_press(Message::LockCancel);
 
@@ -893,17 +633,7 @@ impl ShellKeep {
             let toast_widget =
                 container(text(msg).size(13).color(Color::from_rgb8(0xcd, 0xd6, 0xf4)))
                     .padding([8, 16])
-                    .style(|_theme: &Theme| container::Style {
-                        background: Some(iced::Background::Color(Color::from_rgb8(
-                            0x31, 0x32, 0x44,
-                        ))),
-                        border: iced::Border {
-                            radius: 8.0.into(),
-                            width: 1.0,
-                            color: Color::from_rgb8(0x45, 0x47, 0x5a),
-                        },
-                        ..Default::default()
-                    });
+                    .style(styles::toast_style);
 
             stack![
                 main_view,
