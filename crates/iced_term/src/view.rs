@@ -342,12 +342,12 @@ impl<'a> TerminalView<'a> {
 
                     // If no binding matched, only write printable text (when provided)
                     // Don't write text when Ctrl or Cmd is held — those are app shortcuts
-                    if binding_action == BindingAction::Ignore {
-                        if !modifiers.control() && !modifiers.command() {
-                            if let Some(c) = text {
-                                return Some(Command::Write(c.as_bytes().to_vec()));
-                            }
-                        }
+                    if binding_action == BindingAction::Ignore
+                        && !modifiers.control()
+                        && !modifiers.command()
+                        && let Some(c) = text
+                    {
+                        return Some(Command::Write(c.as_bytes().to_vec()));
                     }
                 },
                 Key::Named(code) => {
@@ -684,22 +684,24 @@ impl Widget<Event, Theme, iced::Renderer> for TerminalView<'_> {
         if let iced::Event::Mouse(iced::mouse::Event::ButtonPressed(
             iced::mouse::Button::Right,
         )) = event
+            && is_cursor_in_layout
+            && let Some(pos) = cursor.position()
         {
-            if is_cursor_in_layout {
-                if let Some(pos) = cursor.position() {
-                    shell.publish(Event::ContextMenu(self.term.id, pos.x, pos.y));
-                }
-            }
+            shell.publish(Event::ContextMenu(self.term.id, pos.x, pos.y));
         }
 
         let commands = match event {
-            iced::Event::Mouse(mouse_event) if is_cursor_in_layout => self
-                .handle_mouse_event(
+            iced::Event::Mouse(mouse_event) if is_cursor_in_layout => {
+                // SAFETY: is_cursor_in_layout is true only when cursor.position() is Some
+                #[allow(clippy::unwrap_used)]
+                let cursor_pos = cursor.position().unwrap();
+                self.handle_mouse_event(
                     state,
                     layout.position(),
-                    cursor.position().unwrap(),
+                    cursor_pos,
                     mouse_event,
-                ),
+                )
+            },
             iced::Event::Keyboard(keyboard_event) => {
                 if !state.is_focused() {
                     return;

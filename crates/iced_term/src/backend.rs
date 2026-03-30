@@ -168,10 +168,12 @@ impl Backend {
             ..tty::Options::default()
         };
 
-        let mut config = term::Config::default();
-        config.default_cursor_style = CursorStyle {
-            shape: parse_cursor_shape(&settings.cursor_shape),
-            blinking: false,
+        let config = term::Config {
+            default_cursor_style: CursorStyle {
+                shape: parse_cursor_shape(&settings.cursor_shape),
+                blinking: false,
+            },
+            ..Default::default()
         };
         let terminal_size = TerminalSize::default();
         let pty = tty::new(&pty_config, terminal_size.into(), id)?;
@@ -208,6 +210,8 @@ impl Backend {
             notifier: Some(notifier),
             ssh_writer: None,
             last_content: initial_content,
+            // SAFETY: URL_REGEX is a compile-time constant that is always valid
+            #[allow(clippy::expect_used)]
             url_regex: RegexSearch::new(URL_REGEX).expect("invalid url regexp"),
         })
     }
@@ -246,6 +250,8 @@ impl Backend {
             notifier: None,
             ssh_writer: Some(ssh_writer),
             last_content: initial_content,
+            // SAFETY: URL_REGEX is a compile-time constant that is always valid
+            #[allow(clippy::expect_used)]
             url_regex: RegexSearch::new(URL_REGEX).expect("invalid url regexp"),
         })
     }
@@ -656,7 +662,7 @@ impl Backend {
         let screen_lines = self.size.num_lines as i32;
         // match_line is in grid coordinates (negative = scrollback).
         // Visible lines range from -display_offset to -display_offset + screen_lines - 1.
-        let viewport_top = -(display_offset as i32);
+        let viewport_top = -display_offset;
         let viewport_bottom = viewport_top + screen_lines - 1;
         if match_line.0 < viewport_top || match_line.0 > viewport_bottom {
             // Scroll so match is near the top of viewport
@@ -676,9 +682,8 @@ impl Backend {
         point: Point,
         regex: &mut RegexSearch,
     ) -> Option<Match> {
-        let x = visible_regex_match_iter(terminal, regex)
-            .find(|rm| rm.contains(&point));
-        x
+        visible_regex_match_iter(terminal, regex)
+            .find(|rm| rm.contains(&point))
     }
 }
 

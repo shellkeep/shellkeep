@@ -671,7 +671,11 @@ async fn establish_ssh_session(
         username: conn.username.clone(),
     };
 
-    *phase.lock().unwrap() = i18n::t(i18n::AUTHENTICATING).to_string();
+    // SAFETY: mutex is never held across a panic path
+    #[allow(clippy::unwrap_used)]
+    {
+        *phase.lock().unwrap() = i18n::t(i18n::AUTHENTICATING).to_string();
+    }
 
     let (handle_arc, _host_key_prompt) = {
         let mut mgr = conn_manager.lock().await;
@@ -692,7 +696,11 @@ async fn establish_ssh_session(
     // locks briefly, then releases, allowing other tabs to interleave.
 
     // FR-CONN-13..15: check tmux availability and version
-    *phase.lock().unwrap() = i18n::t(i18n::CHECKING_TMUX).to_string();
+    // SAFETY: mutex is never held across a panic path
+    #[allow(clippy::unwrap_used)]
+    {
+        *phase.lock().unwrap() = i18n::t(i18n::CHECKING_TMUX).to_string();
+    }
 
     let tmux_version_output = {
         let h = handle_arc.lock().await;
@@ -713,7 +721,11 @@ async fn establish_ssh_session(
     }
 
     // FR-LOCK-01: acquire client-ID lock before reading state or creating sessions
-    *phase.lock().unwrap() = i18n::t("Acquiring lock...").to_string();
+    // SAFETY: mutex is never held across a panic path
+    #[allow(clippy::unwrap_used)]
+    {
+        *phase.lock().unwrap() = i18n::t("Acquiring lock...").to_string();
+    }
 
     let keepalive_timeout = if keepalive_secs > 0 {
         Some(keepalive_secs as u64)
@@ -728,7 +740,11 @@ async fn establish_ssh_session(
     }
 
     // FR-RECONNECT-03: verify tmux session exists before reattaching, create if needed
-    *phase.lock().unwrap() = i18n::t(i18n::OPENING_SESSION).to_string();
+    // SAFETY: mutex is never held across a panic path
+    #[allow(clippy::unwrap_used)]
+    {
+        *phase.lock().unwrap() = i18n::t(i18n::OPENING_SESSION).to_string();
+    }
 
     let check = {
         let h = handle_arc.lock().await;
@@ -1337,6 +1353,8 @@ impl ShellKeep {
             self.open_tab_with_tmux_session(&ssh_args, &label, &tmux_session);
 
             if self.tabs.len() > 1 && index < self.tabs.len() - 1 {
+                // SAFETY: len() > 1 guarantees pop() returns Some
+                #[allow(clippy::unwrap_used)]
                 let tab = self.tabs.pop().unwrap();
                 self.tabs.insert(index, tab);
                 self.active_tab = index;
@@ -1596,6 +1614,8 @@ impl ShellKeep {
                         if !self.sessions_listed && self.current_conn.is_some() {
                             self.sessions_listed = true;
                             let mgr = self.conn_manager.clone();
+                            // SAFETY: is_some() checked on the line above
+                            #[allow(clippy::unwrap_used)]
                             let conn = self.current_conn.clone().unwrap();
                             let conn_key = ConnKey {
                                 host: conn.host.clone(),
@@ -1604,6 +1624,8 @@ impl ShellKeep {
                             };
                             // FR-CONN-20: open a separate connection for SFTP state sync
                             let mgr2 = self.conn_manager.clone();
+                            // SAFETY: is_some() checked above
+                            #[allow(clippy::unwrap_used)]
                             let conn2 = self.current_conn.clone().unwrap();
                             let conn_key2 = ConnKey {
                                 host: conn2.host.clone(),
@@ -2114,6 +2136,8 @@ impl ShellKeep {
                     let task = self.open_tab_russh(&label, &tmux_session);
                     // Move the new tab to the original position
                     if self.tabs.len() > 1 && index < self.tabs.len() {
+                        // SAFETY: len() > 1 guarantees pop() returns Some
+                        #[allow(clippy::unwrap_used)]
                         let new_tab = self.tabs.pop().unwrap();
                         self.tabs.insert(index, new_tab);
                         self.active_tab = index;
@@ -2233,6 +2257,8 @@ impl ShellKeep {
                         let new_tmux = format!("{}--shellkeep-{}", self.client_id, sanitized);
                         self.tabs[index].tmux_session = new_tmux.clone();
                         let mgr = self.conn_manager.clone();
+                        // SAFETY: conn_params.is_some() checked in the enclosing if-let
+                        #[allow(clippy::unwrap_used)]
                         let conn = self.tabs[index].conn_params.clone().unwrap();
                         rename_task = Task::perform(
                             async move {
@@ -3207,7 +3233,11 @@ impl ShellKeep {
                                 };
                                 let handle = conn_result.handle.lock().await;
 
-                                *phase.lock().unwrap() = "Opening session...".to_string();
+                                // SAFETY: mutex is never held across a panic path
+                                #[allow(clippy::unwrap_used)]
+                                {
+                                    *phase.lock().unwrap() = "Opening session...".to_string();
+                                }
 
                                 ssh::lock::acquire_lock(
                                     &handle,
@@ -3318,7 +3348,11 @@ impl ShellKeep {
                                 };
                                 let handle = conn_result.handle.lock().await;
 
-                                *phase.lock().unwrap() = "Taking over lock...".to_string();
+                                // SAFETY: mutex is never held across a panic path
+                                #[allow(clippy::unwrap_used)]
+                                {
+                                    *phase.lock().unwrap() = "Taking over lock...".to_string();
+                                }
                                 ssh::lock::release_lock(&handle, &client_id)
                                     .await
                                     .map_err(|e| e.to_string())?;
@@ -3330,7 +3364,11 @@ impl ShellKeep {
                                 .await
                                 .map_err(|e| e.to_string())?;
 
-                                *phase.lock().unwrap() = "Opening session...".to_string();
+                                // SAFETY: mutex is never held across a panic path
+                                #[allow(clippy::unwrap_used)]
+                                {
+                                    *phase.lock().unwrap() = "Opening session...".to_string();
+                                }
 
                                 let check = ssh::connection::exec_command(
                                         &handle,
@@ -3431,7 +3469,8 @@ impl ShellKeep {
                     let phase_text = tab
                         .connection_phase
                         .as_ref()
-                        .map(|p| p.lock().unwrap().clone())
+                        // SAFETY: mutex is never held across a panic path
+                        .and_then(|p| p.lock().ok().map(|g| g.clone()))
                         .unwrap_or_else(|| i18n::t(i18n::CONNECTING).to_string());
                     stack![
                         container(

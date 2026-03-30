@@ -150,6 +150,8 @@ impl StateFile {
                 }
 
                 // Validate and deduplicate tabs in each environment
+                // SAFETY: this regex pattern is a compile-time constant and is known to be valid
+                #[allow(clippy::unwrap_used)]
                 let tmux_re = regex::Regex::new(r"^[a-zA-Z0-9_][a-zA-Z0-9_.:\-]*$").unwrap();
                 for env in state.environments.values_mut() {
                     for tab in &env.tabs {

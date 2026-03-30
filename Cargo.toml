@@ -72,6 +72,13 @@ tray = ["tray-icon", "muda"]
 [dev-dependencies]
 tempfile = "3"
 
+[workspace.lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+
+[lints]
+workspace = true
+
 [profile.release]
 lto = "thin"
 strip = true

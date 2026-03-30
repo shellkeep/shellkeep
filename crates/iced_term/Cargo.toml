@@ -40,3 +40,6 @@ version = "5.3.3"
 [dependencies.tokio]
 version = "1.50.0"
 features = ["full"]
+
+[lints]
+workspace = true
