@@ -1467,9 +1467,7 @@ impl ShellKeep {
                             && let Some(ref resize_tx) = tab.ssh_resize_tx
                         {
                             let _ = resize_tx.send((cols as u32, rows as u32));
-                            tracing::info!(
-                                "tab {tab_id}: deferred initial resize {cols}x{rows}"
-                            );
+                            tracing::info!("tab {tab_id}: deferred initial resize {cols}x{rows}");
                         }
                         tab.needs_initial_resize = false;
                     }
@@ -2207,6 +2205,11 @@ impl ShellKeep {
                     host: self.host_input.clone(),
                     user: self.user_input.clone(),
                     port: self.port_input.clone(),
+                    identity_file: if self.identity_input.is_empty() {
+                        None
+                    } else {
+                        Some(self.identity_input.clone())
+                    },
                     alias: None,
                     last_connected: None,
                     host_key_fingerprint: None,
@@ -2219,22 +2222,17 @@ impl ShellKeep {
                 return self.open_tab_russh(&label, &tmux_session);
             }
 
+            // FR-UI-01: clicking a recent connection fills the form (user reviews, then clicks Connect)
             Message::ConnectRecent(index) => {
                 if let Some(conn) = self.recent.connections.get(index).cloned() {
-                    self.host_input = conn.host.clone();
-                    self.user_input = conn.user.clone();
-                    self.port_input = conn.port.clone();
-                    self.current_conn = Some(ConnParams {
-                        host: conn.host,
-                        port: conn.port.parse().unwrap_or(22),
-                        username: conn.user,
-                        identity_file: None,
-                    });
-
-                    // Use russh: open tab, connect async
-                    let tmux_session = self.next_tmux_session();
-                    self.show_welcome = false;
-                    return self.open_tab_russh(&conn.label, &tmux_session);
+                    self.host_input = conn.host;
+                    self.user_input = conn.user;
+                    self.port_input = conn.port;
+                    self.identity_input = conn.identity_file.unwrap_or_default();
+                    // Show advanced if non-default port or identity is set
+                    if self.port_input != "22" || !self.identity_input.is_empty() {
+                        self.show_advanced = true;
+                    }
                 }
             }
 

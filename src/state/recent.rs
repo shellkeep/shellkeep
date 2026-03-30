@@ -15,10 +15,13 @@ const MAX_RECENT: usize = 50;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecentConnection {
     pub label: String,
+    #[serde(default)]
     pub ssh_args: Vec<String>,
     pub host: String,
     pub user: String,
     pub port: String,
+    #[serde(default)]
+    pub identity_file: Option<String>,
     #[serde(default)]
     pub alias: Option<String>,
     #[serde(default)]
@@ -97,6 +100,7 @@ mod tests {
             host: "example.com".into(),
             user: "alice".into(),
             port: "22".into(),
+            identity_file: None,
             alias: None,
             last_connected: None,
             host_key_fingerprint: None,
@@ -107,6 +111,7 @@ mod tests {
             host: "other.com".into(),
             user: "bob".into(),
             port: "22".into(),
+            identity_file: None,
             alias: None,
             last_connected: None,
             host_key_fingerprint: None,
@@ -118,6 +123,7 @@ mod tests {
             host: "example.com".into(),
             user: "alice".into(),
             port: "22".into(),
+            identity_file: None,
             alias: None,
             last_connected: None,
             host_key_fingerprint: None,
@@ -136,6 +142,7 @@ mod tests {
                 host: format!("host-{i}"),
                 user: "user".into(),
                 port: "22".into(),
+                identity_file: None,
                 alias: None,
                 last_connected: None,
                 host_key_fingerprint: None,
