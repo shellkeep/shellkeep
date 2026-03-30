@@ -71,7 +71,9 @@ pub fn install_panic_hook() {
             "\nNOTE: This dump does not contain terminal content, keys, or environment variables.\n",
         );
 
-        let _ = fs::write(&path, &report);
+        if let Err(e) = fs::write(&path, &report) {
+            eprintln!("[shellkeep] WARNING: failed to write crash dump: {e}");
+        }
         eprintln!("[shellkeep] FATAL: panic occurred");
         eprintln!("[shellkeep] Crash dump written to: {}", path.display());
 

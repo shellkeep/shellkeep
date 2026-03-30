@@ -62,7 +62,11 @@ pub fn read_history(session_uuid: &str) -> Vec<HistoryEntry> {
     let path = history_dir().join(format!("{session_uuid}.jsonl"));
     let content = match fs::read_to_string(&path) {
         Ok(c) => c,
-        Err(_) => return Vec::new(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
+        Err(e) => {
+            tracing::warn!("failed to read history {}: {e}", path.display());
+            return Vec::new();
+        }
     };
 
     let mut entries = Vec::new();
@@ -118,13 +122,17 @@ impl HistoryWriter {
             return None;
         }
         let dir = history_dir();
-        let _ = fs::create_dir_all(&dir);
+        if let Err(e) = fs::create_dir_all(&dir) {
+            tracing::warn!("failed to create history directory {}: {e}", dir.display());
+        }
         let path = dir.join(format!("{session_uuid}.jsonl"));
-        let file = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .ok();
+        let file = match fs::OpenOptions::new().create(true).append(true).open(&path) {
+            Ok(f) => Some(f),
+            Err(e) => {
+                tracing::warn!("failed to open history file {}: {e}", path.display());
+                None
+            }
+        };
         let bytes_written = file
             .as_ref()
             .and_then(|f| f.metadata().ok())
@@ -186,8 +194,12 @@ impl HistoryWriter {
     fn rotate(&mut self) {
         let dir = history_dir();
         let path = dir.join(format!("{}.jsonl", self.session_uuid));
-        let Ok(content) = fs::read_to_string(&path) else {
-            return;
+        let content = match fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!("history rotation: failed to read {}: {e}", path.display());
+                return;
+            }
         };
         let lines: Vec<&str> = content.lines().collect();
         let keep_from = lines.len() / 4; // drop oldest 25%
@@ -204,8 +216,12 @@ impl HistoryWriter {
     fn enforce_total_limit(&self) {
         let dir = history_dir();
         let max_bytes = u64::from(self.max_total_mb) * 1024 * 1024;
-        let Ok(entries) = fs::read_dir(&dir) else {
-            return;
+        let entries = match fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(e) => {
+                tracing::debug!("history cleanup: failed to read directory: {e}");
+                return;
+            }
         };
         let mut files: Vec<(PathBuf, u64, std::time::SystemTime)> = entries
             .filter_map(|e| e.ok())
@@ -234,7 +250,9 @@ impl HistoryWriter {
             if freed >= excess {
                 break;
             }
-            let _ = fs::remove_file(path);
+            if let Err(e) = fs::remove_file(path) {
+                tracing::debug!("history cleanup: failed to delete {}: {e}", path.display());
+            }
             freed += size;
         }
     }
@@ -262,7 +280,11 @@ pub fn cleanup_old_history(max_days: u32) {
     let dir = history_dir();
     let entries = match fs::read_dir(&dir) {
         Ok(e) => e,
-        Err(_) => return,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
+        Err(e) => {
+            tracing::debug!("history retention: failed to read directory: {e}");
+            return;
+        }
     };
 
     let cutoff =
@@ -276,7 +298,9 @@ pub fn cleanup_old_history(max_days: u32) {
             && modified < cutoff
         {
             tracing::info!("removing old history file: {}", path.display());
-            let _ = fs::remove_file(&path);
+            if let Err(e) = fs::remove_file(&path) {
+                tracing::warn!("failed to remove old history {}: {e}", path.display());
+            }
         }
     }
 }

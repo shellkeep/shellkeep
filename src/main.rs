@@ -767,14 +767,18 @@ async fn establish_ssh_session(
         let h = handle_arc.lock().await;
         let uuid_cmd =
             format!("tmux set-environment -t {tmux_session} SHELLKEEP_SESSION_UUID {session_uuid}");
-        ssh::connection::exec_command(&h, &uuid_cmd).await.ok();
+        if let Err(e) = ssh::connection::exec_command(&h, &uuid_cmd).await {
+            tracing::warn!("failed to set SHELLKEEP_SESSION_UUID: {e}");
+        }
     }
 
     // FR-HISTORY-01: start server-side capture via tmux pipe-pane
     let pipe_cmd = history::pipe_pane_command(&tmux_session, &session_uuid);
     {
         let h = handle_arc.lock().await;
-        ssh::connection::exec_command(&h, &pipe_cmd).await.ok();
+        if let Err(e) = ssh::connection::exec_command(&h, &pipe_cmd).await {
+            tracing::warn!("failed to setup history pipe-pane: {e}");
+        }
     }
 
     Ok(channel)
@@ -1605,6 +1609,7 @@ impl ShellKeep {
                                 tab.dead = false;
                                 tab.auto_reconnect = false;
                             }
+                            tracing::info!("tab {tab_id}: auth failed, prompting for password");
                             self.show_password_dialog = true;
                             self.password_input.clear();
                             self.password_target_tab = Some(tab_id);
@@ -1615,6 +1620,7 @@ impl ShellKeep {
                                 tab.dead = false;
                                 tab.auto_reconnect = false;
                             }
+                            tracing::info!("tab {tab_id}: session locked, showing conflict dialog");
                             self.show_lock_dialog = true;
                             self.lock_info_text = e.clone();
                             self.lock_target_tab = Some(tab_id);
@@ -1642,6 +1648,9 @@ impl ShellKeep {
             }
 
             Message::ExistingSessionsFound(result) => {
+                if let Err(ref e) = result {
+                    tracing::warn!("failed to list existing sessions: {e}");
+                }
                 if let Ok(server_sessions) = result {
                     let saved_state =
                         StateFile::load_local(&StateFile::local_cache_path(&self.client_id));
@@ -3033,7 +3042,11 @@ impl ShellKeep {
 
                                 let pipe_cmd =
                                     history::pipe_pane_command(&tmux_session, &session_uuid);
-                                ssh::connection::exec_command(&handle, &pipe_cmd).await.ok();
+                                if let Err(e) =
+                                    ssh::connection::exec_command(&handle, &pipe_cmd).await
+                                {
+                                    tracing::warn!("failed to setup history pipe-pane: {e}");
+                                }
 
                                 *channel_holder.lock().await = Some(channel);
                                 Ok(())
@@ -3144,7 +3157,11 @@ impl ShellKeep {
 
                                 let pipe_cmd =
                                     history::pipe_pane_command(&tmux_session, &session_uuid);
-                                ssh::connection::exec_command(&handle, &pipe_cmd).await.ok();
+                                if let Err(e) =
+                                    ssh::connection::exec_command(&handle, &pipe_cmd).await
+                                {
+                                    tracing::warn!("failed to setup history pipe-pane: {e}");
+                                }
 
                                 *channel_holder.lock().await = Some(channel);
                                 Ok(())

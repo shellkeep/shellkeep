@@ -225,6 +225,16 @@ pub async fn connect(
     let effective_identity = identity_file
         .map(ssh_config::expand_tilde)
         .or(host_cfg.identity_file);
+
+    // Log effective connection parameters (helpful for troubleshooting ssh_config issues)
+    if effective_host != host || effective_port != port || effective_user != username {
+        tracing::info!(
+            "ssh_config overrides: host={effective_host} port={effective_port} user={effective_user}"
+        );
+    }
+    if let Some(ref id) = effective_identity {
+        tracing::info!("using identity file: {id}");
+    }
     let effective_keepalive = if keepalive_interval_secs > 0 {
         keepalive_interval_secs
     } else {
@@ -658,6 +668,7 @@ pub async fn open_shell(
     cols: u32,
     rows: u32,
 ) -> Result<russh::Channel<russh::client::Msg>, SshError> {
+    tracing::debug!("opening shell channel ({cols}x{rows})");
     let channel = handle
         .channel_open_session()
         .await
@@ -673,6 +684,7 @@ pub async fn open_shell(
         .await
         .map_err(|e| SshError::Channel(format!("shell request failed: {e}")))?;
 
+    tracing::debug!("shell channel opened ({cols}x{rows})");
     Ok(channel)
 }
 

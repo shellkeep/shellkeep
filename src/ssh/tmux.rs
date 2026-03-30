@@ -58,7 +58,18 @@ pub fn list_remote_sessions(ssh_args: &[String]) -> Vec<String> {
             sessions.sort();
             sessions
         }
-        _ => Vec::new(),
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if !stderr.is_empty() {
+                tracing::debug!("tmux list-sessions stderr: {stderr}");
+            }
+            tracing::debug!("tmux list-sessions exited with {}", output.status);
+            Vec::new()
+        }
+        Err(e) => {
+            tracing::warn!("failed to run ssh for tmux list-sessions: {e}");
+            Vec::new()
+        }
     }
 }
 
@@ -80,9 +91,13 @@ pub async fn list_sessions_russh(
                 .filter(|s| is_shellkeep_session(s))
                 .collect();
             sessions.sort();
+            tracing::debug!("found {} shellkeep tmux sessions", sessions.len());
             sessions
         }
-        Err(_) => Vec::new(),
+        Err(e) => {
+            tracing::warn!("failed to list tmux sessions: {e}");
+            Vec::new()
+        }
     }
 }
 
@@ -95,6 +110,7 @@ pub async fn create_session_russh(
         "TERM=xterm-256color tmux new-session -d -s {session_name} \\; set status off 2>/dev/null || true"
     );
     connection::exec_command(handle, &cmd).await?;
+    tracing::info!("created tmux session: {session_name}");
     Ok(())
 }
 
