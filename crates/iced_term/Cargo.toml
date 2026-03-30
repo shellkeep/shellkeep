@@ -10,7 +10,8 @@
 # See Cargo.toml.orig for the original contents.
 
 [package]
-edition = "2021"
+edition = "2024"
+rust-version = "1.88"
 name = "iced_term"
 version = "0.8.0"
 authors = ["Ilya Shvyryalkin <ilyashvy@gmail.com>"]
