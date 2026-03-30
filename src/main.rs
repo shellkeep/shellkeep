@@ -331,6 +331,8 @@ struct ShellKeep {
 
     /// FR-TABS-17: close confirmation dialog visible
     show_close_dialog: bool,
+    /// FR-TABS-17: window ID to close after dialog
+    close_window_id: Option<window::Id>,
     /// FR-STATE-14: current window geometry for persistence
     window_width: u32,
     window_height: u32,
@@ -398,7 +400,7 @@ enum Message {
     /// FR-LOCK-04: heartbeat result
     LockHeartbeatDone(Result<(), String>),
     /// FR-TABS-17: window close requested by window manager
-    WindowCloseRequested,
+    WindowCloseRequested(window::Id),
     /// FR-TABS-17: close dialog — hide window (keep sessions)
     CloseDialogHide,
     /// FR-TABS-17: close dialog — quit application
@@ -576,12 +578,25 @@ async fn establish_ssh_session(
         .await
         .map_err(|e| e.to_string())?;
 
-    // Create tmux session (idempotent — no error if already exists)
+    // FR-RECONNECT-03: verify tmux session exists before reattaching, create if needed
     *phase.lock().unwrap() = "Opening session...".to_string();
 
-    ssh::tmux::create_session_russh(&handle, &tmux_session)
-        .await
-        .map_err(|e| e.to_string())?;
+    let check = ssh::connection::exec_command(
+        &handle,
+        &format!(
+            "tmux has-session -t {} 2>/dev/null && echo EXISTS",
+            tmux_session
+        ),
+    )
+    .await
+    .unwrap_or_default();
+
+    if !check.trim().contains("EXISTS") {
+        tracing::info!("tmux session {tmux_session} not found, creating new one");
+        ssh::tmux::create_session_russh(&handle, &tmux_session)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
 
     // Open PTY channel and attach to tmux session
     let channel = handle
@@ -650,6 +665,7 @@ impl ShellKeep {
             search_last_match: None,
             config_reload_rx: None,
             show_close_dialog: false,
+            close_window_id: None,
             window_width: 900,
             window_height: 600,
             window_x: None,
@@ -1078,6 +1094,13 @@ impl ShellKeep {
                 position: i,
             });
         }
+        // FR-STATE-14: persist window geometry
+        state.window = Some(WindowState {
+            x: self.window_x,
+            y: self.window_y,
+            width: self.window_width,
+            height: self.window_height,
+        });
         let path = StateFile::local_cache_path(&self.client_id);
         if let Err(e) = state.save_local(&path) {
             tracing::warn!("failed to save state: {e}");
@@ -1169,6 +1192,7 @@ impl ShellKeep {
                     {
                         tab.reconnect_attempts += 1;
                         tab.terminal = None;
+                        tab.reconnect_started = Some(std::time::Instant::now());
                         tracing::info!("SSH tab {tab_id} disconnected: {reason}, will retry");
                     } else {
                         tab.terminal = None;
@@ -1241,6 +1265,7 @@ impl ShellKeep {
                                 tab.dead = true;
                                 tab.auto_reconnect = true;
                                 tab.reconnect_attempts += 1;
+                                tab.reconnect_started = Some(std::time::Instant::now());
                             }
                         }
                         self.error = Some(format!("Connection failed: {e}"));
@@ -1446,6 +1471,7 @@ impl ShellKeep {
                         && tab.reconnect_attempts < self.config.ssh.reconnect_max_attempts
                     {
                         tab.reconnect_attempts += 1;
+                        tab.reconnect_started = Some(std::time::Instant::now());
                         tracing::info!(
                             "tab {id} disconnected, will auto-reconnect (attempt {})",
                             tab.reconnect_attempts
@@ -1535,6 +1561,25 @@ impl ShellKeep {
             }
 
             Message::AutoReconnectTick => {
+                // FR-RECONNECT-05: limit concurrent reconnections to 5
+                let reconnecting_count = self
+                    .tabs
+                    .iter()
+                    .filter(|t| {
+                        t.uses_russh
+                            && t.terminal.is_some()
+                            && t.ssh_channel_holder.is_none()
+                            && t.pending_channel.is_some()
+                    })
+                    .count();
+
+                if reconnecting_count >= 5 {
+                    tracing::debug!(
+                        "skipping auto-reconnect: {reconnecting_count} already in progress"
+                    );
+                    return Task::none();
+                }
+
                 let reconnect_indices: Vec<usize> = self
                     .tabs
                     .iter()
@@ -1706,11 +1751,11 @@ impl ShellKeep {
 
             Message::ConnectionPhaseTick => {
                 // Just triggers a redraw to update connection phase text
+            }
 
             Message::SpinnerTick => {
                 // FR-RECONNECT-02: advance spinner frame
                 self.spinner_frame = (self.spinner_frame + 1) % SPINNER_FRAMES.len();
-            }
             }
 
             Message::KeyEvent(event) => {
@@ -1807,6 +1852,22 @@ impl ShellKeep {
                         && key == keyboard::Key::Character("f".into())
                     {
                         return self.update(Message::SearchToggle);
+                    }
+                    // Ctrl+Shift+S — export scrollback to file (FR-TERMINAL-18)
+                    if modifiers.control()
+                        && modifiers.shift()
+                        && key == keyboard::Key::Character("s".into())
+                        && !self.tabs.is_empty()
+                    {
+                        return self.update(Message::ExportScrollback);
+                    }
+                    // Ctrl+Shift+A — copy entire scrollback to clipboard (FR-TABS-12)
+                    if modifiers.control()
+                        && modifiers.shift()
+                        && key == keyboard::Key::Character("a".into())
+                        && !self.tabs.is_empty()
+                    {
+                        return self.update(Message::CopyScrollback);
                     }
                     // Escape — dismiss search, context menu, cancel rename, or cancel welcome
                     if key == keyboard::Key::Named(keyboard::key::Named::Escape) {
@@ -1914,6 +1975,47 @@ impl ShellKeep {
                 self.search_last_match = None;
             }
 
+            // FR-TERMINAL-18: export scrollback to text file
+            Message::ExportScrollback => {
+                if let Some(tab) = self.tabs.get(self.active_tab)
+                    && let Some(ref terminal) = tab.terminal
+                {
+                    let text = terminal.scrollback_text();
+                    let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+                    let filename = format!("shellkeep-export-{timestamp}.txt");
+                    let path = dirs::home_dir()
+                        .unwrap_or_else(|| std::path::PathBuf::from("."))
+                        .join(&filename);
+                    match std::fs::write(&path, &text) {
+                        Ok(()) => {
+                            tracing::info!("exported scrollback to {}", path.display());
+                            self.toast = Some((
+                                format!("Scrollback exported to {}", path.display()),
+                                std::time::Instant::now(),
+                            ));
+                        }
+                        Err(e) => {
+                            tracing::error!("failed to export scrollback: {e}");
+                            self.error = Some(format!("Export failed: {e}"));
+                        }
+                    }
+                }
+            }
+
+            // FR-TABS-12: copy entire scrollback to clipboard
+            Message::CopyScrollback => {
+                if let Some(tab) = self.tabs.get(self.active_tab)
+                    && let Some(ref terminal) = tab.terminal
+                {
+                    let text = terminal.scrollback_text();
+                    self.toast = Some((
+                        "Scrollback copied to clipboard".to_string(),
+                        std::time::Instant::now(),
+                    ));
+                    return iced::clipboard::write(text);
+                }
+            }
+
             // FR-CONFIG-04: config file changed, reload hot-reloadable settings
             Message::ConfigReloaded => {
                 // Check if the watcher actually signaled a change
@@ -1934,11 +2036,14 @@ impl ShellKeep {
                 {
                     self.current_font_size = new_config.terminal.font_size;
                     // Apply to all open terminals
+                    let new_font = FontSettings {
+                        size: new_config.terminal.font_size,
+                        font_family: new_config.terminal.font_family.clone(),
+                        ..FontSettings::default()
+                    };
                     for tab in &mut self.tabs {
                         if let Some(ref mut terminal) = tab.terminal {
-                            terminal.handle(iced_term::Command::ChangeFontSize(
-                                iced_term::FontSizeChange::Set(new_config.terminal.font_size),
-                            ));
+                            terminal.handle(iced_term::Command::ChangeFont(new_font.clone()));
                         }
                     }
                     tracing::info!("font updated: size={}", new_config.terminal.font_size);
@@ -2003,7 +2108,7 @@ impl ShellKeep {
             }
 
             // FR-TABS-17: window close requested by window manager
-            Message::WindowCloseRequested => {
+            Message::WindowCloseRequested(win_id) => {
                 let active_count = self
                     .tabs
                     .iter()
@@ -2012,18 +2117,22 @@ impl ShellKeep {
                 if active_count == 0 {
                     // FR-TABS-18: no active sessions, close immediately
                     self.flush_state();
-                    return window::close(window::Id::MAIN);
+                    return window::close(win_id);
                 }
-                // Show confirmation dialog
+                // Show confirmation dialog, remember which window to close
+                self.close_window_id = Some(win_id);
                 self.show_close_dialog = true;
             }
 
             Message::CloseDialogHide => {
                 self.show_close_dialog = false;
+                let win_id = self.close_window_id.take();
                 // Hide to tray if available, otherwise just dismiss
                 if self.tray.is_some() {
                     tracing::info!("hiding to tray (sessions kept on server)");
-                    return window::minimize(window::Id::MAIN, true);
+                    if let Some(id) = win_id {
+                        return window::minimize(id, true);
+                    }
                 }
                 self.toast = Some((
                     "Sessions are still running on the server".into(),
@@ -2034,11 +2143,15 @@ impl ShellKeep {
             Message::CloseDialogClose => {
                 self.show_close_dialog = false;
                 self.flush_state();
-                return window::close(window::Id::MAIN);
+                if let Some(id) = self.close_window_id.take() {
+                    return window::close(id);
+                }
+                std::process::exit(0);
             }
 
             Message::CloseDialogCancel => {
                 self.show_close_dialog = false;
+                self.close_window_id = None;
             }
 
             // FR-STATE-14: track window geometry changes
@@ -2112,19 +2225,39 @@ impl ShellKeep {
                         .into()
                 }
             } else if tab.auto_reconnect {
+                // FR-RECONNECT-02: spinner overlay with attempt count and countdown
+                let spinner = SPINNER_FRAMES[self.spinner_frame % SPINNER_FRAMES.len()];
                 let attempt_text = format!(
-                    "Reconnecting... (attempt {}/{})",
+                    "Reconnecting... attempt {}/{}",
                     tab.reconnect_attempts, self.config.ssh.reconnect_max_attempts
                 );
+                let countdown_text = if tab.reconnect_delay_ms > 0 {
+                    let elapsed = tab
+                        .reconnect_started
+                        .map(|t| t.elapsed().as_millis() as u64)
+                        .unwrap_or(0);
+                    let remaining_ms = tab.reconnect_delay_ms.saturating_sub(elapsed);
+                    let remaining_secs = (remaining_ms + 999) / 1000;
+                    if remaining_secs > 0 {
+                        format!("Next retry in {}s", remaining_secs)
+                    } else {
+                        "Retrying now...".to_string()
+                    }
+                } else {
+                    "Connecting...".to_string()
+                };
                 center(
                     column![
-                        text("🔄").size(48),
+                        text(format!("{spinner}")).size(48),
                         text("Connection lost")
                             .size(20)
                             .color(Color::from_rgb8(0xf9, 0xe2, 0xaf)),
                         text(attempt_text)
                             .size(14)
                             .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
+                        text(countdown_text)
+                            .size(12)
+                            .color(Color::from_rgb8(0x6c, 0x70, 0x86)),
                     ]
                     .spacing(12)
                     .align_x(iced::Alignment::Center),
@@ -2369,6 +2502,107 @@ impl ShellKeep {
             column![tab_bar, content, status_bar].into()
         };
 
+        // FR-TABS-17: close confirmation dialog overlay
+        let main_view: Element<'_, Message> = if self.show_close_dialog {
+            let active_count = self
+                .tabs
+                .iter()
+                .filter(|t| !t.dead && t.terminal.is_some())
+                .count();
+            let dialog_style = |_theme: &Theme| container::Style {
+                background: Some(iced::Background::Color(Color::from_rgb8(0x24, 0x24, 0x36))),
+                border: iced::Border {
+                    radius: 12.0.into(),
+                    width: 1.0,
+                    color: Color::from_rgb8(0x45, 0x47, 0x5a),
+                },
+                shadow: iced::Shadow {
+                    color: Color::from_rgba8(0, 0, 0, 0.6),
+                    offset: iced::Vector::new(0.0, 4.0),
+                    blur_radius: 16.0,
+                },
+                ..Default::default()
+            };
+            let btn_style = |_theme: &Theme, _status: button::Status| button::Style {
+                background: Some(iced::Background::Color(Color::from_rgb8(0x31, 0x32, 0x44))),
+                text_color: Color::from_rgb8(0xcd, 0xd6, 0xf4),
+                border: iced::Border {
+                    radius: 6.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let primary_btn_style = |_theme: &Theme, _status: button::Status| button::Style {
+                background: Some(iced::Background::Color(Color::from_rgb8(0x89, 0xb4, 0xfa))),
+                text_color: Color::from_rgb8(0x1e, 0x1e, 0x2e),
+                border: iced::Border {
+                    radius: 6.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let close_btn_style = |_theme: &Theme, _status: button::Status| button::Style {
+                background: Some(iced::Background::Color(Color::from_rgb8(0xf3, 0x8b, 0xa8))),
+                text_color: Color::from_rgb8(0x1e, 0x1e, 0x2e),
+                border: iced::Border {
+                    radius: 6.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let session_word = if active_count == 1 {
+                "session"
+            } else {
+                "sessions"
+            };
+            let dialog = container(
+                column![
+                    text("Close shellkeep?")
+                        .size(18)
+                        .color(Color::from_rgb8(0xcd, 0xd6, 0xf4)),
+                    text(format!(
+                        "{active_count} active {session_word} will be kept running on the server."
+                    ))
+                    .size(13)
+                    .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
+                    Space::new().height(12),
+                    row![
+                        button(text("Hide").size(13))
+                            .on_press(Message::CloseDialogHide)
+                            .padding([8, 16])
+                            .style(primary_btn_style),
+                        button(text("Close anyway").size(13))
+                            .on_press(Message::CloseDialogClose)
+                            .padding([8, 16])
+                            .style(close_btn_style),
+                        button(text("Cancel").size(13))
+                            .on_press(Message::CloseDialogCancel)
+                            .padding([8, 16])
+                            .style(btn_style),
+                    ]
+                    .spacing(8),
+                ]
+                .spacing(8)
+                .padding(24),
+            )
+            .style(dialog_style);
+
+            let scrim = mouse_area(
+                container(Space::new().width(Length::Fill).height(Length::Fill))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .style(|_theme: &Theme| container::Style {
+                        background: Some(iced::Background::Color(Color::from_rgba8(0, 0, 0, 0.5))),
+                        ..Default::default()
+                    }),
+            )
+            .on_press(Message::CloseDialogCancel);
+
+            stack![main_view, scrim, center(dialog),].into()
+        } else {
+            main_view
+        };
+
         // Toast overlay
         let main_view: Element<'_, Message> = if let Some((ref msg, _)) = self.toast {
             let toast_widget =
@@ -2454,10 +2688,15 @@ impl ShellKeep {
 
         items.push(Space::new().height(16).into());
 
-        // Reconnect button
+        // FR-RECONNECT-04: reconnect button — label varies based on context
+        let reconnect_label = if tab.reconnect_attempts > 0 {
+            "Try again"
+        } else {
+            "Reconnect"
+        };
         items.push(
             button(
-                text("Reconnect")
+                text(reconnect_label)
                     .size(14)
                     .color(Color::from_rgb8(0x1e, 0x1e, 0x2e)),
             )
@@ -2894,6 +3133,18 @@ impl ShellKeep {
 
         subs.push(keyboard::listen().map(Message::KeyEvent));
 
+        // FR-RECONNECT-02: spinner animation subscription (100ms tick)
+        let any_reconnecting = self
+            .tabs
+            .iter()
+            .any(|t| t.terminal.is_none() && t.auto_reconnect && !t.dead);
+        if any_reconnecting {
+            subs.push(
+                iced::time::every(std::time::Duration::from_millis(100))
+                    .map(|_| Message::SpinnerTick),
+            );
+        }
+
         // FR-RECONNECT-06: exponential backoff auto-reconnect timer
         if let Some(delay_ms) = self
             .tabs
@@ -2954,6 +3205,16 @@ impl ShellKeep {
                     .map(|_| Message::ConfigReloaded),
             );
         }
+
+        // FR-TABS-17: intercept window close requests
+        subs.push(window::close_requests().map(Message::WindowCloseRequested));
+
+        // FR-STATE-14: track window move/resize for geometry persistence
+        subs.push(window::events().map(|(_id, event)| match event {
+            window::Event::Moved(pos) => Message::WindowMoved(pos),
+            window::Event::Resized(size) => Message::WindowResized(size),
+            _ => Message::FlushState, // ignored events mapped to no-op
+        }));
 
         Subscription::batch(subs)
     }
@@ -3102,6 +3363,98 @@ fn config_file_exists() -> bool {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// FR-CONFIG-04: config file watcher
+// ---------------------------------------------------------------------------
+
+/// Start watching the config file for changes, returning a receiver
+/// that gets notified when the file is modified.
+fn watch_config(path: std::path::PathBuf) -> std::sync::mpsc::Receiver<()> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let (notify_tx, notify_rx) = std::sync::mpsc::channel();
+        let mut watcher = match notify::recommended_watcher(move |res: Result<Event, _>| {
+            if let Ok(event) = res {
+                if matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_)) {
+                    let _ = notify_tx.send(());
+                }
+            }
+        }) {
+            Ok(w) => w,
+            Err(e) => {
+                tracing::warn!("failed to create config watcher: {e}");
+                return;
+            }
+        };
+        // Watch parent directory — some editors do atomic save (write tmp + rename)
+        let watch_path = path.parent().unwrap_or(&path);
+        if let Err(e) = watcher.watch(watch_path, RecursiveMode::NonRecursive) {
+            tracing::warn!("failed to watch config directory: {e}");
+            return;
+        }
+        tracing::info!("config watcher started for {}", path.display());
+        for () in notify_rx {
+            let _ = tx.send(());
+        }
+    });
+    rx
+}
+
+// ---------------------------------------------------------------------------
+// FR-CLI-04: single instance detection via PID file
+// ---------------------------------------------------------------------------
+
+/// RAII guard that removes the PID file on drop.
+struct PidGuard {
+    path: std::path::PathBuf,
+}
+
+impl Drop for PidGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// Check if another instance is running. Returns a PidGuard on success
+/// or None if another instance holds the PID file.
+fn check_single_instance() -> Option<PidGuard> {
+    let runtime_dir = dirs::runtime_dir()
+        .unwrap_or_else(|| std::env::temp_dir())
+        .join("shellkeep");
+    let _ = std::fs::create_dir_all(&runtime_dir);
+    let pid_path = runtime_dir.join("shellkeep.pid");
+
+    if pid_path.exists() {
+        if let Ok(pid_str) = std::fs::read_to_string(&pid_path) {
+            if let Ok(pid) = pid_str.trim().parse::<u32>() {
+                #[cfg(unix)]
+                if std::path::Path::new(&format!("/proc/{pid}")).exists() {
+                    return None;
+                }
+                #[cfg(windows)]
+                {
+                    // On Windows, check if PID file is very recent as a heuristic
+                    if let Ok(meta) = std::fs::metadata(&pid_path) {
+                        if let Ok(modified) = meta.modified() {
+                            if modified.elapsed().unwrap_or_default()
+                                < std::time::Duration::from_secs(5)
+                            {
+                                return None;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if let Err(e) = std::fs::write(&pid_path, std::process::id().to_string()) {
+        tracing::warn!("failed to write PID file: {e}");
+    }
+
+    Some(PidGuard { path: pid_path })
+}
 
 #[cfg(test)]
 mod tests {

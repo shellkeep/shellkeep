@@ -218,7 +218,7 @@ impl Config {
         }
     }
 
-    fn file_path() -> PathBuf {
+    pub fn file_path() -> PathBuf {
         dirs::config_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join("shellkeep")
