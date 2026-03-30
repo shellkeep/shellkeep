@@ -408,6 +408,10 @@ enum Message {
     /// FR-STATE-14: window moved or resized
     WindowMoved(Point),
     WindowResized(Size),
+    /// FR-TERMINAL-18: export scrollback to file
+    ExportScrollback,
+    /// FR-TABS-12: copy entire scrollback to clipboard
+    CopyScrollback,
 }
 
 // ---------------------------------------------------------------------------
@@ -1702,6 +1706,11 @@ impl ShellKeep {
 
             Message::ConnectionPhaseTick => {
                 // Just triggers a redraw to update connection phase text
+
+            Message::SpinnerTick => {
+                // FR-RECONNECT-02: advance spinner frame
+                self.spinner_frame = (self.spinner_frame + 1) % SPINNER_FRAMES.len();
+            }
             }
 
             Message::KeyEvent(event) => {
@@ -1992,8 +2001,73 @@ impl ShellKeep {
                     tracing::warn!("lock heartbeat failed: {e}");
                 }
             }
+
+            // FR-TABS-17: window close requested by window manager
+            Message::WindowCloseRequested => {
+                let active_count = self
+                    .tabs
+                    .iter()
+                    .filter(|t| !t.dead && t.terminal.is_some())
+                    .count();
+                if active_count == 0 {
+                    // FR-TABS-18: no active sessions, close immediately
+                    self.flush_state();
+                    return window::close(window::Id::MAIN);
+                }
+                // Show confirmation dialog
+                self.show_close_dialog = true;
+            }
+
+            Message::CloseDialogHide => {
+                self.show_close_dialog = false;
+                // Hide to tray if available, otherwise just dismiss
+                if self.tray.is_some() {
+                    tracing::info!("hiding to tray (sessions kept on server)");
+                    return window::minimize(window::Id::MAIN, true);
+                }
+                self.toast = Some((
+                    "Sessions are still running on the server".into(),
+                    std::time::Instant::now(),
+                ));
+            }
+
+            Message::CloseDialogClose => {
+                self.show_close_dialog = false;
+                self.flush_state();
+                return window::close(window::Id::MAIN);
+            }
+
+            Message::CloseDialogCancel => {
+                self.show_close_dialog = false;
+            }
+
+            // FR-STATE-14: track window geometry changes
+            Message::WindowMoved(pos) => {
+                self.window_x = Some(pos.x as i32);
+                self.window_y = Some(pos.y as i32);
+                self.save_geometry();
+            }
+
+            Message::WindowResized(size) => {
+                self.window_width = size.width as u32;
+                self.window_height = size.height as u32;
+                self.save_geometry();
+            }
         }
         Task::none()
+    }
+
+    /// FR-STATE-14: save window geometry (debounced)
+    fn save_geometry(&mut self) {
+        if let Some(last) = self.last_geometry_save {
+            if last.elapsed() < std::time::Duration::from_millis(500) {
+                self.state_dirty = true;
+                return;
+            }
+        }
+        self.last_geometry_save = Some(std::time::Instant::now());
+        self.state_dirty = true;
+        self.flush_state();
     }
 
     fn view(&self) -> Element<'_, Message> {
