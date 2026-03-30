@@ -306,8 +306,6 @@ struct ShellKeep {
     current_conn: Option<ConnParams>,
     /// Client identifier for state persistence
     client_id: String,
-    /// FR-ENV-06: one environment active per instance
-    current_environment: String,
     /// Shared SSH connection manager
     conn_manager: Arc<Mutex<ConnectionManager>>,
     /// Whether we've already listed existing sessions after first connect
@@ -354,14 +352,14 @@ struct ShellKeep {
     /// FR-CONN-20: remote state syncer (SFTP or shell fallback)
     state_syncer: Option<Arc<ssh::sftp::StateSyncer>>,
 
+    /// FR-ENV-06: one environment active per instance
+    current_environment: String,
+
     // FR-ENV-03: environment selection dialog state
     show_env_dialog: bool,
     env_list: Vec<String>,
     env_filter: String,
     selected_env: Option<String>,
-    /// FR-ENV-01: current active environment name
-    current_environment: String,
-
     // FR-ENV-07..09: environment management modals
     show_new_env_dialog: bool,
     new_env_input: String,
@@ -742,7 +740,6 @@ impl ShellKeep {
             env_list: Vec::new(),
             env_filter: String::new(),
             selected_env: None,
-            current_environment: "default".to_string(),
             show_new_env_dialog: false,
             new_env_input: String::new(),
             show_rename_env_dialog: false,
@@ -899,12 +896,11 @@ impl ShellKeep {
 
         // FR-HISTORY-02: create history writer (None if disabled via config)
         let session_uuid = uuid::Uuid::new_v4().to_string();
-        let history_writer = history::HistoryWriter::new(
-            &session_uuid,
-            self.config.state.history_max_size_mb,
-        );
+        let history_writer =
+            history::HistoryWriter::new(&session_uuid, self.config.state.history_max_size_mb);
         self.tabs.push(Tab {
             id,
+        let suuid = session_uuid.clone();
             label: label.to_string(),
             session_uuid,
             terminal: Some(terminal),
@@ -940,12 +936,21 @@ impl ShellKeep {
         let holder = channel_holder;
         let keepalive = self.config.ssh.keepalive_interval;
         let cid = self.client_id.clone();
-        let suuid = session_uuid.clone();
         let phase_clone = phase;
         Task::perform(
             async move {
-                match establish_ssh_session(mgr, conn, tmux, 80, 24, keepalive, cid, suuid, phase_clone)
-                    .await
+                match establish_ssh_session(
+                    mgr,
+                    conn,
+                    tmux,
+                    80,
+                    24,
+                    keepalive,
+                    cid,
+                    phase_clone,
+                    suuid,
+                )
+                .await
                 {
                     Ok(channel) => {
                         *holder.lock().await = Some(channel);
@@ -1116,6 +1121,7 @@ impl ShellKeep {
                                 keepalive,
                                 cid,
                                 phase_clone,
+                                suuid,
                             )
                             .await
                             {
@@ -1416,10 +1422,9 @@ impl ShellKeep {
                                             .await
                                             .map_err(|e| e.to_string())?
                                         };
-                                        let handle = handle_arc.lock().await;
-                                        let syncer = ssh::sftp::StateSyncer::new(
-                                            handle.clone(), &client_id,
-                                        ).await?;
+                                        let syncer =
+                                            ssh::sftp::StateSyncer::new(handle_arc, &client_id)
+                                                .await?;
                                         Ok(Arc::new(syncer))
                                     },
                                     |result: Result<Arc<ssh::sftp::StateSyncer>, String>| {
@@ -2548,8 +2553,6 @@ impl ShellKeep {
                     ));
                 }
             }
-        }
-        Task::none()
 
             // FR-CONN-20: state syncer initialized
             Message::StateSyncerReady(result) => {
@@ -2561,9 +2564,7 @@ impl ShellKeep {
                         self.state_syncer = Some(syncer);
                         // FR-STATE-02: read server state (takes precedence over local)
                         return Task::perform(
-                            async move {
-                                syncer_clone.read_state().await
-                            },
+                            async move { syncer_clone.read_state().await },
                             Message::ServerStateLoaded,
                         );
                     }
@@ -2609,6 +2610,8 @@ impl ShellKeep {
                     tracing::warn!("server state write failed: {e}");
                 }
             }
+        }
+        Task::none()
     }
 
     /// FR-STATE-14: save window geometry (debounced)
@@ -3237,13 +3240,26 @@ impl ShellKeep {
                 .width(Length::Fill)
                 .height(Length::Fill);
 
-                column![container(banner).padding(iced::Padding { top: 24.0, right: 0.0, bottom: 8.0, left: 0.0 }), history_view,]
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .into()
+                column![
+                    container(banner).padding(iced::Padding {
+                        top: 24.0,
+                        right: 0.0,
+                        bottom: 8.0,
+                        left: 0.0
+                    }),
+                    history_view,
+                ]
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
             }
             Some(_) => column![
-                container(banner).padding(iced::Padding { top: 24.0, right: 0.0, bottom: 8.0, left: 0.0 }),
+                container(banner).padding(iced::Padding {
+                    top: 24.0,
+                    right: 0.0,
+                    bottom: 8.0,
+                    left: 0.0
+                }),
                 center(
                     text("History file is empty.")
                         .size(12)

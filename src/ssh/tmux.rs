@@ -8,9 +8,28 @@ use std::process::Command;
 use super::connection;
 
 /// Check if a session name belongs to shellkeep.
-/// Matches both old format ("shellkeep-N") and new format ("<client-id>--shellkeep-YYYYMMDD-HHMMSS").
+/// Matches old format ("shellkeep-N"), v1 format ("<client-id>--shellkeep-YYYYMMDD-HHMMSS"),
+/// and v2 environment format ("<client-id>--<env>--<session-name>").
 fn is_shellkeep_session(name: &str) -> bool {
     name.starts_with("shellkeep-") || name.contains("--shellkeep-")
+}
+
+/// FR-ENV-02: filter sessions by client-id AND environment name.
+/// Returns sessions matching `<client-id>--<env-name>--` prefix.
+pub fn filter_sessions_by_env(sessions: &[String], client_id: &str, env_name: &str) -> Vec<String> {
+    let prefix = format!("{client_id}--{env_name}--");
+    sessions
+        .iter()
+        .filter(|s| s.starts_with(&prefix))
+        .cloned()
+        .collect()
+}
+
+/// FR-ENV-02: generate a tmux session name scoped to client + environment.
+/// Format: `<client-id>--<env-name>--shellkeep-YYYYMMDD-HHMMSS`
+pub fn env_tmux_session_name(client_id: &str, env_name: &str) -> String {
+    let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    format!("{client_id}--{env_name}--shellkeep-{timestamp}")
 }
 
 /// List existing shellkeep tmux sessions on a remote server.
@@ -85,7 +104,7 @@ mod tests {
 
     #[test]
     fn session_prefix_filter() {
-        let lines = "shellkeep-0\nshellkeep-1\nother-session\nshellkeep-5\nmylaptop--shellkeep-20260329-120000\n";
+        let lines = "shellkeep-0\nshellkeep-1\nother-session\nshellkeep-5\nmylaptop--shellkeep-20260329-120000\nmylaptop--Default--shellkeep-20260329-130000\n";
         let sessions: Vec<String> = lines
             .lines()
             .map(|l| l.trim().to_string())
@@ -97,8 +116,37 @@ mod tests {
                 "shellkeep-0",
                 "shellkeep-1",
                 "shellkeep-5",
-                "mylaptop--shellkeep-20260329-120000"
+                "mylaptop--shellkeep-20260329-120000",
+                "mylaptop--Default--shellkeep-20260329-130000",
             ]
         );
+    }
+
+    #[test]
+    fn filter_by_env() {
+        let sessions = vec![
+            "laptop--Default--shellkeep-20260329-120000".to_string(),
+            "laptop--Default--shellkeep-20260329-120100".to_string(),
+            "laptop--ProjectA--shellkeep-20260329-130000".to_string(),
+            "other--Default--shellkeep-20260329-140000".to_string(),
+            "shellkeep-0".to_string(),
+        ];
+        let filtered = filter_sessions_by_env(&sessions, "laptop", "Default");
+        assert_eq!(filtered.len(), 2);
+        assert!(filtered.iter().all(|s| s.starts_with("laptop--Default--")));
+
+        let proj_a = filter_sessions_by_env(&sessions, "laptop", "ProjectA");
+        assert_eq!(proj_a.len(), 1);
+
+        let empty = filter_sessions_by_env(&sessions, "laptop", "Nonexistent");
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn env_session_name_format() {
+        let name = env_tmux_session_name("my-client", "Default");
+        assert!(name.starts_with("my-client--Default--shellkeep-"));
+        // Should contain a timestamp-like pattern
+        assert!(name.len() > "my-client--Default--shellkeep-".len());
     }
 }
