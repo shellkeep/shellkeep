@@ -19,12 +19,6 @@ SPDX-License-Identifier: GPL-3.0-or-later
 </p>
 
 <p align="center">
-  <img src="docs/demo.gif" alt="shellkeep demo: connect, work across tabs, lose your network, get everything back automatically" width="720">
-</p>
-
-> **[Watch the full demo (webm)](docs/demo.webm)** — with pause, seek, and full quality.
-
-<p align="center">
   <em>Connect. Create tabs. Lose your network. Get everything back -- automatically.</em>
 </p>
 
@@ -87,10 +81,8 @@ shellkeep user@server.com
 
 | | |
 |:---:|:---:|
-| ![Welcome](docs/screenshots/01-welcome.png) **Welcome screen** | ![TOFU](docs/screenshots/02-tofu.png) **Host key verification** |
-| ![Tabs](docs/screenshots/03-tabs.png) **Multi-tab terminal** | ![Reconnecting](docs/screenshots/04-reconnecting.png) **Auto-reconnect** |
-| ![Dead session](docs/screenshots/05-dead-session.png) **Dead session recovery** | ![Conflict](docs/screenshots/06-conflict.png) **Client-ID conflict** |
-| ![Environments](docs/screenshots/07-environment-select.png) **Environment selector** | ![Tray](docs/screenshots/08-tray-menu.png) **System tray menu** |
+| ![Welcome](docs/screenshots/01-welcome.png) **Welcome screen** | ![Tabs](docs/screenshots/03-tabs.png) **Multi-tab terminal** |
+| ![Password](docs/screenshots/06-password.png) **Password dialog** | |
 
 ---
 
@@ -188,9 +180,9 @@ shellkeep --debug=ssh,tmux user@server.com   # Targeted debug
 
 ## Configuration
 
-shellkeep works out of the box with no configuration. Optionally, create `~/.config/shellkeep/config.ini`:
+shellkeep works out of the box with no configuration. Optionally, create `~/.config/shellkeep/config.toml`:
 
-```ini
+```toml
 [general]
 client_id = work-laptop            # Human-readable device name
 theme = dark                       # "dark", "light", or "system"
@@ -229,7 +221,7 @@ All shortcuts use `Ctrl+Shift` to avoid conflicts with remote applications.
 | `Ctrl+Shift+A` | Copy entire scrollback |
 | `Ctrl+Shift+Plus` / `Minus` / `0` | Zoom in / out / reset |
 
-All shortcuts are customizable in `config.ini`.
+All shortcuts are customizable in `config.toml`.
 
 ---
 
@@ -273,7 +265,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions and guidelines. Ex
 
 ## Roadmap
 
-**Current (v0.2)**
+**Current (v0.3)**
 
 - GPU-accelerated Rust UI with iced + alacritty_terminal (Linux, macOS, Windows)
 - Single-hop SSH with full tmux integration
