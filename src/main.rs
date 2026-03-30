@@ -2199,7 +2199,7 @@ impl ShellKeep {
                     use rand::Rng;
                     let jitter_range = capped / 4;
                     let jitter = if jitter_range > 0 {
-                        rand::thread_rng().gen_range(0..jitter_range * 2) as i64
+                        rand::rng().random_range(0..jitter_range * 2) as i64
                             - jitter_range as i64
                     } else {
                         0

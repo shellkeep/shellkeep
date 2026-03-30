@@ -2355,7 +2355,6 @@ name = "iced_term"
 version = "0.8.0"
 dependencies = [
  "alacritty_terminal",
- "anyhow",
  "iced",
  "iced_core",
  "iced_graphics",
@@ -4965,7 +4964,7 @@ dependencies = [
  "libc",
  "muda 0.16.1",
  "notify",
- "rand 0.8.5",
+ "rand 0.9.2",
  "regex",
  "russh",
  "russh-keys",
