@@ -57,8 +57,16 @@ chrono = "0.4"
 # File watching (config hot reload)
 notify = "7"
 
+# System tray (optional — requires GTK3/libappindicator on Linux)
+tray-icon = { version = "0.19", optional = true }
+muda = { version = "0.16", optional = true }
+russh-sftp = "2"
+
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
+
+[features]
+tray = ["tray-icon", "muda"]
 
 [dev-dependencies]
 tempfile = "3"
