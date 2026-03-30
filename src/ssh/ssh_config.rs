@@ -236,7 +236,7 @@ fn glob_match_inner(pattern: &[char], text: &[char]) -> bool {
 }
 
 /// Expand ~ to home directory in paths.
-fn expand_tilde(path: &str) -> String {
+pub fn expand_tilde(path: &str) -> String {
     if let Some(rest) = path.strip_prefix("~/")
         && let Some(home) = dirs::home_dir()
     {

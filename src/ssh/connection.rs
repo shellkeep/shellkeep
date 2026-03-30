@@ -223,7 +223,7 @@ pub async fn connect(
     let effective_port = host_cfg.port.unwrap_or(port);
     let effective_user = host_cfg.user.as_deref().unwrap_or(username);
     let effective_identity = identity_file
-        .map(|s| s.to_string())
+        .map(ssh_config::expand_tilde)
         .or(host_cfg.identity_file);
     let effective_keepalive = if keepalive_interval_secs > 0 {
         keepalive_interval_secs
@@ -477,11 +477,11 @@ async fn try_key_auth(
     // Core dumps are disabled (NFR-SEC-10) to mitigate this risk.
     // For enhanced security, users should use ssh-agent (FR-CONN-07) which handles
     // key material in a separate process with its own memory protections.
-    tracing::debug!("russh: trying key {key_path}");
+    tracing::info!("russh: trying key {key_path}");
     let key = match russh::keys::load_secret_key(path, None) {
         Ok(k) => k,
         Err(e) => {
-            tracing::debug!("russh: key load failed: {e}");
+            tracing::info!("russh: key {key_path} load failed: {e}");
             return Ok(false);
         }
     };
@@ -524,8 +524,18 @@ async fn try_key_auth(
 
     let key_with_alg = PrivateKeyWithHashAlg::new(Arc::new(key), None);
     match handle.authenticate_publickey(username, key_with_alg).await {
-        Ok(result) => Ok(result.success()),
-        Err(_) => Ok(false),
+        Ok(result) => {
+            if result.success() {
+                tracing::info!("russh: authenticated with key {key_path}");
+            } else {
+                tracing::info!("russh: key {key_path} rejected by server");
+            }
+            Ok(result.success())
+        }
+        Err(e) => {
+            tracing::info!("russh: key {key_path} auth error: {e}");
+            Ok(false)
+        }
     }
 }
 
