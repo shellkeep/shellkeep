@@ -7,6 +7,7 @@
 //! Open source. Cross-platform. Zero server setup.
 
 mod app;
+mod cli;
 mod theme;
 
 use app::tab::{ChannelHolder, ConnParams, ResizeRxHolder, Tab, WriterRxHolder, SPINNER_FRAMES};
@@ -148,18 +149,7 @@ fn main() -> iced::Result {
     }
 
     // Parse SSH args (skip --debug which is shellkeep-specific)
-    let ssh_relevant: Vec<String> = args[1..]
-        .iter()
-        .filter(|a| *a != "--debug" && *a != "--trace")
-        .cloned()
-        .collect();
-
-    let initial_ssh_args: Option<Vec<String>> =
-        if ssh_relevant.is_empty() || ssh_relevant.iter().all(|a| a.starts_with('-')) {
-            None
-        } else {
-            Some(ssh_relevant)
-        };
+    let initial_ssh_args = cli::parse_cli_ssh_args(&args[1..]);
 
     tracing::info!("shellkeep v{} starting", env!("CARGO_PKG_VERSION"));
 
@@ -736,7 +726,7 @@ impl ShellKeep {
                 .map(|(_, a)| a.clone())
                 .unwrap_or_default();
             let label = host_arg.clone();
-            let (parsed_user, parsed_host, parsed_port) = parse_host_input(&host_arg);
+            let (parsed_user, parsed_host, parsed_port) = cli::parse_host_input(&host_arg);
             app.current_conn = Some(ConnParams {
                 host: parsed_host,
                 port: parsed_port
@@ -1278,7 +1268,7 @@ impl ShellKeep {
         let host = self.host_input.trim();
 
         // Parse user@host:port from host field
-        let (parsed_user, parsed_host, parsed_port) = parse_host_input(host);
+        let (parsed_user, parsed_host, parsed_port) = cli::parse_host_input(host);
 
         let user = if !self.user_input.is_empty() {
             self.user_input.clone()
@@ -2190,7 +2180,7 @@ impl ShellKeep {
 
                 // Store connection params
                 let (parsed_user, parsed_host, parsed_port) =
-                    parse_host_input(self.host_input.trim());
+                    cli::parse_host_input(self.host_input.trim());
                 let conn = ConnParams {
                     host: parsed_host,
                     port: parsed_port
@@ -5322,53 +5312,6 @@ fn escape_regex(input: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Host input parsing: supports user@host:port, user@host, host:port, host
-// ---------------------------------------------------------------------------
-
-fn parse_host_input(input: &str) -> (Option<String>, String, Option<String>) {
-    let mut user = None;
-    let mut remaining = input.to_string();
-
-    // Extract user@
-    if let Some(at_pos) = remaining.find('@') {
-        user = Some(remaining[..at_pos].to_string());
-        remaining = remaining[at_pos + 1..].to_string();
-    }
-
-    // Extract :port (but not IPv6 brackets)
-    let port = if remaining.starts_with('[') {
-        // IPv6: [::1]:port
-        if let Some(bracket_end) = remaining.find(']') {
-            let host = remaining[1..bracket_end].to_string();
-            let port = if remaining.len() > bracket_end + 2
-                && remaining.as_bytes()[bracket_end + 1] == b':'
-            {
-                Some(remaining[bracket_end + 2..].to_string())
-            } else {
-                None
-            };
-            remaining = host;
-            port
-        } else {
-            None
-        }
-    } else if let Some(colon_pos) = remaining.rfind(':') {
-        let maybe_port = &remaining[colon_pos + 1..];
-        if maybe_port.parse::<u16>().is_ok() {
-            let port = Some(maybe_port.to_string());
-            remaining = remaining[..colon_pos].to_string();
-            port
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    (user, remaining, port)
-}
-
-// ---------------------------------------------------------------------------
 // Theme
 // ---------------------------------------------------------------------------
 
@@ -5438,10 +5381,6 @@ fn config_file_exists() -> bool {
         .join("config.toml");
     path.exists()
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // FR-CONFIG-04: config file watcher
@@ -5532,151 +5471,3 @@ fn check_single_instance() -> Option<PidGuard> {
     Some(PidGuard { path: pid_path })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_host_simple() {
-        let (user, host, port) = parse_host_input("example.com");
-        assert_eq!(user, None);
-        assert_eq!(host, "example.com");
-        assert_eq!(port, None);
-    }
-
-    #[test]
-    fn parse_host_with_user() {
-        let (user, host, port) = parse_host_input("alice@example.com");
-        assert_eq!(user, Some("alice".into()));
-        assert_eq!(host, "example.com");
-        assert_eq!(port, None);
-    }
-
-    #[test]
-    fn parse_host_with_port() {
-        let (user, host, port) = parse_host_input("example.com:2222");
-        assert_eq!(user, None);
-        assert_eq!(host, "example.com");
-        assert_eq!(port, Some("2222".into()));
-    }
-
-    #[test]
-    fn parse_host_full() {
-        let (user, host, port) = parse_host_input("alice@example.com:2222");
-        assert_eq!(user, Some("alice".into()));
-        assert_eq!(host, "example.com");
-        assert_eq!(port, Some("2222".into()));
-    }
-
-    #[test]
-    fn parse_host_ipv6() {
-        let (user, host, port) = parse_host_input("[::1]:2222");
-        assert_eq!(user, None);
-        assert_eq!(host, "::1");
-        assert_eq!(port, Some("2222".into()));
-    }
-
-    /// Helper to simulate CLI arg parsing and extract ConnParams
-    fn parse_cli_args(args: &[&str]) -> (String, u16, String, Option<String>) {
-        let ssh_args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-        let mut cli_port = "22".to_string();
-        let mut cli_identity = None;
-        let mut cli_user_flag = None;
-        let mut flag_value_indices = std::collections::HashSet::new();
-        let mut i = 0;
-        while i < ssh_args.len() {
-            match ssh_args[i].as_str() {
-                "-p" if i + 1 < ssh_args.len() => {
-                    cli_port = ssh_args[i + 1].clone();
-                    flag_value_indices.insert(i);
-                    flag_value_indices.insert(i + 1);
-                    i += 1;
-                }
-                "-i" if i + 1 < ssh_args.len() => {
-                    cli_identity = Some(ssh_args[i + 1].clone());
-                    flag_value_indices.insert(i);
-                    flag_value_indices.insert(i + 1);
-                    i += 1;
-                }
-                "-l" if i + 1 < ssh_args.len() => {
-                    cli_user_flag = Some(ssh_args[i + 1].clone());
-                    flag_value_indices.insert(i);
-                    flag_value_indices.insert(i + 1);
-                    i += 1;
-                }
-                _ => {}
-            }
-            i += 1;
-        }
-        let host_arg = ssh_args
-            .iter()
-            .enumerate()
-            .find(|(idx, a)| !a.starts_with('-') && !flag_value_indices.contains(idx))
-            .map(|(_, a)| a.clone())
-            .unwrap_or_default();
-        let (parsed_user, parsed_host, parsed_port) = parse_host_input(&host_arg);
-        let port = parsed_port
-            .and_then(|p| p.parse().ok())
-            .unwrap_or(cli_port.parse().unwrap_or(22));
-        let username = cli_user_flag
-            .or(parsed_user)
-            .unwrap_or_else(|| "default_user".to_string());
-        (parsed_host, port, username, cli_identity)
-    }
-
-    #[test]
-    fn cli_port_before_host() {
-        // shellkeep -p 2247 tiago@example.com
-        let (host, port, user, _) = parse_cli_args(&["-p", "2247", "tiago@example.com"]);
-        assert_eq!(host, "example.com");
-        assert_eq!(port, 2247);
-        assert_eq!(user, "tiago");
-    }
-
-    #[test]
-    fn cli_host_before_port() {
-        // shellkeep tiago@example.com -p 2247
-        let (host, port, user, _) = parse_cli_args(&["tiago@example.com", "-p", "2247"]);
-        assert_eq!(host, "example.com");
-        assert_eq!(port, 2247);
-        assert_eq!(user, "tiago");
-    }
-
-    #[test]
-    fn cli_identity_and_port() {
-        // shellkeep -i /path/key -p 2222 user@host
-        let (host, port, user, identity) =
-            parse_cli_args(&["-i", "/path/key", "-p", "2222", "user@host"]);
-        assert_eq!(host, "host");
-        assert_eq!(port, 2222);
-        assert_eq!(user, "user");
-        assert_eq!(identity, Some("/path/key".to_string()));
-    }
-
-    #[test]
-    fn cli_user_flag() {
-        // shellkeep -l alice example.com
-        let (host, port, user, _) = parse_cli_args(&["-l", "alice", "example.com"]);
-        assert_eq!(host, "example.com");
-        assert_eq!(port, 22);
-        assert_eq!(user, "alice");
-    }
-
-    #[test]
-    fn cli_host_with_colon_port() {
-        // shellkeep user@example.com:3333
-        let (host, port, user, _) = parse_cli_args(&["user@example.com:3333"]);
-        assert_eq!(host, "example.com");
-        assert_eq!(port, 3333);
-        assert_eq!(user, "user");
-    }
-
-    #[test]
-    fn cli_just_host() {
-        // shellkeep example.com
-        let (host, port, user, _) = parse_cli_args(&["example.com"]);
-        assert_eq!(host, "example.com");
-        assert_eq!(port, 22);
-        assert_eq!(user, "default_user");
-    }
-}
