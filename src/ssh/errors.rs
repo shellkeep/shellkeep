@@ -32,6 +32,7 @@ pub fn is_permanent(error: &str) -> bool {
         "protocol error",
         "key exchange",
         "no matching",
+        "session exited",
     ];
     let lower = error.to_lowercase();
     permanent_patterns.iter().any(|p| lower.contains(p))
@@ -55,6 +56,7 @@ mod tests {
         assert!(is_permanent("auth failed: invalid key"));
         assert!(is_permanent("Permission denied (publickey)"));
         assert!(is_permanent("host key verification failed"));
+        assert!(is_permanent("session exited"));
         assert!(!is_permanent("connection reset"));
         assert!(!is_permanent("channel closed"));
     }

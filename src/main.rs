@@ -426,6 +426,8 @@ enum Message {
     TabContextMenu(usize, f32, f32),
     TabMoveLeft(usize),
     TabMoveRight(usize),
+    /// Hide tab: disconnect SSH but keep tmux session alive on server
+    HideTab(usize),
     StartRename(usize),
     ConnectRecent(usize),
     RenameInputChanged(String),
@@ -606,10 +608,17 @@ fn ssh_channel_stream(data: &SshSubscriptionData) -> BoxStream<'static, Message>
                         Some(russh::ChannelMsg::Data { data }) => {
                             let _ = output.send(Message::SshData(tab_id, data.to_vec())).await;
                         }
-                        Some(russh::ChannelMsg::Eof) | None => {
+                        Some(russh::ChannelMsg::Eof) => {
+                            tracing::info!("ssh stream {tab_id}: session exited");
+                            let _ = output.send(
+                                Message::SshDisconnected(tab_id, "session exited".into())
+                            ).await;
+                            break;
+                        }
+                        None => {
                             tracing::info!("ssh stream {tab_id}: channel closed");
                             let _ = output.send(
-                                Message::SshDisconnected(tab_id, "channel closed".into())
+                                Message::SshDisconnected(tab_id, "connection lost".into())
                             ).await;
                             break;
                         }
@@ -1168,31 +1177,74 @@ impl ShellKeep {
         }
     }
 
-    fn close_tab(&mut self, index: usize) {
-        if index < self.tabs.len() {
-            let tab = self.tabs.remove(index);
-            tracing::info!("closed tab {}: {}", tab.id, tab.label);
-            if self.active_tab >= self.tabs.len() && self.active_tab > 0 {
-                self.active_tab -= 1;
-            }
-            self.update_title();
-            self.save_state();
-            // Toast notification
-            if !tab.dead {
-                // FR-UI-06, FR-TABS-19: notify when sessions continue in background
-                if self.tabs.is_empty() && self.tray.is_some() {
-                    self.toast = Some((
-                        "Window hidden — sessions continue in the background.".into(),
-                        std::time::Instant::now(),
-                    ));
-                } else {
-                    self.toast = Some((
-                        i18n::t(i18n::SESSION_KEPT).into(),
-                        std::time::Instant::now(),
-                    ));
-                }
+    /// Close a tab and kill the tmux session on the server.
+    fn close_tab(&mut self, index: usize) -> Task<Message> {
+        if index >= self.tabs.len() {
+            return Task::none();
+        }
+        let tab = self.tabs.remove(index);
+        tracing::info!(
+            "closed tab {}: {} (killing tmux session)",
+            tab.id,
+            tab.label
+        );
+        if self.active_tab >= self.tabs.len() && self.active_tab > 0 {
+            self.active_tab -= 1;
+        }
+        self.update_title();
+        self.save_state();
+
+        self.toast = Some((
+            "Session closed and terminated on server.".into(),
+            std::time::Instant::now(),
+        ));
+
+        // Kill the tmux session on the server
+        if !tab.dead && tab.uses_russh {
+            let tmux_session = tab.tmux_session.clone();
+            let mgr = self.conn_manager.clone();
+            if let Some(ref conn) = self.current_conn {
+                let conn_key = ConnKey {
+                    host: conn.host.clone(),
+                    port: conn.port,
+                    username: conn.username.clone(),
+                };
+                return Task::perform(
+                    async move {
+                        let mgr_guard = mgr.lock().await;
+                        if let Some(handle_arc) = mgr_guard.get_cached(&conn_key) {
+                            let handle = handle_arc.lock().await;
+                            let cmd = format!("tmux kill-session -t {tmux_session} 2>/dev/null");
+                            if let Err(e) = ssh::connection::exec_command(&handle, &cmd).await {
+                                tracing::warn!("failed to kill tmux session {tmux_session}: {e}");
+                            } else {
+                                tracing::info!("killed tmux session: {tmux_session}");
+                            }
+                        }
+                    },
+                    |_| Message::ContextMenuDismiss, // no-op callback
+                );
             }
         }
+        Task::none()
+    }
+
+    /// Hide a tab — disconnect SSH but keep the tmux session alive on the server.
+    fn hide_tab(&mut self, index: usize) {
+        if index >= self.tabs.len() {
+            return;
+        }
+        let tab = self.tabs.remove(index);
+        tracing::info!("hid tab {}: {} (session kept on server)", tab.id, tab.label);
+        if self.active_tab >= self.tabs.len() && self.active_tab > 0 {
+            self.active_tab -= 1;
+        }
+        self.update_title();
+        self.save_state();
+        self.toast = Some((
+            i18n::t(i18n::SESSION_KEPT).into(),
+            std::time::Instant::now(),
+        ));
     }
 
     fn reconnect_tab(&mut self, index: usize) -> Task<Message> {
@@ -1871,6 +1923,11 @@ impl ShellKeep {
                 }
             }
 
+            Message::HideTab(index) => {
+                self.hide_tab(index);
+                self.tab_context_menu = None;
+            }
+
             Message::TerminalEvent(iced_term::Event::BackendCall(id, cmd)) => {
                 let is_resize = matches!(&cmd, iced_term::BackendCommand::Resize(..));
                 let mut needs_title_update = false;
@@ -1951,7 +2008,7 @@ impl ShellKeep {
             }
 
             Message::CloseTab(index) => {
-                self.close_tab(index);
+                return self.close_tab(index);
             }
 
             Message::NewTab => {
@@ -2155,7 +2212,66 @@ impl ShellKeep {
                 self.client_id_input = filtered;
             }
             Message::HostInputChanged(v) => {
-                self.host_input = v;
+                // Detect pasted SSH commands: "ssh -p 2247 user@host" or "ssh user@host -i key"
+                let trimmed = v.trim();
+                if trimmed.starts_with("ssh ") {
+                    let parts: Vec<&str> = trimmed.split_whitespace().collect();
+                    let mut host = String::new();
+                    let mut port = String::new();
+                    let mut user = String::new();
+                    let mut identity = String::new();
+                    let mut i = 1; // skip "ssh"
+                    while i < parts.len() {
+                        match parts[i] {
+                            "-p" if i + 1 < parts.len() => {
+                                port = parts[i + 1].to_string();
+                                i += 2;
+                            }
+                            "-i" if i + 1 < parts.len() => {
+                                identity = parts[i + 1].to_string();
+                                i += 2;
+                            }
+                            "-l" if i + 1 < parts.len() => {
+                                user = parts[i + 1].to_string();
+                                i += 2;
+                            }
+                            arg if !arg.starts_with('-') => {
+                                // user@host or just host
+                                if let Some((u, h)) = arg.split_once('@') {
+                                    if user.is_empty() {
+                                        user = u.to_string();
+                                    }
+                                    host = h.to_string();
+                                } else {
+                                    host = arg.to_string();
+                                }
+                                i += 1;
+                            }
+                            _ => {
+                                i += 1; // skip unknown flags
+                            }
+                        }
+                    }
+                    self.host_input = host;
+                    if !port.is_empty() {
+                        self.port_input = port;
+                    }
+                    if !user.is_empty() {
+                        self.user_input = user;
+                    }
+                    if !identity.is_empty() {
+                        self.identity_input = identity;
+                    }
+                    // Auto-show advanced panel if non-default values were parsed
+                    if self.port_input != "22"
+                        || !self.user_input.is_empty()
+                        || !self.identity_input.is_empty()
+                    {
+                        self.show_advanced = true;
+                    }
+                } else {
+                    self.host_input = v;
+                }
             }
             Message::PortInputChanged(v) => self.port_input = v,
             Message::UserInputChanged(v) => self.user_input = v,
@@ -2280,7 +2396,7 @@ impl ShellKeep {
                         && key == keyboard::Key::Character("w".into())
                         && !self.tabs.is_empty()
                     {
-                        self.close_tab(self.active_tab);
+                        return self.close_tab(self.active_tab);
                     }
                     // Ctrl+Tab — next tab
                     if modifiers.control()
@@ -3454,12 +3570,24 @@ impl ShellKeep {
                     .into(),
             );
             menu_items.push(
-                button(text(i18n::t(i18n::CLOSE_TAB)).size(13))
-                    .on_press(Message::CloseTab(tab_idx))
+                button(text("Hide (keep on server)").size(13))
+                    .on_press(Message::HideTab(tab_idx))
                     .padding([8, 16])
                     .width(180)
                     .style(ctx_style)
                     .into(),
+            );
+            menu_items.push(
+                button(
+                    text(i18n::t(i18n::CLOSE_TAB))
+                        .size(13)
+                        .color(Color::from_rgb8(0xf3, 0x8b, 0xa8)),
+                )
+                .on_press(Message::CloseTab(tab_idx))
+                .padding([8, 16])
+                .width(180)
+                .style(ctx_style)
+                .into(),
             );
 
             let tab_menu =
