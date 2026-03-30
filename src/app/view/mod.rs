@@ -531,7 +531,7 @@ impl ShellKeep {
             let text_color = Color::from_rgb8(0xcd, 0xd6, 0xf4);
 
             let title = if let Some(ref conn) = self.current_conn {
-                format!("Password for {}@{}", conn.username, conn.host)
+                format!("Password for {}@{}", conn.key.username, conn.key.host)
             } else {
                 "Password required".to_string()
             };

@@ -261,21 +261,13 @@ impl ShellKeep {
                     // SAFETY: is_some() checked on the line above
                     #[allow(clippy::unwrap_used)]
                     let conn = self.current_conn.clone().unwrap();
-                    let conn_key = ConnKey {
-                        host: conn.host.clone(),
-                        port: conn.port,
-                        username: conn.username.clone(),
-                    };
+                    let conn_key = conn.key.clone();
                     // FR-CONN-20: open a separate connection for SFTP state sync
                     let mgr2 = self.conn_manager.clone();
                     // SAFETY: is_some() checked above
                     #[allow(clippy::unwrap_used)]
                     let conn2 = self.current_conn.clone().unwrap();
-                    let conn_key2 = ConnKey {
-                        host: conn2.host.clone(),
-                        port: conn2.port,
-                        username: conn2.username.clone(),
-                    };
+                    let conn_key2 = conn2.key.clone();
                     let client_id = self.client_id.clone();
 
                     return Task::batch([
@@ -706,11 +698,7 @@ impl ShellKeep {
                         let conn = self.tabs[index].conn_params.clone().unwrap();
                         rename_task = Task::perform(
                             async move {
-                                let conn_key = ConnKey {
-                                    host: conn.host.clone(),
-                                    port: conn.port,
-                                    username: conn.username.clone(),
-                                };
+                                let conn_key = conn.key.clone();
                                 let mgr_guard = mgr.lock().await;
                                 if let Some(handle_arc) = mgr_guard.get_cached(&conn_key) {
                                     let handle = handle_arc.lock().await;
@@ -906,14 +894,16 @@ impl ShellKeep {
                 let (parsed_user, parsed_host, parsed_port) =
                     crate::cli::parse_host_input(self.host_input.trim());
                 let conn = super::tab::ConnParams {
-                    host: parsed_host,
-                    port: parsed_port
-                        .and_then(|p| p.parse().ok())
-                        .unwrap_or(self.port_input.trim().parse().unwrap_or(22)),
-                    username: if !self.user_input.is_empty() {
-                        self.user_input.clone()
-                    } else {
-                        parsed_user.unwrap_or_else(whoami::username)
+                    key: ConnKey {
+                        host: parsed_host,
+                        port: parsed_port
+                            .and_then(|p| p.parse().ok())
+                            .unwrap_or(self.port_input.trim().parse().unwrap_or(22)),
+                        username: if !self.user_input.is_empty() {
+                            self.user_input.clone()
+                        } else {
+                            parsed_user.unwrap_or_else(whoami::username)
+                        },
                     },
                     identity_file: if self.identity_input.is_empty() {
                         None
@@ -1418,11 +1408,7 @@ impl ShellKeep {
                 .or(self.current_conn.clone())
         {
             let mgr = self.conn_manager.clone();
-            let conn_key = ConnKey {
-                host: conn.host.clone(),
-                port: conn.port,
-                username: conn.username.clone(),
-            };
+            let conn_key = conn.key.clone();
             {
                 let mut m = mgr.blocking_lock();
                 m.remove(&conn_key);
@@ -1525,11 +1511,7 @@ impl ShellKeep {
             && let Some(conn) = self.current_conn.clone()
         {
             let mgr = self.conn_manager.clone();
-            let conn_key = ConnKey {
-                host: conn.host.clone(),
-                port: conn.port,
-                username: conn.username.clone(),
-            };
+            let conn_key = conn.key.clone();
             let client_id = self.client_id.clone();
 
             if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
@@ -1687,11 +1669,7 @@ impl ShellKeep {
                     Some(c) => c.clone(),
                     None => return Task::none(),
                 };
-                let conn_key = ConnKey {
-                    host: conn.host.clone(),
-                    port: conn.port,
-                    username: conn.username.clone(),
-                };
+                let conn_key = conn.key.clone();
                 Task::perform(
                     async move {
                         let mgr = mgr.lock().await;
@@ -1722,11 +1700,7 @@ impl ShellKeep {
                     Some(c) => c.clone(),
                     None => return Task::none(),
                 };
-                let conn_key = ConnKey {
-                    host: conn.host.clone(),
-                    port: conn.port,
-                    username: conn.username.clone(),
-                };
+                let conn_key = conn.key.clone();
                 // Collect tab IDs that are connected via russh
                 let tab_ids: Vec<super::tab::TabId> = self
                     .tabs

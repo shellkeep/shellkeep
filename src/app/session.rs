@@ -13,7 +13,7 @@ use tokio::sync::Mutex;
 use crate::app::tab::{ChannelHolder, ConnParams, ResizeRxHolder, TabId, WriterRxHolder};
 use crate::app::Message;
 use shellkeep::error::SshError;
-use shellkeep::ssh::manager::{ConnKey, ConnectionManager};
+use shellkeep::ssh::manager::ConnectionManager;
 use shellkeep::state::history;
 use shellkeep::{i18n, ssh};
 
@@ -131,11 +131,7 @@ pub(crate) async fn establish_ssh_session(
     phase: Arc<std::sync::Mutex<String>>,
     session_uuid: String,
 ) -> Result<russh::Channel<russh::client::Msg>, SshError> {
-    let conn_key = ConnKey {
-        host: conn.host.clone(),
-        port: conn.port,
-        username: conn.username.clone(),
-    };
+    let conn_key = conn.key.clone();
 
     // SAFETY: mutex is never held across a panic path
     #[allow(clippy::unwrap_used)]

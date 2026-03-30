@@ -274,13 +274,15 @@ impl ShellKeep {
             let (parsed_user, parsed_host, parsed_port) =
                 crate::cli::parse_host_input(&host_arg);
             app.current_conn = Some(ConnParams {
-                host: parsed_host,
-                port: parsed_port
-                    .and_then(|p| p.parse().ok())
-                    .unwrap_or(cli_port.parse().unwrap_or(22)),
-                username: cli_user_flag
-                    .or(parsed_user)
-                    .unwrap_or_else(whoami::username),
+                key: ConnKey {
+                    host: parsed_host,
+                    port: parsed_port
+                        .and_then(|p| p.parse().ok())
+                        .unwrap_or(cli_port.parse().unwrap_or(22)),
+                    username: cli_user_flag
+                        .or(parsed_user)
+                        .unwrap_or_else(whoami::username),
+                },
                 identity_file: cli_identity,
             });
 
@@ -336,14 +338,14 @@ impl ShellKeep {
     /// Build ssh args from ConnParams (for system ssh fallback).
     pub(crate) fn build_ssh_args_from_conn(&self, conn: &ConnParams) -> Vec<String> {
         let mut args = Vec::new();
-        if conn.username.is_empty() {
-            args.push(conn.host.clone());
+        if conn.key.username.is_empty() {
+            args.push(conn.key.host.clone());
         } else {
-            args.push(format!("{}@{}", conn.username, conn.host));
+            args.push(format!("{}@{}", conn.key.username, conn.key.host));
         }
-        if conn.port != 22 {
+        if conn.key.port != 22 {
             args.push("-p".to_string());
-            args.push(conn.port.to_string());
+            args.push(conn.key.port.to_string());
         }
         if let Some(ref id_file) = conn.identity_file {
             args.push("-i".to_string());
@@ -577,11 +579,7 @@ impl ShellKeep {
             let tmux_session = tab.tmux_session.clone();
             let mgr = self.conn_manager.clone();
             if let Some(ref conn) = self.current_conn {
-                let conn_key = ConnKey {
-                    host: conn.host.clone(),
-                    port: conn.port,
-                    username: conn.username.clone(),
-                };
+                let conn_key = conn.key.clone();
                 return Task::perform(
                     async move {
                         let mgr_guard = mgr.lock().await;

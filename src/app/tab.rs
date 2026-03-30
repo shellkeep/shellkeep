@@ -29,10 +29,15 @@ impl fmt::Display for TabId {
 /// Connection parameters parsed from user input.
 #[derive(Clone, Debug)]
 pub(crate) struct ConnParams {
-    pub(crate) host: String,
-    pub(crate) port: u16,
-    pub(crate) username: String,
+    pub(crate) key: ConnKey,
     pub(crate) identity_file: Option<String>,
+}
+
+impl ConnParams {
+    #[allow(dead_code)]
+    pub(crate) fn conn_key(&self) -> &ConnKey {
+        &self.key
+    }
 }
 
 pub(crate) struct Tab {
