@@ -1,0 +1,925 @@
+// SPDX-FileCopyrightText: 2026 shellkeep contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+mod dead_tab;
+mod dialogs;
+mod status_bar;
+mod tab_bar;
+mod welcome;
+
+use crate::app::tab::SPINNER_FRAMES;
+use crate::app::Message;
+use crate::ShellKeep;
+
+use iced::widget::{
+    Space, button, center, column, container, mouse_area, row, stack, text, text_input,
+};
+use iced::{Color, Element, Length, Theme};
+use shellkeep::i18n;
+
+impl ShellKeep {
+    pub(crate) fn view(&self) -> Element<'_, Message> {
+        if self.tabs.is_empty() {
+            return self.view_welcome();
+        }
+
+        if self.show_welcome {
+            let tab_bar = self.view_tab_bar();
+            return column![tab_bar, self.view_welcome()].into();
+        }
+
+        let tab_bar = self.view_tab_bar();
+        let content: Element<'_, Message> = if let Some(tab) = self.tabs.get(self.active_tab) {
+            if tab.dead {
+                // INV-DEAD-1: dead session never accepts input — the TerminalView
+                // widget is not rendered, so keyboard events cannot reach it.
+                self.view_dead_tab(tab)
+            } else if let Some(ref terminal) = tab.terminal {
+                // INV-CONN-2: before auth completes, the SSH I/O subscription only starts
+                // when ssh_channel_holder is set (after SshConnected). Input is buffered
+                // in ssh_writer_tx but not sent until the channel is ready.
+                // Show "Connecting..." overlay if russh tab without channel yet
+                if tab.uses_russh && tab.ssh_channel_holder.is_none() {
+                    let phase_text = tab
+                        .connection_phase
+                        .as_ref()
+                        // SAFETY: mutex is never held across a panic path
+                        .and_then(|p| p.lock().ok().map(|g| g.clone()))
+                        .unwrap_or_else(|| i18n::t(i18n::CONNECTING).to_string());
+                    stack![
+                        container(
+                            iced_term::TerminalView::show(terminal).map(Message::TerminalEvent)
+                        )
+                        .width(Length::Fill)
+                        .height(Length::Fill),
+                        center(
+                            text(phase_text)
+                                .size(16)
+                                .color(Color::from_rgb8(0xf9, 0xe2, 0xaf))
+                        ),
+                    ]
+                    .into()
+                } else {
+                    container(iced_term::TerminalView::show(terminal).map(Message::TerminalEvent))
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .into()
+                }
+            } else if tab.auto_reconnect {
+                // FR-RECONNECT-02: spinner overlay with attempt count and countdown
+                let spinner = SPINNER_FRAMES[self.spinner_frame % SPINNER_FRAMES.len()];
+                let attempt_text = format!(
+                    "{} {}/{}",
+                    i18n::t(i18n::RECONNECTING),
+                    tab.reconnect_attempts,
+                    self.config.ssh.reconnect_max_attempts
+                );
+                let countdown_text = if tab.reconnect_delay_ms > 0 {
+                    let elapsed = tab
+                        .reconnect_started
+                        .map(|t| t.elapsed().as_millis() as u64)
+                        .unwrap_or(0);
+                    let remaining_ms = tab.reconnect_delay_ms.saturating_sub(elapsed);
+                    let remaining_secs = remaining_ms.div_ceil(1000);
+                    if remaining_secs > 0 {
+                        format!("Next retry in {}s", remaining_secs)
+                    } else {
+                        "Retrying now...".to_string()
+                    }
+                } else {
+                    i18n::t(i18n::CONNECTING).to_string()
+                };
+                center(
+                    column![
+                        text(format!("{spinner}")).size(48),
+                        text(i18n::t(i18n::CONNECTION_LOST))
+                            .size(20)
+                            .color(Color::from_rgb8(0xf9, 0xe2, 0xaf)),
+                        text(attempt_text)
+                            .size(14)
+                            .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
+                        text(countdown_text)
+                            .size(12)
+                            .color(Color::from_rgb8(0x6c, 0x70, 0x86)),
+                    ]
+                    .spacing(12)
+                    .align_x(iced::Alignment::Center),
+                )
+                .into()
+            } else {
+                center(text(i18n::t(i18n::TERMINAL_NOT_AVAILABLE))).into()
+            }
+        } else {
+            center(text(i18n::t(i18n::NO_ACTIVE_TAB))).into()
+        };
+
+        // FR-TABS-09: search bar overlay
+        let content: Element<'_, Message> = if self.search_active {
+            let search_bar_style = |_theme: &Theme| container::Style {
+                background: Some(iced::Background::Color(Color::from_rgb8(0x24, 0x24, 0x36))),
+                border: iced::Border {
+                    radius: 0.0.into(),
+                    width: 0.0,
+                    color: Color::TRANSPARENT,
+                },
+                ..Default::default()
+            };
+            let btn_style = |_theme: &Theme, _status: button::Status| button::Style {
+                background: Some(iced::Background::Color(Color::from_rgb8(0x31, 0x32, 0x44))),
+                text_color: Color::from_rgb8(0xcd, 0xd6, 0xf4),
+                border: iced::Border {
+                    radius: 4.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let match_info: Element<'_, Message> = if self.search_last_match.is_some() {
+                text(i18n::t(i18n::MATCH_FOUND))
+                    .size(11)
+                    .color(Color::from_rgb8(0xa6, 0xe3, 0xa1))
+                    .into()
+            } else if !self.search_input.is_empty() {
+                text(i18n::t(i18n::NO_MATCHES))
+                    .size(11)
+                    .color(Color::from_rgb8(0xf3, 0x8b, 0xa8))
+                    .into()
+            } else {
+                Space::new().width(0).into()
+            };
+            let search_bar = container(
+                row![
+                    text_input("Search...", &self.search_input)
+                        .id("search-input")
+                        .on_input(Message::SearchInputChanged)
+                        .on_submit(Message::SearchNext)
+                        .size(13)
+                        .padding(6)
+                        .width(280),
+                    button(text(i18n::t(i18n::PREVIOUS)).size(11))
+                        .on_press(Message::SearchPrev)
+                        .padding([4, 8])
+                        .style(btn_style),
+                    button(text(i18n::t(i18n::NEXT)).size(11))
+                        .on_press(Message::SearchNext)
+                        .padding([4, 8])
+                        .style(btn_style),
+                    match_info,
+                    Space::new().width(Length::Fill),
+                    button(text(i18n::t(i18n::CLOSE)).size(11))
+                        .on_press(Message::SearchClose)
+                        .padding([4, 8])
+                        .style(btn_style),
+                ]
+                .spacing(6)
+                .align_y(iced::Alignment::Center)
+                .padding([4, 8]),
+            )
+            .width(Length::Fill)
+            .style(search_bar_style);
+            column![search_bar, content].into()
+        } else {
+            content
+        };
+
+        let status_bar = self.view_status_bar();
+
+        // Wrap with tab context menu if active
+        let main_view: Element<'_, Message> = if let Some((tab_idx, _x, _y)) = self.tab_context_menu
+        {
+            let ctx_style = |_theme: &Theme, status: button::Status| {
+                let bg = match status {
+                    button::Status::Hovered | button::Status::Pressed => {
+                        Color::from_rgb8(0x45, 0x47, 0x5a)
+                    }
+                    _ => Color::from_rgb8(0x24, 0x24, 0x36),
+                };
+                button::Style {
+                    background: Some(iced::Background::Color(bg)),
+                    text_color: Color::from_rgb8(0xcd, 0xd6, 0xf4),
+                    ..Default::default()
+                }
+            };
+
+            let mut menu_items: Vec<Element<'_, Message>> = Vec::new();
+
+            if tab_idx > 0 {
+                menu_items.push(
+                    button(text(i18n::t(i18n::MOVE_LEFT)).size(13))
+                        .on_press(Message::TabMoveLeft(tab_idx))
+                        .padding([8, 16])
+                        .width(200)
+                        .style(ctx_style)
+                        .into(),
+                );
+            }
+            if tab_idx + 1 < self.tabs.len() {
+                menu_items.push(
+                    button(text(i18n::t(i18n::MOVE_RIGHT)).size(13))
+                        .on_press(Message::TabMoveRight(tab_idx))
+                        .padding([8, 16])
+                        .width(200)
+                        .style(ctx_style)
+                        .into(),
+                );
+            }
+            menu_items.push(
+                button(text(format!("{}         F2", i18n::t(i18n::RENAME))).size(13))
+                    .on_press(Message::StartRename(tab_idx))
+                    .padding([8, 16])
+                    .width(200)
+                    .style(ctx_style)
+                    .into(),
+            );
+            menu_items.push(
+                button(text("Hide (keep on server)").size(13))
+                    .on_press(Message::HideTab(tab_idx))
+                    .padding([8, 16])
+                    .width(200)
+                    .style(ctx_style)
+                    .into(),
+            );
+            // Separator
+            menu_items.push(
+                container(Space::new().height(1))
+                    .width(Length::Fill)
+                    .style(|_theme: &Theme| container::Style {
+                        background: Some(iced::Background::Color(Color::from_rgb8(
+                            0x45, 0x47, 0x5a,
+                        ))),
+                        ..Default::default()
+                    })
+                    .into(),
+            );
+            if self.tabs.len() > 1 {
+                menu_items.push(
+                    button(text("Close other tabs").size(13))
+                        .on_press(Message::CloseOtherTabs(tab_idx))
+                        .padding([8, 16])
+                        .width(200)
+                        .style(ctx_style)
+                        .into(),
+                );
+            }
+            if tab_idx + 1 < self.tabs.len() {
+                menu_items.push(
+                    button(text("Close tabs to the right").size(13))
+                        .on_press(Message::CloseTabsToRight(tab_idx))
+                        .padding([8, 16])
+                        .width(200)
+                        .style(ctx_style)
+                        .into(),
+                );
+            }
+            menu_items.push(
+                button(
+                    text(i18n::t(i18n::CLOSE_TAB))
+                        .size(13)
+                        .color(Color::from_rgb8(0xf3, 0x8b, 0xa8)),
+                )
+                .on_press(Message::CloseTab(tab_idx))
+                .padding([8, 16])
+                .width(200)
+                .style(ctx_style)
+                .into(),
+            );
+
+            let tab_menu =
+                container(column(menu_items).spacing(1))
+                    .padding(4)
+                    .style(|_theme: &Theme| container::Style {
+                        background: Some(iced::Background::Color(Color::from_rgb8(
+                            0x24, 0x24, 0x36,
+                        ))),
+                        border: iced::Border {
+                            radius: 8.0.into(),
+                            width: 1.0,
+                            color: Color::from_rgb8(0x45, 0x47, 0x5a),
+                        },
+                        shadow: iced::Shadow {
+                            color: Color::from_rgba8(0, 0, 0, 0.5),
+                            offset: iced::Vector::new(2.0, 2.0),
+                            blur_radius: 8.0,
+                        },
+                        ..Default::default()
+                    });
+
+            let dismiss = mouse_area(
+                container(Space::new().width(Length::Fill).height(Length::Fill))
+                    .width(Length::Fill)
+                    .height(Length::Fill),
+            )
+            .on_press(Message::ContextMenuDismiss);
+
+            stack![
+                column![tab_bar, content, status_bar],
+                dismiss,
+                container(tab_menu).padding(iced::Padding {
+                    top: 28.0,
+                    right: 0.0,
+                    bottom: 0.0,
+                    left: (tab_idx as f32) * 120.0,
+                }),
+            ]
+            .into()
+        } else if let Some((x, y)) = self.context_menu {
+            let ctx_style = |_theme: &Theme, status: button::Status| {
+                let bg = match status {
+                    button::Status::Hovered | button::Status::Pressed => {
+                        Color::from_rgb8(0x45, 0x47, 0x5a)
+                    }
+                    _ => Color::from_rgb8(0x24, 0x24, 0x36),
+                };
+                button::Style {
+                    background: Some(iced::Background::Color(bg)),
+                    text_color: Color::from_rgb8(0xcd, 0xd6, 0xf4),
+                    ..Default::default()
+                }
+            };
+
+            let menu = container(
+                column![
+                    button(text(format!("{}        Ctrl+Shift+C", i18n::t(i18n::COPY))).size(13))
+                        .on_press(Message::ContextMenuCopy)
+                        .padding([8, 16])
+                        .width(250)
+                        .style(ctx_style),
+                    button(text(format!("{}       Ctrl+Shift+V", i18n::t(i18n::PASTE))).size(13))
+                        .on_press(Message::ContextMenuPaste)
+                        .padding([8, 16])
+                        .width(250)
+                        .style(ctx_style),
+                ]
+                .spacing(1),
+            )
+            .padding(4)
+            .style(|_theme: &Theme| container::Style {
+                background: Some(iced::Background::Color(Color::from_rgb8(0x24, 0x24, 0x36))),
+                border: iced::Border {
+                    radius: 8.0.into(),
+                    width: 1.0,
+                    color: Color::from_rgb8(0x45, 0x47, 0x5a),
+                },
+                shadow: iced::Shadow {
+                    color: Color::from_rgba8(0, 0, 0, 0.5),
+                    offset: iced::Vector::new(2.0, 2.0),
+                    blur_radius: 8.0,
+                },
+                ..Default::default()
+            });
+
+            let dismiss_area = mouse_area(
+                container(Space::new().width(Length::Fill).height(Length::Fill))
+                    .width(Length::Fill)
+                    .height(Length::Fill),
+            )
+            .on_press(Message::ContextMenuDismiss);
+
+            stack![
+                column![tab_bar, content, status_bar],
+                dismiss_area,
+                container(menu).padding(iced::Padding {
+                    top: y,
+                    right: 0.0,
+                    bottom: 0.0,
+                    left: x,
+                }),
+            ]
+            .into()
+        } else {
+            column![tab_bar, content, status_bar].into()
+        };
+
+        // FR-TABS-17: close confirmation dialog overlay
+        // FR-SESSION-10a: close-tab confirmation dialog
+        let main_view: Element<'_, Message> = if self.pending_close_tabs.is_some() {
+            let count = self
+                .pending_close_tabs
+                .as_ref()
+                .map(|v| v.len())
+                .unwrap_or(0);
+            let msg = if count == 1 {
+                "This will terminate the session on the server.\nThis cannot be undone.".to_string()
+            } else {
+                format!(
+                    "This will terminate {count} sessions on the server.\nThis cannot be undone."
+                )
+            };
+            let dialog_style = |_theme: &Theme| container::Style {
+                background: Some(iced::Background::Color(Color::from_rgb8(0x24, 0x24, 0x36))),
+                border: iced::Border {
+                    radius: 12.0.into(),
+                    width: 1.0,
+                    color: Color::from_rgb8(0x45, 0x47, 0x5a),
+                },
+                shadow: iced::Shadow {
+                    color: Color::from_rgba8(0, 0, 0, 0.6),
+                    offset: iced::Vector::new(0.0, 4.0),
+                    blur_radius: 16.0,
+                },
+                ..Default::default()
+            };
+            let cancel_style = |_theme: &Theme, _status: button::Status| button::Style {
+                background: Some(iced::Background::Color(Color::from_rgb8(0x31, 0x32, 0x44))),
+                text_color: Color::from_rgb8(0xcd, 0xd6, 0xf4),
+                border: iced::Border {
+                    radius: 6.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let terminate_style = |_theme: &Theme, _status: button::Status| button::Style {
+                background: Some(iced::Background::Color(Color::from_rgb8(0xf3, 0x8b, 0xa8))),
+                text_color: Color::from_rgb8(0x1e, 0x1e, 0x2e),
+                border: iced::Border {
+                    radius: 6.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let dialog = container(
+                column![
+                    text("Terminate session?")
+                        .size(18)
+                        .color(Color::from_rgb8(0xcd, 0xd6, 0xf4)),
+                    text(msg).size(13).color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
+                    Space::new().height(12),
+                    row![
+                        button(text("Cancel").size(14))
+                            .on_press(Message::CancelCloseTabs)
+                            .padding([10, 24])
+                            .style(cancel_style),
+                        Space::new().width(Length::Fill),
+                        button(
+                            text("Terminate")
+                                .size(14)
+                                .color(Color::from_rgb8(0x1e, 0x1e, 0x2e))
+                        )
+                        .on_press(Message::ConfirmCloseTabs)
+                        .padding([10, 24])
+                        .style(terminate_style),
+                    ]
+                    .width(Length::Fill),
+                ]
+                .spacing(8)
+                .padding(24)
+                .width(380),
+            )
+            .style(dialog_style);
+            center(dialog).into()
+        } else if self.show_close_dialog {
+            let active_count = self
+                .tabs
+                .iter()
+                .filter(|t| !t.dead && t.terminal.is_some())
+                .count();
+            let dialog_style = |_theme: &Theme| container::Style {
+                background: Some(iced::Background::Color(Color::from_rgb8(0x24, 0x24, 0x36))),
+                border: iced::Border {
+                    radius: 12.0.into(),
+                    width: 1.0,
+                    color: Color::from_rgb8(0x45, 0x47, 0x5a),
+                },
+                shadow: iced::Shadow {
+                    color: Color::from_rgba8(0, 0, 0, 0.6),
+                    offset: iced::Vector::new(0.0, 4.0),
+                    blur_radius: 16.0,
+                },
+                ..Default::default()
+            };
+            let btn_style = |_theme: &Theme, _status: button::Status| button::Style {
+                background: Some(iced::Background::Color(Color::from_rgb8(0x31, 0x32, 0x44))),
+                text_color: Color::from_rgb8(0xcd, 0xd6, 0xf4),
+                border: iced::Border {
+                    radius: 6.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let primary_btn_style = |_theme: &Theme, _status: button::Status| button::Style {
+                background: Some(iced::Background::Color(Color::from_rgb8(0x89, 0xb4, 0xfa))),
+                text_color: Color::from_rgb8(0x1e, 0x1e, 0x2e),
+                border: iced::Border {
+                    radius: 6.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let session_word = if active_count == 1 {
+                "session"
+            } else {
+                "sessions"
+            };
+            let dialog = container(
+                column![
+                    text("Close shellkeep?")
+                        .size(18)
+                        .color(Color::from_rgb8(0xcd, 0xd6, 0xf4)),
+                    text(format!(
+                        "Your {active_count} active {session_word} will keep running on the server."
+                    ))
+                    .size(13)
+                    .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
+                    text("To terminate sessions, close the tabs before quitting.")
+                        .size(12)
+                        .color(Color::from_rgb8(0x6c, 0x70, 0x86)),
+                    Space::new().height(12),
+                    row![
+                        button(text(i18n::t(i18n::CANCEL)).size(13))
+                            .on_press(Message::CloseDialogCancel)
+                            .padding([8, 16])
+                            .style(btn_style),
+                        Space::new().width(Length::Fill),
+                        button(
+                            text("Close")
+                                .size(13)
+                                .color(Color::from_rgb8(0x1e, 0x1e, 0x2e))
+                        )
+                        .on_press(Message::CloseDialogClose)
+                        .padding([8, 16])
+                        .style(primary_btn_style),
+                    ]
+                    .width(Length::Fill),
+                ]
+                .spacing(8)
+                .padding(24),
+            )
+            .style(dialog_style);
+
+            let scrim = mouse_area(
+                container(Space::new().width(Length::Fill).height(Length::Fill))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .style(|_theme: &Theme| container::Style {
+                        background: Some(iced::Background::Color(Color::from_rgba8(0, 0, 0, 0.5))),
+                        ..Default::default()
+                    }),
+            )
+            .on_press(Message::CloseDialogCancel);
+
+            stack![main_view, scrim, center(dialog),].into()
+        } else {
+            main_view
+        };
+
+        // FR-ENV-03: environment selection dialog overlay
+        let main_view: Element<'_, Message> = if self.show_env_dialog {
+            stack![main_view, self.view_env_dialog()].into()
+        } else if self.show_new_env_dialog {
+            stack![main_view, self.view_new_env_dialog()].into()
+        } else if self.show_rename_env_dialog {
+            stack![main_view, self.view_rename_env_dialog()].into()
+        } else if self.show_delete_env_dialog {
+            stack![main_view, self.view_delete_env_dialog()].into()
+        } else {
+            main_view
+        };
+
+        // FR-CONN-03, FR-CONN-02: host key verification dialog overlay
+        let main_view: Element<'_, Message> = if let Some(ref prompt) = self.pending_host_key_prompt
+        {
+            use shellkeep::ssh::known_hosts::HostKeyStatus;
+            let dialog_style = |_theme: &Theme| container::Style {
+                background: Some(iced::Background::Color(Color::from_rgb8(0x24, 0x24, 0x36))),
+                border: iced::Border {
+                    radius: 12.0.into(),
+                    width: 1.0,
+                    color: Color::from_rgb8(0x45, 0x47, 0x5a),
+                },
+                shadow: iced::Shadow {
+                    color: Color::from_rgba8(0, 0, 0, 0.6),
+                    offset: iced::Vector::new(0.0, 4.0),
+                    blur_radius: 16.0,
+                },
+                ..Default::default()
+            };
+            let btn_style = |_theme: &Theme, _status: button::Status| button::Style {
+                background: Some(iced::Background::Color(Color::from_rgb8(0x31, 0x32, 0x44))),
+                text_color: Color::from_rgb8(0xcd, 0xd6, 0xf4),
+                border: iced::Border {
+                    radius: 6.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let warn_btn_style = |_theme: &Theme, _status: button::Status| button::Style {
+                background: Some(iced::Background::Color(Color::from_rgb8(0xf3, 0x8b, 0xa8))),
+                text_color: Color::from_rgb8(0x1e, 0x1e, 0x2e),
+                border: iced::Border {
+                    radius: 6.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let primary_btn_style = |_theme: &Theme, _status: button::Status| button::Style {
+                background: Some(iced::Background::Color(Color::from_rgb8(0x89, 0xb4, 0xfa))),
+                text_color: Color::from_rgb8(0x1e, 0x1e, 0x2e),
+                border: iced::Border {
+                    radius: 6.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let label_color = Color::from_rgb8(0xa6, 0xad, 0xc8);
+            let text_color = Color::from_rgb8(0xcd, 0xd6, 0xf4);
+
+            let dialog = match prompt.status {
+                HostKeyStatus::Unknown => {
+                    let host_label = format!("Host: {}:{}", prompt.host, prompt.port);
+                    let fp_label = format!("Fingerprint: {}", prompt.fingerprint);
+                    container(
+                        column![
+                            text("Unknown Host Key").size(18).color(text_color),
+                            Space::new().height(8),
+                            text(host_label.clone()).size(13).color(label_color),
+                            text(fp_label.clone()).size(13).color(label_color),
+                            Space::new().height(8),
+                            text("This host is not in your known_hosts file.")
+                                .size(13)
+                                .color(label_color),
+                            Space::new().height(12),
+                            row![
+                                button(text("Accept and save").size(13))
+                                    .on_press(Message::HostKeyAcceptSave)
+                                    .padding([8, 16])
+                                    .style(primary_btn_style),
+                                button(text("Connect once").size(13))
+                                    .on_press(Message::HostKeyConnectOnce)
+                                    .padding([8, 16])
+                                    .style(btn_style),
+                                button(text("Cancel").size(13))
+                                    .on_press(Message::HostKeyReject)
+                                    .padding([8, 16])
+                                    .style(warn_btn_style),
+                            ]
+                            .spacing(8),
+                        ]
+                        .spacing(4)
+                        .padding(24),
+                    )
+                    .style(dialog_style)
+                }
+                HostKeyStatus::Changed => {
+                    let host_label = format!("Host: {}:{}", prompt.host, prompt.port);
+                    let new_fp = format!("New: {}", prompt.fingerprint);
+                    let old_fp = prompt
+                        .old_fingerprint
+                        .as_deref()
+                        .map(|fp| format!("Old: {fp}"))
+                        .unwrap_or_default();
+                    container(
+                        column![
+                            text("WARNING: HOST KEY HAS CHANGED")
+                                .size(18)
+                                .color(Color::from_rgb8(0xf3, 0x8b, 0xa8)),
+                            Space::new().height(8),
+                            text(host_label.clone()).size(13).color(label_color),
+                            text(old_fp.clone()).size(13).color(label_color),
+                            text(new_fp.clone()).size(13).color(label_color),
+                            Space::new().height(8),
+                            text("This may indicate a man-in-the-middle attack.")
+                                .size(13)
+                                .color(Color::from_rgb8(0xf3, 0x8b, 0xa8)),
+                            text("Update your known_hosts file manually if this is expected.")
+                                .size(13)
+                                .color(label_color),
+                            Space::new().height(12),
+                            button(text("Disconnect").size(13))
+                                .on_press(Message::HostKeyChangedDismiss)
+                                .padding([8, 16])
+                                .style(warn_btn_style),
+                        ]
+                        .spacing(4)
+                        .padding(24),
+                    )
+                    .style(dialog_style)
+                }
+                HostKeyStatus::Known => {
+                    // Should not happen, but dismiss gracefully
+                    container(text(""))
+                }
+            };
+
+            let scrim = mouse_area(
+                container(Space::new().width(Length::Fill).height(Length::Fill))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .style(|_theme: &Theme| container::Style {
+                        background: Some(iced::Background::Color(Color::from_rgba8(0, 0, 0, 0.5))),
+                        ..Default::default()
+                    }),
+            )
+            .on_press(Message::HostKeyReject);
+
+            stack![main_view, scrim, center(dialog)].into()
+        } else {
+            main_view
+        };
+
+        // FR-CONN-09: password prompt dialog overlay
+        let main_view: Element<'_, Message> = if self.show_password_dialog {
+            let dialog_style = |_theme: &Theme| container::Style {
+                background: Some(iced::Background::Color(Color::from_rgb8(0x24, 0x24, 0x36))),
+                border: iced::Border {
+                    radius: 12.0.into(),
+                    width: 1.0,
+                    color: Color::from_rgb8(0x45, 0x47, 0x5a),
+                },
+                shadow: iced::Shadow {
+                    color: Color::from_rgba8(0, 0, 0, 0.6),
+                    offset: iced::Vector::new(0.0, 4.0),
+                    blur_radius: 16.0,
+                },
+                ..Default::default()
+            };
+            let btn_style = |_theme: &Theme, _status: button::Status| button::Style {
+                background: Some(iced::Background::Color(Color::from_rgb8(0x31, 0x32, 0x44))),
+                text_color: Color::from_rgb8(0xcd, 0xd6, 0xf4),
+                border: iced::Border {
+                    radius: 6.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let primary_btn_style = |_theme: &Theme, _status: button::Status| button::Style {
+                background: Some(iced::Background::Color(Color::from_rgb8(0x89, 0xb4, 0xfa))),
+                text_color: Color::from_rgb8(0x1e, 0x1e, 0x2e),
+                border: iced::Border {
+                    radius: 6.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let label_color = Color::from_rgb8(0xa6, 0xad, 0xc8);
+            let text_color = Color::from_rgb8(0xcd, 0xd6, 0xf4);
+
+            let title = if let Some(ref conn) = self.current_conn {
+                format!("Password for {}@{}", conn.username, conn.host)
+            } else {
+                "Password required".to_string()
+            };
+
+            let dialog = container(
+                column![
+                    text(title.clone()).size(18).color(text_color),
+                    Space::new().height(8),
+                    text("Key-based authentication failed. Enter password:")
+                        .size(13)
+                        .color(label_color),
+                    Space::new().height(8),
+                    text_input("Password", &self.password_input)
+                        .on_input(Message::PasswordInputChanged)
+                        .on_submit(Message::PasswordSubmit)
+                        .secure(true)
+                        .padding(8)
+                        .width(300),
+                    Space::new().height(12),
+                    row![
+                        button(text("Connect").size(13))
+                            .on_press(Message::PasswordSubmit)
+                            .padding([8, 16])
+                            .style(primary_btn_style),
+                        button(text("Cancel").size(13))
+                            .on_press(Message::PasswordCancel)
+                            .padding([8, 16])
+                            .style(btn_style),
+                    ]
+                    .spacing(8),
+                ]
+                .spacing(4)
+                .padding(24),
+            )
+            .style(dialog_style);
+
+            let scrim = mouse_area(
+                container(Space::new().width(Length::Fill).height(Length::Fill))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .style(|_theme: &Theme| container::Style {
+                        background: Some(iced::Background::Color(Color::from_rgba8(0, 0, 0, 0.5))),
+                        ..Default::default()
+                    }),
+            )
+            .on_press(Message::PasswordCancel);
+
+            stack![main_view, scrim, center(dialog)].into()
+        } else {
+            main_view
+        };
+
+        // FR-LOCK-05: lock conflict dialog overlay
+        let main_view: Element<'_, Message> = if self.show_lock_dialog {
+            let dialog_style = |_theme: &Theme| container::Style {
+                background: Some(iced::Background::Color(Color::from_rgb8(0x24, 0x24, 0x36))),
+                border: iced::Border {
+                    radius: 12.0.into(),
+                    width: 1.0,
+                    color: Color::from_rgb8(0x45, 0x47, 0x5a),
+                },
+                shadow: iced::Shadow {
+                    color: Color::from_rgba8(0, 0, 0, 0.6),
+                    offset: iced::Vector::new(0.0, 4.0),
+                    blur_radius: 16.0,
+                },
+                ..Default::default()
+            };
+            let btn_style = |_theme: &Theme, _status: button::Status| button::Style {
+                background: Some(iced::Background::Color(Color::from_rgb8(0x31, 0x32, 0x44))),
+                text_color: Color::from_rgb8(0xcd, 0xd6, 0xf4),
+                border: iced::Border {
+                    radius: 6.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let warn_btn_style = |_theme: &Theme, _status: button::Status| button::Style {
+                background: Some(iced::Background::Color(Color::from_rgb8(0xfa, 0xb3, 0x87))),
+                text_color: Color::from_rgb8(0x1e, 0x1e, 0x2e),
+                border: iced::Border {
+                    radius: 6.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let text_color = Color::from_rgb8(0xcd, 0xd6, 0xf4);
+            let label_color = Color::from_rgb8(0xa6, 0xad, 0xc8);
+
+            let dialog = container(
+                column![
+                    text("Another shellkeep instance connected")
+                        .size(18)
+                        .color(text_color),
+                    Space::new().height(8),
+                    text(&self.lock_info_text).size(13).color(label_color),
+                    Space::new().height(8),
+                    text("Taking over will disconnect the other instance.")
+                        .size(13)
+                        .color(label_color),
+                    Space::new().height(12),
+                    row![
+                        button(text("Take over").size(13))
+                            .on_press(Message::LockTakeOver)
+                            .padding([8, 16])
+                            .style(warn_btn_style),
+                        button(text("Cancel").size(13))
+                            .on_press(Message::LockCancel)
+                            .padding([8, 16])
+                            .style(btn_style),
+                    ]
+                    .spacing(8),
+                ]
+                .spacing(4)
+                .padding(24),
+            )
+            .style(dialog_style);
+
+            let scrim = mouse_area(
+                container(Space::new().width(Length::Fill).height(Length::Fill))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .style(|_theme: &Theme| container::Style {
+                        background: Some(iced::Background::Color(Color::from_rgba8(0, 0, 0, 0.5))),
+                        ..Default::default()
+                    }),
+            )
+            .on_press(Message::LockCancel);
+
+            stack![main_view, scrim, center(dialog)].into()
+        } else {
+            main_view
+        };
+
+        // Toast overlay
+        let main_view: Element<'_, Message> = if let Some((ref msg, _)) = self.toast {
+            let toast_widget =
+                container(text(msg).size(13).color(Color::from_rgb8(0xcd, 0xd6, 0xf4)))
+                    .padding([8, 16])
+                    .style(|_theme: &Theme| container::Style {
+                        background: Some(iced::Background::Color(Color::from_rgb8(
+                            0x31, 0x32, 0x44,
+                        ))),
+                        border: iced::Border {
+                            radius: 8.0.into(),
+                            width: 1.0,
+                            color: Color::from_rgb8(0x45, 0x47, 0x5a),
+                        },
+                        ..Default::default()
+                    });
+
+            stack![
+                main_view,
+                column![
+                    Space::new().height(Length::Fill),
+                    container(row![Space::new().width(Length::Fill), toast_widget,])
+                        .padding(16)
+                        .width(Length::Fill)
+                        .align_bottom(Length::Fill),
+                ],
+            ]
+            .into()
+        } else {
+            main_view
+        };
+
+        main_view
+    }
+}
