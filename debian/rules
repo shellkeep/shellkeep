@@ -2,15 +2,19 @@
 # SPDX-FileCopyrightText: 2026 shellkeep contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-# NFR-DIST-02: .deb build rules using CMake
+# NFR-DIST-02: .deb build rules using cargo
 # NFR-DIST-07: Do NOT register as x-terminal-emulator
 
 %:
-	dh $@ --buildsystem=cmake
+	dh $@
 
-override_dh_auto_configure:
-	dh_auto_configure -- \
-		-DCMAKE_BUILD_TYPE=Release \
-		-DSK_BUILD_QT_UI=ON \
-		-DSK_BUILD_TESTS=OFF \
-		-DSK_JOURNALD=ON
+override_dh_auto_build:
+	cargo build --release
+
+override_dh_auto_install:
+	install -Dm755 target/release/shellkeep debian/shellkeep/usr/bin/shellkeep
+	install -Dm644 data/shellkeep.desktop debian/shellkeep/usr/share/applications/shellkeep.desktop
+	install -Dm644 man/shellkeep.1 debian/shellkeep/usr/share/man/man1/shellkeep.1
+
+override_dh_auto_test:
+	cargo test

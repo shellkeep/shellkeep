@@ -4,15 +4,10 @@ Priority: optional
 Maintainer: shellkeep contributors <maintainers@shellkeep.org>
 Build-Depends:
  debhelper-compat (= 13),
- cmake (>= 3.22),
- ninja-build,
- pkg-config,
- qt6-base-dev,
- libgl-dev,
- libssh-dev (>= 0.10.0),
- libglib2.0-dev (>= 2.66.0),
- libjson-glib-dev (>= 1.6.0),
- libsystemd-dev,
+ libxkbcommon-dev,
+ libwayland-dev,
+ libvulkan-dev,
+ libfontconfig1-dev,
 Standards-Version: 4.6.2
 Homepage: https://shellkeep.org
 Vcs-Git: https://github.com/shellkeep/shellkeep.git
@@ -27,10 +22,10 @@ Depends:
  tmux,
 Multi-Arch: foreign
 Description: Persistent SSH terminal sessions with tmux integration
- ShellKeep is a Qt6 application that provides persistent SSH terminal
- sessions backed by tmux. It automatically saves and restores your session
- layout per device, supports multiple environments (named groups of
- sessions), and reconnects seamlessly after network interruptions.
+ ShellKeep is a cross-platform SSH terminal manager backed by tmux.
+ It automatically saves and restores your session layout per device,
+ supports multiple environments (named groups of sessions), and
+ reconnects seamlessly after network interruptions.
  .
  Features include per-device layout persistence, named environments,
  automatic reconnection with exponential backoff, session history,
