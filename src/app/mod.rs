@@ -26,6 +26,57 @@ use shellkeep::{i18n, ssh};
 use tokio::sync::Mutex;
 
 // ---------------------------------------------------------------------------
+// App state sub-structs (defined for future migration; see R-30)
+// ---------------------------------------------------------------------------
+
+/// Welcome screen and connection input state.
+#[allow(dead_code)]
+pub(crate) struct WelcomeState {
+    pub(crate) client_id_input: String,
+    pub(crate) show_advanced: bool,
+    pub(crate) host_input: String,
+    pub(crate) port_input: String,
+    pub(crate) user_input: String,
+    pub(crate) identity_input: String,
+}
+
+/// Scrollback search state.
+#[allow(dead_code)]
+pub(crate) struct SearchState {
+    pub(crate) active: bool,
+    pub(crate) input: String,
+    pub(crate) regex: Option<RegexSearch>,
+    pub(crate) last_match: Option<SearchMatch>,
+}
+
+/// All dialog-related state (env, host key, password, lock, close).
+#[allow(dead_code)]
+pub(crate) struct DialogState {
+    pub(crate) show_close_dialog: bool,
+    pub(crate) close_window_id: Option<window::Id>,
+    pub(crate) show_env_dialog: bool,
+    pub(crate) env_list: Vec<String>,
+    pub(crate) env_filter: String,
+    pub(crate) selected_env: Option<String>,
+    pub(crate) show_new_env_dialog: bool,
+    pub(crate) new_env_input: String,
+    pub(crate) show_rename_env_dialog: bool,
+    pub(crate) rename_env_input: String,
+    pub(crate) rename_env_target: Option<String>,
+    pub(crate) show_delete_env_dialog: bool,
+    pub(crate) delete_env_target: Option<String>,
+    pub(crate) pending_host_key_prompt: Option<ssh::connection::HostKeyPrompt>,
+    pub(crate) show_password_dialog: bool,
+    pub(crate) password_input: String,
+    pub(crate) password_target_tab: Option<TabId>,
+    pub(crate) password_conn_params: Option<ConnParams>,
+    pub(crate) show_lock_dialog: bool,
+    pub(crate) lock_info_text: String,
+    pub(crate) lock_target_tab: Option<TabId>,
+    pub(crate) pending_close_tabs: Option<Vec<usize>>,
+}
+
+// ---------------------------------------------------------------------------
 // App state
 // ---------------------------------------------------------------------------
 
