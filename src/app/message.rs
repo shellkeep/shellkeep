@@ -10,7 +10,7 @@ use shellkeep::ssh;
 use super::tab::TabId;
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
+#[allow(dead_code)] // Used via iced Message dispatch
 pub(crate) enum Message {
     TerminalEvent(iced_term::Event),
     SshData(TabId, Vec<u8>),
@@ -84,24 +84,24 @@ pub(crate) enum Message {
     /// FR-TABS-12: copy entire scrollback to clipboard
     CopyScrollback,
     // FR-ENV-03: environment selection dialog
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Used via iced Message dispatch
     ShowEnvDialog,
     EnvFilterChanged(String),
     SelectEnv(String),
     ConfirmEnv,
     NewEnvFromDialog,
     // FR-ENV-07..09: environment management
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Used via iced Message dispatch
     ShowNewEnvDialog,
     NewEnvInputChanged(String),
     ConfirmNewEnv,
     CancelNewEnv,
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Used via iced Message dispatch
     ShowRenameEnvDialog(String),
     RenameEnvInputChanged(String),
     ConfirmRenameEnv,
     CancelRenameEnv,
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Used via iced Message dispatch
     ShowDeleteEnvDialog(String),
     ConfirmDeleteEnv,
     CancelDeleteEnv,
@@ -115,31 +115,31 @@ pub(crate) enum Message {
     /// FR-STATE-02: server state loaded (takes precedence over local)
     ServerStateLoaded(Result<Option<String>, String>),
     /// FR-CONN-03: host key TOFU — accept and save
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Used via iced Message dispatch
     HostKeyAcceptSave,
     /// FR-CONN-03: host key TOFU — connect once without saving
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Used via iced Message dispatch
     HostKeyConnectOnce,
     /// FR-CONN-03: host key TOFU — reject and disconnect
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Used via iced Message dispatch
     HostKeyReject,
     /// FR-CONN-02: host key changed — dismiss (disconnect already happened)
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Used via iced Message dispatch
     HostKeyChangedDismiss,
     /// FR-CONN-09: password dialog input changed
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Used via iced Message dispatch
     PasswordInputChanged(String),
     /// FR-CONN-09: password dialog — submit
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Used via iced Message dispatch
     PasswordSubmit,
     /// FR-CONN-09: password dialog — cancel
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Used via iced Message dispatch
     PasswordCancel,
     /// FR-LOCK-05: lock conflict — take over
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Used via iced Message dispatch
     LockTakeOver,
     /// FR-LOCK-05: lock conflict — cancel
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Used via iced Message dispatch
     LockCancel,
     /// FR-UI-01: toggle advanced connection options
     ToggleAdvanced,

@@ -33,12 +33,6 @@ pub(crate) struct ConnParams {
     pub(crate) identity_file: Option<String>,
 }
 
-impl ConnParams {
-    #[allow(dead_code)]
-    pub(crate) fn conn_key(&self) -> &ConnKey {
-        &self.key
-    }
-}
 
 /// Connection lifecycle state for a tab.
 ///
@@ -46,7 +40,7 @@ impl ConnParams {
 /// boolean/option fields (dead, auto_reconnect, reconnect_attempts, etc.).
 /// During the migration period, the old fields are kept in sync; new code
 /// should prefer matching on `conn_state`.
-#[allow(dead_code)]
+#[allow(dead_code)] // Staged for future migration (R-30)
 pub(crate) enum ConnectionState {
     /// Initial connection in progress (tab just opened).
     Connecting {
@@ -76,7 +70,7 @@ pub(crate) enum ConnectionState {
 ///
 /// During migration, `uses_russh: bool` is still the authoritative field; new code
 /// should prefer matching on `backend` once migration is complete.
-#[allow(dead_code)]
+#[allow(dead_code)] // Staged for future migration (R-30)
 pub(crate) enum TabBackend {
     SystemSsh {
         ssh_args: Vec<String>,
@@ -119,18 +113,16 @@ pub(crate) struct Tab {
     pub(crate) ssh_resize_tx: Option<tokio::sync::mpsc::UnboundedSender<(u32, u32)>>,
     // Resize rx holder — taken by subscription
     pub(crate) ssh_resize_rx_holder: Option<ResizeRxHolder>,
-    #[allow(dead_code)]
-    pub(crate) conn_key: Option<ConnKey>,
     /// Holder for a channel being established by the async task.
     /// Moved to ssh_channel_holder when SshConnected(Ok) arrives.
     pub(crate) pending_channel: Option<ChannelHolder>,
     /// FR-CONN-16: connection phase text, shared with async task
     pub(crate) connection_phase: Option<Arc<std::sync::Mutex<String>>>,
     /// Consolidated connection state (replaces scattered booleans; see ConnectionState docs).
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Staged for future migration (R-30)
     pub(crate) conn_state: ConnectionState,
     /// Backend type (replaces `uses_russh` + scattered Options; see TabBackend docs).
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Staged for future migration (R-30)
     pub(crate) backend: TabBackend,
     /// FR-HISTORY-02: client-side JSONL history writer
     pub(crate) history_writer: Option<history::HistoryWriter>,

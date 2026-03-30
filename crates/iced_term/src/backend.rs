@@ -263,12 +263,6 @@ impl Backend {
         parser.advance(&mut *term, data);
     }
 
-    /// Get the terminal Arc for external access.
-    #[allow(dead_code)]
-    pub fn term_arc(&self) -> Arc<FairMutex<Term<EventProxy>>> {
-        self.term.clone()
-    }
-
     /// Returns the current terminal grid size as (cols, rows).
     pub fn terminal_size(&self) -> (u16, u16) {
         (self.size.num_cols, self.size.num_lines)

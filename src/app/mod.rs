@@ -30,7 +30,7 @@ use tokio::sync::Mutex;
 // ---------------------------------------------------------------------------
 
 /// Welcome screen and connection input state.
-#[allow(dead_code)]
+#[allow(dead_code)] // Staged for future migration (R-30)
 pub(crate) struct WelcomeState {
     pub(crate) client_id_input: String,
     pub(crate) show_advanced: bool,
@@ -41,7 +41,7 @@ pub(crate) struct WelcomeState {
 }
 
 /// Scrollback search state.
-#[allow(dead_code)]
+#[allow(dead_code)] // Staged for future migration (R-30)
 pub(crate) struct SearchState {
     pub(crate) active: bool,
     pub(crate) input: String,
@@ -50,7 +50,7 @@ pub(crate) struct SearchState {
 }
 
 /// All dialog-related state (env, host key, password, lock, close).
-#[allow(dead_code)]
+#[allow(dead_code)] // Staged for future migration (R-30)
 pub(crate) struct DialogState {
     pub(crate) show_close_dialog: bool,
     pub(crate) close_window_id: Option<window::Id>,
@@ -166,23 +166,15 @@ pub(crate) struct ShellKeep {
     pub(crate) delete_env_target: Option<String>,
 
     // FR-CONN-03: host key TOFU dialog
-    #[allow(dead_code)]
     pub(crate) pending_host_key_prompt: Option<ssh::connection::HostKeyPrompt>,
     // FR-CONN-09: password prompt dialog
-    #[allow(dead_code)]
     pub(crate) show_password_dialog: bool,
-    #[allow(dead_code)]
     pub(crate) password_input: String,
-    #[allow(dead_code)]
     pub(crate) password_target_tab: Option<TabId>,
-    #[allow(dead_code)]
     pub(crate) password_conn_params: Option<ConnParams>,
     // FR-LOCK-05: lock conflict dialog
-    #[allow(dead_code)]
     pub(crate) show_lock_dialog: bool,
-    #[allow(dead_code)]
     pub(crate) lock_info_text: String,
-    #[allow(dead_code)]
     pub(crate) lock_target_tab: Option<TabId>,
 
     /// FR-SESSION-10a: close-tab confirmation dialog
@@ -482,7 +474,6 @@ impl ShellKeep {
             ssh_writer_rx_holder: Some(writer_rx_holder.clone()),
             ssh_resize_tx: Some(resize_tx),
             ssh_resize_rx_holder: Some(resize_rx_holder.clone()),
-            conn_key: None,
             pending_channel: Some(channel_holder.clone()),
             connection_phase: Some(phase.clone()),
             conn_state: tab::ConnectionState::Connecting {
@@ -592,7 +583,6 @@ impl ShellKeep {
                     ssh_writer_rx_holder: None,
                     ssh_resize_tx: None,
                     ssh_resize_rx_holder: None,
-                    conn_key: None,
                     pending_channel: None,
                     connection_phase: None,
                     conn_state: tab::ConnectionState::Disconnected {
