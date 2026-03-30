@@ -173,45 +173,5 @@ fn test_reattach_to_session() {
     cleanup_prefix(&prefix);
 }
 
-#[test]
-#[ignore]
-fn test_list_remote_sessions_function() {
-    // This test uses the shellkeep filter which looks for "shellkeep-" prefix.
-    // Create sessions with that prefix, plus one without.
-    let _ = ssh_run("tmux kill-session -t shellkeep-e2e-0 2>/dev/null");
-    let _ = ssh_run("tmux kill-session -t shellkeep-e2e-1 2>/dev/null");
-    let _ = ssh_run("tmux kill-session -t shellkeep-e2e-2 2>/dev/null");
-    let _ = ssh_run("tmux kill-session -t e2e-other-session 2>/dev/null");
-
-    for i in 0..3 {
-        assert!(ssh_run_ok(&format!(
-            "tmux new-session -d -s shellkeep-e2e-{i}"
-        )));
-    }
-    assert!(ssh_run_ok("tmux new-session -d -s e2e-other-session"));
-
-    let sessions = shellkeep::ssh::tmux::list_remote_sessions(&ssh_args());
-    assert!(
-        sessions.iter().any(|s| s == "shellkeep-e2e-0"),
-        "missing shellkeep-e2e-0 in {:?}",
-        sessions
-    );
-    assert!(
-        sessions.iter().any(|s| s == "shellkeep-e2e-1"),
-        "missing shellkeep-e2e-1"
-    );
-    assert!(
-        sessions.iter().any(|s| s == "shellkeep-e2e-2"),
-        "missing shellkeep-e2e-2"
-    );
-    assert!(
-        !sessions.iter().any(|s| s == "e2e-other-session"),
-        "should not include e2e-other-session"
-    );
-
-    // Cleanup
-    let _ = ssh_run("tmux kill-session -t shellkeep-e2e-0 2>/dev/null");
-    let _ = ssh_run("tmux kill-session -t shellkeep-e2e-1 2>/dev/null");
-    let _ = ssh_run("tmux kill-session -t shellkeep-e2e-2 2>/dev/null");
-    let _ = ssh_run("tmux kill-session -t e2e-other-session 2>/dev/null");
-}
+// test_list_remote_sessions_function removed — blocking system ssh version
+// replaced by async list_sessions_russh tested in e2e_features.rs

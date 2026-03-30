@@ -94,9 +94,6 @@ pub fn tn(singular: &str, plural: &str, n: usize) -> String {
 // Plural string keys
 pub const N_ACTIVE_SESSIONS_1: &str = "{n} active session";
 pub const N_ACTIVE_SESSIONS_N: &str = "{n} active sessions";
-pub const N_TABS_1: &str = "{n} tab";
-pub const N_TABS_N: &str = "{n} tabs";
-
 /// NFR-I18N-09: format a relative time duration for display.
 /// Takes seconds ago, returns a localized human-readable string.
 pub fn format_relative_time(secs_ago: u64) -> String {
@@ -141,8 +138,6 @@ pub fn format_relative_time(secs_ago: u64) -> String {
 // ── String keys (English is the key itself) ──────────────────────────
 
 // Welcome screen
-pub const WELCOME_TITLE: &str = "shellkeep";
-pub const WELCOME_SUBTITLE: &str = "SSH sessions that survive everything";
 pub const WELCOME_TEXT: &str = "Welcome to shellkeep";
 pub const WELCOME_DESCRIPTION: &str =
     "Your SSH sessions survive everything — network drops, laptop sleep, reboots.";
@@ -186,7 +181,6 @@ pub const CLOSE_TAB: &str = "Close tab";
 pub const MOVE_LEFT: &str = "Move left";
 pub const MOVE_RIGHT: &str = "Move right";
 pub const RENAME: &str = "Rename";
-pub const TAB_NAME_PLACEHOLDER: &str = "tab name";
 
 // Clipboard
 pub const COPY: &str = "Copy";
@@ -200,19 +194,12 @@ pub const NEXT: &str = "Next";
 pub const CLOSE: &str = "Close";
 
 // Close dialog
-pub const CLOSE_SHELLKEEP: &str = "Close shellkeep?";
-pub const HIDE: &str = "Hide";
-pub const CLOSE_ANYWAY: &str = "Close anyway";
 pub const CANCEL: &str = "Cancel";
-
-// Crash report
-pub const NO_CRASH_DUMPS: &str = "No crash dumps found.";
 
 fn pt_br_translations() -> HashMap<&'static str, &'static str> {
     let mut m = HashMap::new();
 
     // Welcome
-    m.insert(WELCOME_SUBTITLE, "Sessões SSH que sobrevivem a tudo");
     m.insert(WELCOME_TEXT, "Bem-vindo ao shellkeep");
     m.insert(
         WELCOME_DESCRIPTION,
@@ -264,7 +251,6 @@ fn pt_br_translations() -> HashMap<&'static str, &'static str> {
     m.insert(MOVE_LEFT, "Mover para esquerda");
     m.insert(MOVE_RIGHT, "Mover para direita");
     m.insert(RENAME, "Renomear");
-    m.insert(TAB_NAME_PLACEHOLDER, "nome da aba");
 
     // Clipboard
     m.insert(COPY, "Copiar");
@@ -278,19 +264,11 @@ fn pt_br_translations() -> HashMap<&'static str, &'static str> {
     m.insert(CLOSE, "Fechar");
 
     // Close dialog
-    m.insert(CLOSE_SHELLKEEP, "Fechar shellkeep?");
-    m.insert(HIDE, "Ocultar");
-    m.insert(CLOSE_ANYWAY, "Fechar mesmo assim");
     m.insert(CANCEL, "Cancelar");
-
-    // Crash
-    m.insert(NO_CRASH_DUMPS, "Nenhum dump de falha encontrado.");
 
     // Plurals
     m.insert(N_ACTIVE_SESSIONS_1, "{n} sessão ativa");
     m.insert(N_ACTIVE_SESSIONS_N, "{n} sessões ativas");
-    m.insert(N_TABS_1, "{n} aba");
-    m.insert(N_TABS_N, "{n} abas");
 
     m
 }

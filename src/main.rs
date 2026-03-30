@@ -416,8 +416,6 @@ enum Message {
     SshDisconnected(u64, String),
     SshConnected(u64, Result<(), String>),
     ExistingSessionsFound(Result<Vec<String>, String>),
-    #[allow(dead_code)]
-    SshSessionsListed(Result<(), String>),
     SelectTab(usize),
     CloseTab(usize),
     NewTab,
@@ -472,8 +470,6 @@ enum Message {
     LockHeartbeatDone(Result<(), String>),
     /// FR-TABS-17: window close requested by window manager
     WindowCloseRequested(window::Id),
-    /// FR-TABS-17: close dialog — hide window (keep sessions)
-    CloseDialogHide,
     /// FR-TABS-17: close dialog — quit application
     CloseDialogClose,
     /// FR-TABS-17: close dialog — cancel (dismiss dialog)
@@ -485,9 +481,6 @@ enum Message {
     ExportScrollback,
     /// FR-TABS-12: copy entire scrollback to clipboard
     CopyScrollback,
-    /// FR-STATE-06: async state write completed
-    #[allow(dead_code)]
-    StateSaved,
     // FR-ENV-03: environment selection dialog
     #[allow(dead_code)]
     ShowEnvDialog,
@@ -519,9 +512,6 @@ enum Message {
     StateSyncerReady(Result<Arc<ssh::sftp::StateSyncer>, String>),
     /// FR-STATE-02: server state loaded (takes precedence over local)
     ServerStateLoaded(Result<Option<String>, String>),
-    /// FR-CONN-20: remote state write completed
-    #[allow(dead_code)]
-    ServerStateSaved(Result<(), String>),
     /// FR-CONN-03: host key TOFU — accept and save
     #[allow(dead_code)]
     HostKeyAcceptSave,
@@ -1840,10 +1830,6 @@ impl ShellKeep {
                 }
             }
 
-            Message::SshSessionsListed(_result) => {
-                // Handled by the connect flow — sessions are opened in the handler
-            }
-
             Message::TerminalEvent(iced_term::Event::ContextMenu(_id, x, y)) => {
                 self.context_menu = Some((x, y));
                 self.renaming_tab = None;
@@ -1883,9 +1869,6 @@ impl ShellKeep {
             Message::FlushState => {
                 self.flush_state();
             }
-
-            // FR-STATE-06: async state write completed (no-op)
-            Message::StateSaved => {}
 
             Message::ContextMenuDismiss => {
                 self.context_menu = None;
@@ -2884,22 +2867,6 @@ impl ShellKeep {
                 self.show_close_dialog = true;
             }
 
-            Message::CloseDialogHide => {
-                self.show_close_dialog = false;
-                let win_id = self.close_window_id.take();
-                // Hide to tray if available, otherwise just dismiss
-                if self.tray.is_some() {
-                    tracing::info!("hiding to tray (sessions kept on server)");
-                    if let Some(id) = win_id {
-                        return window::minimize(id, true);
-                    }
-                }
-                self.toast = Some((
-                    "Sessions are still running on the server".into(),
-                    std::time::Instant::now(),
-                ));
-            }
-
             Message::CloseDialogClose => {
                 self.show_close_dialog = false;
                 self.flush_state();
@@ -3150,13 +3117,6 @@ impl ShellKeep {
                     Err(e) => {
                         tracing::warn!("failed to read server state: {e}");
                     }
-                }
-            }
-
-            // FR-CONN-20: remote state write completed
-            Message::ServerStateSaved(result) => {
-                if let Err(e) = result {
-                    tracing::warn!("server state write failed: {e}");
                 }
             }
 

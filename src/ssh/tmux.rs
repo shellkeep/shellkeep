@@ -3,8 +3,6 @@
 
 //! Detect existing shellkeep tmux sessions on a remote server.
 
-use std::process::Command;
-
 use super::connection;
 
 /// Check if a session name belongs to shellkeep (but NOT the lock session).
@@ -34,47 +32,6 @@ pub fn filter_sessions_by_env(sessions: &[String], client_id: &str, env_name: &s
 pub fn env_tmux_session_name(client_id: &str, env_name: &str) -> String {
     let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
     format!("{client_id}--{env_name}--shellkeep-{timestamp}")
-}
-
-/// List existing shellkeep tmux sessions on a remote server.
-///
-/// Runs `ssh <args> "tmux list-sessions -F '#{session_name}'"` and
-/// filters for shellkeep sessions (old and new naming formats).
-///
-/// Returns session names sorted, or empty vec if tmux is not available.
-pub fn list_remote_sessions(ssh_args: &[String]) -> Vec<String> {
-    let mut cmd = Command::new("ssh");
-    for arg in ssh_args {
-        cmd.arg(arg);
-    }
-    cmd.arg("-o").arg("BatchMode=yes");
-    cmd.arg("-o").arg("ConnectTimeout=5");
-    cmd.arg("tmux list-sessions -F '#{session_name}' 2>/dev/null");
-
-    match cmd.output() {
-        Ok(output) if output.status.success() => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let mut sessions: Vec<String> = stdout
-                .lines()
-                .map(|l| l.trim().trim_matches('\'').to_string())
-                .filter(|s| is_shellkeep_session(s))
-                .collect();
-            sessions.sort();
-            sessions
-        }
-        Ok(output) => {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            if !stderr.is_empty() {
-                tracing::debug!("tmux list-sessions stderr: {stderr}");
-            }
-            tracing::debug!("tmux list-sessions exited with {}", output.status);
-            Vec::new()
-        }
-        Err(e) => {
-            tracing::warn!("failed to run ssh for tmux list-sessions: {e}");
-            Vec::new()
-        }
-    }
 }
 
 /// List existing shellkeep tmux sessions using a russh connection.
