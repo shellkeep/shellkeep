@@ -22,22 +22,18 @@ pub(crate) fn check_single_instance() -> Option<PidGuard> {
 
     if pid_path.exists()
         && let Ok(pid_str) = std::fs::read_to_string(&pid_path)
-        && let Ok(pid) = pid_str.trim().parse::<u32>()
+        && let Ok(_pid) = pid_str.trim().parse::<u32>()
     {
         #[cfg(unix)]
-        if std::path::Path::new(&format!("/proc/{pid}")).exists() {
+        if std::path::Path::new(&format!("/proc/{_pid}")).exists() {
             return None;
         }
         #[cfg(windows)]
+        if let Ok(meta) = std::fs::metadata(&pid_path)
+            && let Ok(modified) = meta.modified()
+            && modified.elapsed().unwrap_or_default() < std::time::Duration::from_secs(5)
         {
-            // On Windows, check if PID file is very recent as a heuristic
-            if let Ok(meta) = std::fs::metadata(&pid_path) {
-                if let Ok(modified) = meta.modified() {
-                    if modified.elapsed().unwrap_or_default() < std::time::Duration::from_secs(5) {
-                        return None;
-                    }
-                }
-            }
+            return None;
         }
     }
 
