@@ -13,6 +13,7 @@ use russh_sftp::client::SftpSession;
 use tokio::sync::Mutex;
 
 use super::connection::SshHandler;
+use crate::error::SshError;
 
 /// Remote state directory under the user's home.
 const REMOTE_STATE_DIR: &str = ".terminal-state";
@@ -21,36 +22,36 @@ const REMOTE_STATE_DIR: &str = ".terminal-state";
 const SYNC_DEBOUNCE: Duration = Duration::from_millis(500);
 
 /// Open an SFTP session on an existing SSH connection.
-pub async fn open_sftp(handle: &russh::client::Handle<SshHandler>) -> Result<SftpSession, String> {
+pub async fn open_sftp(handle: &russh::client::Handle<SshHandler>) -> Result<SftpSession, SshError> {
     let channel = handle
         .channel_open_session()
         .await
-        .map_err(|e| format!("sftp channel: {e}"))?;
+        .map_err(|e| SshError::Sftp(format!("sftp channel: {e}")))?;
     channel
         .request_subsystem(true, "sftp")
         .await
-        .map_err(|e| format!("sftp subsystem: {e}"))?;
+        .map_err(|e| SshError::Sftp(format!("sftp subsystem: {e}")))?;
     let sftp = SftpSession::new(channel.into_stream())
         .await
-        .map_err(|e| format!("sftp session: {e}"))?;
+        .map_err(|e| SshError::Sftp(format!("sftp session: {e}")))?;
     Ok(sftp)
 }
 
 /// Read a file from the server via SFTP.
-pub async fn read_file(sftp: &SftpSession, path: &str) -> Result<Vec<u8>, String> {
+pub async fn read_file(sftp: &SftpSession, path: &str) -> Result<Vec<u8>, SshError> {
     sftp.read(path)
         .await
-        .map_err(|e| format!("sftp read {path}: {e}"))
+        .map_err(|e| SshError::Sftp(format!("sftp read {path}: {e}")))
 }
 
 /// Write a file atomically via SFTP: write to .tmp, then rename.
 /// FR-STATE-05: uses posix-rename semantics (atomic overwrite). Falls back to
 /// unlink + rename if the rename fails (e.g., server lacks posix-rename extension).
-pub async fn write_file_atomic(sftp: &SftpSession, path: &str, data: &[u8]) -> Result<(), String> {
+pub async fn write_file_atomic(sftp: &SftpSession, path: &str, data: &[u8]) -> Result<(), SshError> {
     let tmp_path = format!("{path}.tmp");
     sftp.write(&tmp_path, data)
         .await
-        .map_err(|e| format!("sftp write {tmp_path}: {e}"))?;
+        .map_err(|e| SshError::Sftp(format!("sftp write {tmp_path}: {e}")))?;
     // Try rename (posix-rename@openssh.com does atomic overwrite)
     match sftp.rename(&tmp_path, path).await {
         Ok(()) => Ok(()),
@@ -59,17 +60,17 @@ pub async fn write_file_atomic(sftp: &SftpSession, path: &str, data: &[u8]) -> R
             let _ = sftp.remove_file(path).await; // ignore error if file doesn't exist
             sftp.rename(&tmp_path, path)
                 .await
-                .map_err(|e| format!("sftp rename {tmp_path} -> {path}: {e}"))
+                .map_err(|e| SshError::Sftp(format!("sftp rename {tmp_path} -> {path}: {e}")))
         }
     }
 }
 
 /// Ensure the remote state directory exists and return the state file path.
-pub async fn ensure_state_dir(sftp: &SftpSession, client_id: &str) -> Result<String, String> {
+pub async fn ensure_state_dir(sftp: &SftpSession, client_id: &str) -> Result<String, SshError> {
     let home = sftp
         .canonicalize(".")
         .await
-        .map_err(|e| format!("sftp canonicalize home: {e}"))?;
+        .map_err(|e| SshError::Sftp(format!("sftp canonicalize home: {e}")))?;
     let dir = format!("{home}/{REMOTE_STATE_DIR}");
     // Ignore error if directory already exists.
     let _ = sftp.create_dir(&dir).await;
@@ -82,10 +83,8 @@ pub async fn ensure_state_dir(sftp: &SftpSession, client_id: &str) -> Result<Str
 pub async fn read_file_shell(
     handle: &russh::client::Handle<SshHandler>,
     path: &str,
-) -> Result<String, String> {
-    super::connection::exec_command(handle, &format!("cat {path}"))
-        .await
-        .map_err(|e| e.to_string())
+) -> Result<String, SshError> {
+    super::connection::exec_command(handle, &format!("cat {path}")).await
 }
 
 /// Write a file atomically via shell command when SFTP is unavailable.
@@ -93,12 +92,10 @@ pub async fn write_file_shell(
     handle: &russh::client::Handle<SshHandler>,
     path: &str,
     content: &str,
-) -> Result<(), String> {
+) -> Result<(), SshError> {
     let tmp = format!("{path}.tmp.$$");
     let cmd = format!("cat > {tmp} << 'SHELLKEEP_EOF'\n{content}\nSHELLKEEP_EOF\nmv {tmp} {path}");
-    super::connection::exec_command(handle, &cmd)
-        .await
-        .map_err(|e| e.to_string())?;
+    super::connection::exec_command(handle, &cmd).await?;
     Ok(())
 }
 
@@ -106,12 +103,10 @@ pub async fn write_file_shell(
 pub async fn ensure_state_dir_shell(
     handle: &russh::client::Handle<SshHandler>,
     client_id: &str,
-) -> Result<String, String> {
+) -> Result<String, SshError> {
     let cmd =
         format!("mkdir -p ~/{REMOTE_STATE_DIR} && echo ~/{REMOTE_STATE_DIR}/{client_id}.json");
-    let output = super::connection::exec_command(handle, &cmd)
-        .await
-        .map_err(|e| e.to_string())?;
+    let output = super::connection::exec_command(handle, &cmd).await?;
     Ok(output.trim().to_string())
 }
 
@@ -146,7 +141,7 @@ impl std::fmt::Debug for StateSyncer {
 
 impl StateSyncer {
     /// Create a new StateSyncer. Tries SFTP first, falls back to shell.
-    pub async fn new(handle: HandleArc, client_id: &str) -> Result<Self, String> {
+    pub async fn new(handle: HandleArc, client_id: &str) -> Result<Self, SshError> {
         let guard = handle.lock().await;
         // Try SFTP first
         match open_sftp(&guard).await {
@@ -178,11 +173,14 @@ impl StateSyncer {
     }
 
     /// Read state from the server. Server state takes precedence (FR-STATE-02).
-    pub async fn read_state(&self) -> Result<Option<String>, String> {
+    pub async fn read_state(&self) -> Result<Option<String>, SshError> {
         match &self.transport {
             Transport::Sftp(sftp) => match read_file(sftp, &self.state_path).await {
                 Ok(data) => Ok(Some(String::from_utf8_lossy(&data).to_string())),
-                Err(e) if e.contains("NoSuchFile") || e.contains("No such file") => Ok(None),
+                Err(e) if {
+                    let msg = e.to_string();
+                    msg.contains("NoSuchFile") || msg.contains("No such file")
+                } => Ok(None),
                 Err(e) => Err(e),
             },
             Transport::Shell => {
@@ -190,7 +188,7 @@ impl StateSyncer {
                 match read_file_shell(&guard, &self.state_path).await {
                     Ok(s) if s.is_empty() => Ok(None),
                     Ok(s) => Ok(Some(s)),
-                    Err(e) if e.contains("No such file") => Ok(None),
+                    Err(e) if e.to_string().contains("No such file") => Ok(None),
                     Err(e) => Err(e),
                 }
             }
@@ -198,7 +196,7 @@ impl StateSyncer {
     }
 
     /// Write state to the server, debounced to at most 1 write per 500ms.
-    pub async fn write_state(&self, json: &str) -> Result<(), String> {
+    pub async fn write_state(&self, json: &str) -> Result<(), SshError> {
         {
             let mut last = self.last_write.lock().await;
             if let Some(t) = *last

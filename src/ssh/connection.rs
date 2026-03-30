@@ -16,6 +16,8 @@ use ssh_key::{Algorithm, HashAlg};
 use super::known_hosts::HostKeyStatus;
 use super::{proxy, ssh_config};
 
+pub use crate::error::SshError;
+
 /// Result of host key verification during connection.
 /// Stored in shared state so the UI can show a dialog after connection.
 #[derive(Debug, Clone)]
@@ -39,24 +41,6 @@ pub struct SshHandler {
     pub pending_host_key: Arc<std::sync::Mutex<Option<HostKeyPrompt>>>,
 }
 
-#[derive(Debug)]
-pub enum SshError {
-    Connect(String),
-    Auth(String),
-    Channel(String),
-}
-
-impl std::fmt::Display for SshError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            SshError::Connect(s) => write!(f, "connection failed: {s}"),
-            SshError::Auth(s) => write!(f, "auth failed: {s}"),
-            SshError::Channel(s) => write!(f, "channel error: {s}"),
-        }
-    }
-}
-
-impl std::error::Error for SshError {}
 
 impl russh::client::Handler for SshHandler {
     type Error = russh::Error;

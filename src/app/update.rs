@@ -316,7 +316,8 @@ impl ShellKeep {
                                     conn_result.handle,
                                     &client_id,
                                 )
-                                .await?;
+                                .await
+                                .map_err(|e| e.to_string())?;
                                 Ok(Arc::new(syncer))
                             },
                             |result: Result<Arc<ssh::sftp::StateSyncer>, String>| {
@@ -2215,7 +2216,12 @@ impl ShellKeep {
                         self.state_syncer = Some(syncer);
                         // FR-STATE-02: read server state (takes precedence over local)
                         Task::perform(
-                            async move { syncer_clone.read_state().await },
+                            async move {
+                                syncer_clone
+                                    .read_state()
+                                    .await
+                                    .map_err(|e| e.to_string())
+                            },
                             Message::ServerStateLoaded,
                         )
                     }
