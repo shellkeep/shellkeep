@@ -666,15 +666,19 @@ async fn establish_ssh_session(
         (result.handle, result.host_key_prompt)
     };
 
-    let handle = handle_arc.lock().await;
+    // IMPORTANT: Don't hold handle_arc.lock() across the entire function.
+    // Multiple tabs share the same Handle via ConnectionManager. Each operation
+    // locks briefly, then releases, allowing other tabs to interleave.
 
     // FR-CONN-13..15: check tmux availability and version
     *phase.lock().unwrap() = i18n::t(i18n::CHECKING_TMUX).to_string();
 
-    let tmux_version_output =
-        ssh::connection::exec_command(&handle, "tmux -V 2>/dev/null || echo 'NOT_FOUND'")
+    let tmux_version_output = {
+        let h = handle_arc.lock().await;
+        ssh::connection::exec_command(&h, "tmux -V 2>/dev/null || echo 'NOT_FOUND'")
             .await
-            .unwrap_or_else(|_| "NOT_FOUND".to_string());
+            .unwrap_or_else(|_| "NOT_FOUND".to_string())
+    };
 
     if tmux_version_output.contains("NOT_FOUND") || tmux_version_output.trim().is_empty() {
         return Err("tmux not found on server — install tmux >= 3.0 to use shellkeep".to_string());
@@ -695,52 +699,64 @@ async fn establish_ssh_session(
     } else {
         None
     };
-    ssh::lock::acquire_lock(&handle, &client_id, keepalive_timeout)
-        .await
-        .map_err(|e| e.to_string())?;
+    {
+        let h = handle_arc.lock().await;
+        ssh::lock::acquire_lock(&h, &client_id, keepalive_timeout)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
 
     // FR-RECONNECT-03: verify tmux session exists before reattaching, create if needed
     *phase.lock().unwrap() = i18n::t(i18n::OPENING_SESSION).to_string();
 
-    let check = ssh::connection::exec_command(
-        &handle,
-        &format!(
-            "tmux has-session -t {} 2>/dev/null && echo EXISTS",
-            tmux_session
-        ),
-    )
-    .await
-    .unwrap_or_default();
+    let check = {
+        let h = handle_arc.lock().await;
+        ssh::connection::exec_command(
+            &h,
+            &format!(
+                "tmux has-session -t {} 2>/dev/null && echo EXISTS",
+                tmux_session
+            ),
+        )
+        .await
+        .unwrap_or_default()
+    };
 
     if !check.trim().contains("EXISTS") {
         tracing::info!("tmux session {tmux_session} not found, creating new one");
-        ssh::tmux::create_session_russh(&handle, &tmux_session)
+        let h = handle_arc.lock().await;
+        ssh::tmux::create_session_russh(&h, &tmux_session)
             .await
             .map_err(|e| e.to_string())?;
     }
 
     // Open PTY channel and attach to tmux session
-    let channel = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| format!("channel open: {e}"))?;
+    let channel = {
+        let h = handle_arc.lock().await;
+        let ch = h
+            .channel_open_session()
+            .await
+            .map_err(|e| format!("channel open: {e}"))?;
 
-    channel
-        .request_pty(false, "xterm-256color", cols, rows, 0, 0, &[])
-        .await
-        .map_err(|e| format!("pty: {e}"))?;
+        ch.request_pty(false, "xterm-256color", cols, rows, 0, 0, &[])
+            .await
+            .map_err(|e| format!("pty: {e}"))?;
 
-    let tmux_cmd = format!(
-        "TERM=xterm-256color tmux new-session -A -s {tmux_session} \\; set status off || exec $SHELL"
-    );
-    channel
-        .exec(true, tmux_cmd)
-        .await
-        .map_err(|e| format!("exec: {e}"))?;
+        let tmux_cmd = format!(
+            "TERM=xterm-256color tmux new-session -A -s {tmux_session} \\; set status off || exec $SHELL"
+        );
+        ch.exec(true, tmux_cmd)
+            .await
+            .map_err(|e| format!("exec: {e}"))?;
+        ch
+    };
 
     // FR-HISTORY-01: start server-side capture via tmux pipe-pane
     let pipe_cmd = history::pipe_pane_command(&tmux_session, &session_uuid);
-    ssh::connection::exec_command(&handle, &pipe_cmd).await.ok();
+    {
+        let h = handle_arc.lock().await;
+        ssh::connection::exec_command(&h, &pipe_cmd).await.ok();
+    }
 
     Ok(channel)
 }
