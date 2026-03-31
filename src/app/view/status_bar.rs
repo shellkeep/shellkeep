@@ -10,8 +10,8 @@ use iced::{Color, Element, Length};
 
 impl ShellKeep {
     pub(crate) fn view_status_bar(&self) -> Element<'_, Message> {
-        let active_count = self.tabs.iter().filter(|t| !t.dead).count();
-        let dead_count = self.tabs.iter().filter(|t| t.dead).count();
+        let active_count = self.tabs.iter().filter(|t| !t.is_dead()).count();
+        let dead_count = self.tabs.iter().filter(|t| t.is_dead()).count();
         let total = self.tabs.len();
 
         let zoom_info = if (self.current_font_size - self.config.terminal.font_size).abs() > 0.1 {

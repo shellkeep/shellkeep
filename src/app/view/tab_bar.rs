@@ -48,11 +48,9 @@ impl ShellKeep {
                 // FR-UI-04: connection status indicator
                 // red = dead/disconnected, yellow = reconnecting or high latency (>300ms),
                 // green = connected and healthy
-                let (indicator, label_color) = if tab.dead {
+                let (indicator, label_color) = if tab.is_dead() {
                     ("●", Color::from_rgb8(0xf3, 0x8b, 0xa8))
-                } else if (tab.terminal.is_none() && tab.auto_reconnect)
-                    || (tab.uses_russh && tab.ssh_channel_holder.is_none())
-                {
+                } else if tab.is_auto_reconnect() || (tab.is_russh() && !tab.has_channel()) {
                     ("●", Color::from_rgb8(0xf9, 0xe2, 0xaf))
                 } else if tab.last_latency_ms.is_some_and(|ms| ms > 300) {
                     // FR-UI-04: yellow for high latency (>300ms)

@@ -305,25 +305,6 @@ pub(crate) fn escape_regex(input: &str) -> String {
 // ---------------------------------------------------------------------------
 
 impl ShellKeep {
-    /// Build ssh args from ConnParams (for system ssh fallback).
-    pub(crate) fn build_ssh_args_from_conn(&self, conn: &ConnParams) -> Vec<String> {
-        let mut args = Vec::new();
-        if conn.key.username.is_empty() {
-            args.push(conn.key.host.clone());
-        } else {
-            args.push(format!("{}@{}", conn.key.username, conn.key.host));
-        }
-        if conn.key.port != 22 {
-            args.push("-p".to_string());
-            args.push(conn.key.port.to_string());
-        }
-        if let Some(ref id_file) = conn.identity_file {
-            args.push("-i".to_string());
-            args.push(id_file.clone());
-        }
-        args
-    }
-
     /// Open a new tab, assigning it the next unused tmux session name.
     /// FR-SESSION-04, FR-SESSION-05, FR-ENV-02: generate tmux session name with client-id,
     /// environment, and timestamp.
@@ -370,12 +351,6 @@ impl ShellKeep {
         let channel_holder: ChannelHolder = Arc::new(Mutex::new(None));
         let phase = Arc::new(std::sync::Mutex::new(i18n::t(i18n::CONNECTING).to_string()));
 
-        let ssh_args = self
-            .current_conn
-            .as_ref()
-            .map(|c| self.build_ssh_args_from_conn(c))
-            .unwrap_or_default();
-
         // FR-HISTORY-02: create history writer (None if disabled via config)
         let session_uuid = uuid::Uuid::new_v4().to_string();
         let history_writer =
@@ -386,23 +361,9 @@ impl ShellKeep {
             label: label.to_string(),
             session_uuid,
             terminal: Some(terminal),
-            ssh_args,
-            conn_params: self.current_conn.clone(),
             tmux_session: tmux_session.to_string(),
-            dead: false,
-            reconnect_attempts: 0,
-            auto_reconnect: true,
-            uses_russh: true,
-            reconnect_delay_ms: 0,
             last_error: None,
             last_latency_ms: None,
-            reconnect_started: None,
-            ssh_channel_holder: None, // set when SshConnected(Ok) arrives
-            ssh_writer_rx_holder: Some(writer_rx_holder.clone()),
-            ssh_resize_tx: Some(resize_tx),
-            ssh_resize_rx_holder: Some(resize_rx_holder.clone()),
-            pending_channel: Some(channel_holder.clone()),
-            connection_phase: Some(phase.clone()),
             conn_state: tab::ConnectionState::Connecting {
                 phase: phase.clone(),
                 pending_channel: channel_holder.clone(),
@@ -418,6 +379,7 @@ impl ShellKeep {
                 }),
                 writer_rx: Some(writer_rx_holder),
                 resize_rx: Some(resize_rx_holder),
+                resize_tx: Some(resize_tx),
             },
             history_writer,
             needs_initial_resize: true,
@@ -499,26 +461,13 @@ impl ShellKeep {
                     label: label.to_string(),
                     session_uuid: uuid::Uuid::new_v4().to_string(),
                     terminal: Some(terminal),
-                    ssh_args: ssh_args.to_vec(),
-                    conn_params: self.current_conn.clone(),
                     tmux_session: tmux_session.to_string(),
-                    dead: false,
-                    reconnect_attempts: 0,
-                    auto_reconnect: true,
-                    reconnect_delay_ms: 0,
                     last_error: None,
                     last_latency_ms: None,
-                    reconnect_started: None,
-                    uses_russh: false,
-                    ssh_channel_holder: None,
-                    ssh_writer_rx_holder: None,
-                    ssh_resize_tx: None,
-                    ssh_resize_rx_holder: None,
-                    pending_channel: None,
-                    connection_phase: None,
-                    conn_state: tab::ConnectionState::Disconnected {
-                        error: None,
-                        can_reconnect: false,
+                    // System SSH tabs use PTY directly, so they start "connected"
+                    // in the sense that no SSH handshake is tracked here.
+                    conn_state: tab::ConnectionState::Connected {
+                        channel: Arc::new(Mutex::new(None)),
                     },
                     backend: tab::TabBackend::SystemSsh {
                         ssh_args: ssh_args.to_vec(),
@@ -562,7 +511,7 @@ impl ShellKeep {
         ));
 
         // Kill the tmux session on the server
-        if !tab.dead && tab.uses_russh {
+        if !tab.is_dead() && tab.is_russh() {
             let tmux_session = tab.tmux_session.clone();
             let mgr = self.conn_manager.clone();
             if let Some(ref conn) = self.current_conn {
@@ -612,11 +561,9 @@ impl ShellKeep {
 
         let tab = &mut self.tabs[index];
 
-        if tab.uses_russh {
+        if tab.is_russh() {
             // Russh reconnection: clear old state, create new terminal, launch connection
-            tab.ssh_channel_holder = None;
-            tab.ssh_resize_tx = None;
-            tab.pending_channel = None;
+            tab.clear_resize_tx();
 
             let (ssh_writer_tx, ssh_writer_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
             let (resize_tx, resize_rx) = tokio::sync::mpsc::unbounded_channel::<(u32, u32)>();
@@ -631,17 +578,15 @@ impl ShellKeep {
             match iced_term::Terminal::new_ssh(tab.id.0, settings, ssh_writer_tx) {
                 Ok(terminal) => {
                     tab.terminal = Some(terminal);
-                    tab.ssh_writer_rx_holder = Some(Arc::new(Mutex::new(Some(ssh_writer_rx))));
-                    tab.ssh_resize_tx = Some(resize_tx);
-                    tab.ssh_resize_rx_holder = Some(Arc::new(Mutex::new(Some(resize_rx))));
+                    tab.set_writer_rx(Arc::new(Mutex::new(Some(ssh_writer_rx))));
+                    tab.set_resize_tx(resize_tx);
+                    tab.set_resize_rx(Arc::new(Mutex::new(Some(resize_rx))));
                     let phase = Arc::new(std::sync::Mutex::new(
                         i18n::t(i18n::RECONNECTING).to_string(),
                     ));
-                    tab.pending_channel = Some(channel_holder.clone());
-                    tab.connection_phase = Some(phase.clone());
-                    tab.dead = false;
+                    tab.mark_connecting(phase.clone(), channel_holder.clone());
 
-                    let conn = match &tab.conn_params {
+                    let conn = match tab.conn_params() {
                         Some(c) => c.clone(),
                         None => return Task::none(),
                     };
@@ -682,7 +627,7 @@ impl ShellKeep {
             }
         } else {
             // System ssh reconnection (legacy)
-            let ssh_args = tab.ssh_args.clone();
+            let ssh_args = tab.ssh_args().to_vec();
             let label = tab.label.clone();
             let tmux_session = tab.tmux_session.clone();
 
@@ -767,7 +712,7 @@ impl ShellKeep {
 
         // FR-TRAY-02: update tray tooltip with session count
         if let Some(ref tray) = self.tray {
-            let active_count = self.tabs.iter().filter(|t| !t.dead).count();
+            let active_count = self.tabs.iter().filter(|t| !t.is_dead()).count();
             tray.set_session_count(active_count);
             // FR-TRAY-04: change icon when active sessions exist but window may be hidden
             tray.set_hidden_active(active_count > 0 && !self.show_welcome);
@@ -808,7 +753,7 @@ impl ShellKeep {
 
     pub(crate) fn update_title(&mut self) {
         if let Some(tab) = self.tabs.get(self.active_tab) {
-            let status = if tab.dead { " (disconnected)" } else { "" };
+            let status = if tab.is_dead() { " (disconnected)" } else { "" };
             self.title_text = format!("shellkeep — {}{}", tab.label, status);
         } else {
             self.title_text = "shellkeep".to_string();
@@ -876,11 +821,11 @@ impl ShellKeep {
             }
 
             // SSH channel I/O subscription for russh tabs with a connected channel
-            if tab.uses_russh
+            if tab.is_russh()
                 && let (Some(channel_holder), Some(writer_rx_holder), Some(resize_rx_holder)) = (
-                    &tab.ssh_channel_holder,
-                    &tab.ssh_writer_rx_holder,
-                    &tab.ssh_resize_rx_holder,
+                    tab.channel_holder(),
+                    tab.writer_rx_holder(),
+                    tab.resize_rx_holder(),
                 )
             {
                 let data = SshSubscriptionData {
@@ -894,7 +839,11 @@ impl ShellKeep {
         }
 
         // FR-CONN-16: poll for connection phase updates
-        if self.tabs.iter().any(|t| t.connection_phase.is_some()) {
+        if self
+            .tabs
+            .iter()
+            .any(|t| t.connection_phase_text().is_some())
+        {
             subs.push(
                 iced::time::every(std::time::Duration::from_millis(200))
                     .map(|_| Message::ConnectionPhaseTick),
@@ -904,10 +853,7 @@ impl ShellKeep {
         subs.push(keyboard::listen().map(Message::KeyEvent));
 
         // FR-RECONNECT-02: spinner animation subscription (100ms tick)
-        let any_reconnecting = self
-            .tabs
-            .iter()
-            .any(|t| t.terminal.is_none() && t.auto_reconnect && !t.dead);
+        let any_reconnecting = self.tabs.iter().any(|t| t.is_auto_reconnect());
         if any_reconnecting {
             subs.push(
                 iced::time::every(std::time::Duration::from_millis(100))
@@ -919,12 +865,13 @@ impl ShellKeep {
         if let Some(delay_ms) = self
             .tabs
             .iter()
-            .filter(|t| t.terminal.is_none() && t.auto_reconnect && !t.dead)
+            .filter(|t| t.is_auto_reconnect())
             .map(|t| {
-                if t.reconnect_delay_ms == 0 {
+                let d = t.reconnect_delay_ms();
+                if d == 0 {
                     (self.config.ssh.reconnect_backoff_base * 1000.0) as u64
                 } else {
-                    t.reconnect_delay_ms
+                    d
                 }
             })
             .min()
@@ -965,7 +912,7 @@ impl ShellKeep {
         let has_connected_russh = self
             .tabs
             .iter()
-            .any(|t| t.uses_russh && !t.dead && t.terminal.is_some());
+            .any(|t| t.is_russh() && !t.is_dead() && t.terminal.is_some());
         if has_connected_russh && self.current_conn.is_some() {
             let interval = self.config.ssh.keepalive_interval.max(5) as u64;
             subs.push(
@@ -991,11 +938,7 @@ impl ShellKeep {
 
         // FR-RECONNECT-08: poll network gateway changes (Linux only, every 5s)
         #[cfg(target_os = "linux")]
-        if self
-            .tabs
-            .iter()
-            .any(|t| t.terminal.is_none() && t.auto_reconnect && !t.dead)
-        {
+        if self.tabs.iter().any(|t| t.is_auto_reconnect()) {
             subs.push(
                 iced::time::every(std::time::Duration::from_secs(5))
                     .map(|_| Message::NetworkChanged),

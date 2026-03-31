@@ -35,11 +35,9 @@ pub(crate) struct ConnParams {
 
 /// Connection lifecycle state for a tab.
 ///
-/// This enum models the full connection state machine, replacing scattered
-/// boolean/option fields (dead, auto_reconnect, reconnect_attempts, etc.).
-/// During the migration period, the old fields are kept in sync; new code
-/// should prefer matching on `conn_state`.
-#[allow(dead_code)] // Staged for future migration (R-30)
+/// This enum is the single source of truth for where a tab stands in its
+/// connection lifecycle.  All code should match on `tab.conn_state` (or use
+/// the helper methods on `Tab`) instead of checking scattered booleans.
 pub(crate) enum ConnectionState {
     /// Initial connection in progress (tab just opened).
     Connecting {
@@ -56,18 +54,15 @@ pub(crate) enum ConnectionState {
         phase: Arc<std::sync::Mutex<String>>,
         pending_channel: Option<ChannelHolder>,
     },
-    /// Disconnected (terminal dead). May or may not allow manual reconnect.
-    Disconnected {
-        error: Option<String>,
-        can_reconnect: bool,
-    },
+    /// Disconnected (terminal dead). User can manually reconnect via the UI.
+    /// Error details are stored in `Tab::last_error`.
+    Disconnected,
 }
 
 /// Backend type for a tab — either system ssh (spawned process) or russh (async library).
 ///
-/// During migration, `uses_russh: bool` is still the authoritative field; new code
-/// should prefer matching on `backend` once migration is complete.
-#[allow(dead_code)] // Staged for future migration (R-30)
+/// This enum is the single source of truth for the backend type and its
+/// associated resources.
 pub(crate) enum TabBackend {
     SystemSsh {
         ssh_args: Vec<String>,
@@ -76,6 +71,7 @@ pub(crate) enum TabBackend {
         conn_params: ConnParams,
         writer_rx: Option<WriterRxHolder>,
         resize_rx: Option<ResizeRxHolder>,
+        resize_tx: Option<tokio::sync::mpsc::UnboundedSender<(u32, u32)>>,
     },
 }
 
@@ -85,46 +81,261 @@ pub(crate) struct Tab {
     /// FR-SESSION-07: stable UUID for state persistence
     pub(crate) session_uuid: String,
     pub(crate) terminal: Option<iced_term::Terminal>,
-    /// Legacy: system ssh args (kept for compatibility during transition)
-    pub(crate) ssh_args: Vec<String>,
-    pub(crate) conn_params: Option<ConnParams>,
     pub(crate) tmux_session: String,
-    pub(crate) dead: bool,
-    pub(crate) reconnect_attempts: u32,
-    pub(crate) auto_reconnect: bool,
-    /// FR-RECONNECT-06: current reconnect delay in milliseconds (0 = use base)
-    pub(crate) reconnect_delay_ms: u64,
     /// FR-UI-08: last error reason for display in dead tab
     pub(crate) last_error: Option<String>,
     /// FR-UI-04..05: last measured latency in milliseconds
     pub(crate) last_latency_ms: Option<u32>,
-    /// FR-RECONNECT-02: timestamp when reconnection started (for countdown display)
-    pub(crate) reconnect_started: Option<std::time::Instant>,
-    /// Whether this tab uses russh (true) or system ssh (false)
-    pub(crate) uses_russh: bool,
-    // russh channel holder — taken by the subscription on first run
-    pub(crate) ssh_channel_holder: Option<ChannelHolder>,
-    // Writer rx holder — keyboard input receiver, taken by subscription
-    pub(crate) ssh_writer_rx_holder: Option<WriterRxHolder>,
-    // Resize command sender
-    pub(crate) ssh_resize_tx: Option<tokio::sync::mpsc::UnboundedSender<(u32, u32)>>,
-    // Resize rx holder — taken by subscription
-    pub(crate) ssh_resize_rx_holder: Option<ResizeRxHolder>,
-    /// Holder for a channel being established by the async task.
-    /// Moved to ssh_channel_holder when SshConnected(Ok) arrives.
-    pub(crate) pending_channel: Option<ChannelHolder>,
-    /// FR-CONN-16: connection phase text, shared with async task
-    pub(crate) connection_phase: Option<Arc<std::sync::Mutex<String>>>,
-    /// Consolidated connection state (replaces scattered booleans; see ConnectionState docs).
-    #[allow(dead_code)] // Staged for future migration (R-30)
+    /// Connection lifecycle state — single source of truth.
     pub(crate) conn_state: ConnectionState,
-    /// Backend type (replaces `uses_russh` + scattered Options; see TabBackend docs).
-    #[allow(dead_code)] // Staged for future migration (R-30)
+    /// Backend type — single source of truth.
     pub(crate) backend: TabBackend,
     /// FR-HISTORY-02: client-side JSONL history writer
     pub(crate) history_writer: Option<history::HistoryWriter>,
     /// FR-TERMINAL-16: true until first resize is sent to SSH channel after connect
     pub(crate) needs_initial_resize: bool,
+}
+
+// ---------------------------------------------------------------------------
+// Tab helper methods — read from conn_state / backend instead of booleans
+// ---------------------------------------------------------------------------
+
+impl Tab {
+    /// True if the tab is in the Disconnected state (session dead).
+    pub(crate) fn is_dead(&self) -> bool {
+        matches!(self.conn_state, ConnectionState::Disconnected)
+    }
+
+    /// True if auto-reconnect is enabled (Reconnecting state).
+    pub(crate) fn is_auto_reconnect(&self) -> bool {
+        matches!(self.conn_state, ConnectionState::Reconnecting { .. })
+    }
+
+    /// True if the tab backend is russh.
+    pub(crate) fn is_russh(&self) -> bool {
+        matches!(self.backend, TabBackend::Russh { .. })
+    }
+
+    /// Get the connection phase text (for Connecting or Reconnecting states).
+    pub(crate) fn connection_phase_text(&self) -> Option<String> {
+        match &self.conn_state {
+            ConnectionState::Connecting { phase, .. }
+            | ConnectionState::Reconnecting { phase, .. } => phase.lock().ok().map(|g| g.clone()),
+            _ => None,
+        }
+    }
+
+    /// Get reconnect attempt count.
+    pub(crate) fn reconnect_attempts(&self) -> u32 {
+        match &self.conn_state {
+            ConnectionState::Reconnecting { attempt, .. } => *attempt,
+            ConnectionState::Disconnected => 0,
+            _ => 0,
+        }
+    }
+
+    /// Get reconnect delay in milliseconds.
+    pub(crate) fn reconnect_delay_ms(&self) -> u64 {
+        match &self.conn_state {
+            ConnectionState::Reconnecting { delay_ms, .. } => *delay_ms,
+            _ => 0,
+        }
+    }
+
+    /// Get reconnect started instant.
+    pub(crate) fn reconnect_started(&self) -> Option<std::time::Instant> {
+        match &self.conn_state {
+            ConnectionState::Reconnecting { started, .. } => Some(*started),
+            _ => None,
+        }
+    }
+
+    /// True if the tab has a connected SSH channel (russh).
+    pub(crate) fn has_channel(&self) -> bool {
+        matches!(self.conn_state, ConnectionState::Connected { .. })
+    }
+
+    /// Get the SSH channel holder (Connected state only).
+    pub(crate) fn channel_holder(&self) -> Option<&ChannelHolder> {
+        match &self.conn_state {
+            ConnectionState::Connected { channel } => Some(channel),
+            _ => None,
+        }
+    }
+
+    /// Get the pending channel holder (Connecting or Reconnecting states).
+    pub(crate) fn pending_channel(&self) -> Option<&ChannelHolder> {
+        match &self.conn_state {
+            ConnectionState::Connecting {
+                pending_channel, ..
+            } => Some(pending_channel),
+            ConnectionState::Reconnecting {
+                pending_channel, ..
+            } => pending_channel.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// Take the pending channel out of Connecting state.
+    /// Returns None if not in Connecting state or already taken.
+    pub(crate) fn take_pending_channel(&mut self) -> Option<ChannelHolder> {
+        match &mut self.conn_state {
+            ConnectionState::Connecting {
+                pending_channel, ..
+            } => {
+                // Clone it out (Arc is cheap to clone)
+                Some(pending_channel.clone())
+            }
+            ConnectionState::Reconnecting {
+                pending_channel, ..
+            } => pending_channel.take(),
+            _ => None,
+        }
+    }
+
+    /// Get the writer_rx holder from the backend (Russh only).
+    pub(crate) fn writer_rx_holder(&self) -> Option<&WriterRxHolder> {
+        match &self.backend {
+            TabBackend::Russh { writer_rx, .. } => writer_rx.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// Get the resize_rx holder from the backend (Russh only).
+    pub(crate) fn resize_rx_holder(&self) -> Option<&ResizeRxHolder> {
+        match &self.backend {
+            TabBackend::Russh { resize_rx, .. } => resize_rx.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// Get the resize_tx sender from the backend (Russh only).
+    pub(crate) fn resize_tx(&self) -> Option<&tokio::sync::mpsc::UnboundedSender<(u32, u32)>> {
+        match &self.backend {
+            TabBackend::Russh { resize_tx, .. } => resize_tx.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// Get ssh_args (SystemSsh only).
+    pub(crate) fn ssh_args(&self) -> &[String] {
+        match &self.backend {
+            TabBackend::SystemSsh { ssh_args } => ssh_args,
+            _ => &[],
+        }
+    }
+
+    /// Get conn_params (Russh only).
+    pub(crate) fn conn_params(&self) -> Option<&ConnParams> {
+        match &self.backend {
+            TabBackend::Russh { conn_params, .. } => Some(conn_params),
+            _ => None,
+        }
+    }
+
+    /// Transition to Connected state from Connecting/Reconnecting.
+    /// Moves the pending channel to the Connected channel.
+    pub(crate) fn mark_connected(&mut self, channel: ChannelHolder) {
+        self.conn_state = ConnectionState::Connected { channel };
+    }
+
+    /// Transition to Disconnected state.
+    pub(crate) fn mark_disconnected(&mut self, error: Option<String>) {
+        self.last_error = error;
+        self.conn_state = ConnectionState::Disconnected;
+    }
+
+    /// Transition to Reconnecting state.
+    pub(crate) fn mark_reconnecting(
+        &mut self,
+        attempt: u32,
+        delay_ms: u64,
+        phase: Arc<std::sync::Mutex<String>>,
+        pending_channel: Option<ChannelHolder>,
+    ) {
+        self.conn_state = ConnectionState::Reconnecting {
+            attempt,
+            delay_ms,
+            started: std::time::Instant::now(),
+            phase,
+            pending_channel,
+        };
+    }
+
+    /// Transition to Connecting state.
+    pub(crate) fn mark_connecting(
+        &mut self,
+        phase: Arc<std::sync::Mutex<String>>,
+        pending_channel: ChannelHolder,
+    ) {
+        self.conn_state = ConnectionState::Connecting {
+            phase,
+            pending_channel,
+        };
+    }
+
+    /// Clear the resize_tx sender (on disconnect).
+    pub(crate) fn clear_resize_tx(&mut self) {
+        if let TabBackend::Russh {
+            ref mut resize_tx, ..
+        } = self.backend
+        {
+            *resize_tx = None;
+        }
+    }
+
+    /// Set writer_rx holder on backend.
+    pub(crate) fn set_writer_rx(&mut self, holder: WriterRxHolder) {
+        if let TabBackend::Russh {
+            ref mut writer_rx, ..
+        } = self.backend
+        {
+            *writer_rx = Some(holder);
+        }
+    }
+
+    /// Set resize_rx holder on backend.
+    pub(crate) fn set_resize_rx(&mut self, holder: ResizeRxHolder) {
+        if let TabBackend::Russh {
+            ref mut resize_rx, ..
+        } = self.backend
+        {
+            *resize_rx = Some(holder);
+        }
+    }
+
+    /// Set resize_tx on backend.
+    pub(crate) fn set_resize_tx(&mut self, tx: tokio::sync::mpsc::UnboundedSender<(u32, u32)>) {
+        if let TabBackend::Russh {
+            ref mut resize_tx, ..
+        } = self.backend
+        {
+            *resize_tx = Some(tx);
+        }
+    }
+
+    /// Set reconnect delay_ms in Reconnecting state.
+    pub(crate) fn set_reconnect_delay_ms(&mut self, delay: u64) {
+        if let ConnectionState::Reconnecting {
+            ref mut delay_ms, ..
+        } = self.conn_state
+        {
+            *delay_ms = delay;
+        }
+    }
+
+    /// Reset reconnect attempts to 0 and delay to 0 in Reconnecting state.
+    pub(crate) fn reset_reconnect(&mut self) {
+        if let ConnectionState::Reconnecting {
+            ref mut attempt,
+            ref mut delay_ms,
+            ..
+        } = self.conn_state
+        {
+            *attempt = 0;
+            *delay_ms = 0;
+        }
+    }
 }
 
 /// Build terminal font settings from app config and current font size.

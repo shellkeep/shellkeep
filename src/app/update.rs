@@ -155,24 +155,28 @@ impl ShellKeep {
     fn handle_ssh_message(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::SshData(tab_id, data) => {
-                if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id)
-                    && let Some(ref mut terminal) = tab.terminal
-                {
-                    terminal.process_ssh_data(&data);
-                    // FR-HISTORY-02: write to local JSONL history
-                    if let Some(ref mut writer) = tab.history_writer {
-                        writer.append_output(&data);
+                if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+                    if let Some(ref mut terminal) = tab.terminal {
+                        terminal.process_ssh_data(&data);
+                        // FR-HISTORY-02: write to local JSONL history
+                        if let Some(ref mut writer) = tab.history_writer {
+                            writer.append_output(&data);
+                        }
                     }
                     // FR-TERMINAL-16: deferred initial resize — by the time data arrives,
                     // the terminal widget has definitely rendered and knows its real size
                     if tab.needs_initial_resize {
-                        let (cols, rows) = terminal.terminal_size();
-                        if cols > 0
-                            && rows > 0
-                            && let Some(ref resize_tx) = tab.ssh_resize_tx
-                        {
-                            let _ = resize_tx.send((cols as u32, rows as u32));
-                            tracing::info!("tab {tab_id}: deferred initial resize {cols}x{rows}");
+                        if let Some(ref terminal) = tab.terminal {
+                            let (cols, rows) = terminal.terminal_size();
+                            if cols > 0
+                                && rows > 0
+                                && let Some(resize_tx) = tab.resize_tx()
+                            {
+                                let _ = resize_tx.send((cols as u32, rows as u32));
+                                tracing::info!(
+                                    "tab {tab_id}: deferred initial resize {cols}x{rows}"
+                                );
+                            }
                         }
                         tab.needs_initial_resize = false;
                     }
@@ -183,30 +187,35 @@ impl ShellKeep {
             Message::SshDisconnected(tab_id, reason) => {
                 if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
                     // Clear channel state so subscription stops
-                    tab.ssh_channel_holder = None;
-                    tab.ssh_resize_tx = None;
-                    tab.connection_phase = None;
+                    tab.clear_resize_tx();
                     // FR-UI-08: store last error for dead tab display
                     tab.last_error = Some(reason.clone());
 
                     // FR-RECONNECT-07: classify error
                     if ssh::errors::is_permanent(&reason) {
                         tab.terminal = None;
-                        tab.dead = true;
-                        tab.auto_reconnect = false;
+                        tab.mark_disconnected(Some(reason.clone()));
                         tracing::error!("permanent error for tab {tab_id}: {reason}");
-                    } else if tab.auto_reconnect
-                        && tab.reconnect_attempts < self.config.ssh.reconnect_max_attempts
-                    {
-                        tab.reconnect_attempts += 1;
-                        tab.terminal = None;
-                        tab.reconnect_started = Some(std::time::Instant::now());
-                        tracing::info!("SSH tab {tab_id} disconnected: {reason}, will retry");
                     } else {
-                        tab.terminal = None;
-                        tab.dead = true;
-                        tab.auto_reconnect = false;
-                        tracing::info!("SSH tab {tab_id} disconnected: {reason}");
+                        // Check if we were reconnecting and can retry
+                        let attempt = tab.reconnect_attempts();
+                        let was_reconnectable = tab.is_auto_reconnect()
+                            || matches!(
+                                tab.conn_state,
+                                super::tab::ConnectionState::Connected { .. }
+                                    | super::tab::ConnectionState::Connecting { .. }
+                            );
+                        if was_reconnectable && attempt < self.config.ssh.reconnect_max_attempts {
+                            let new_attempt = attempt + 1;
+                            tab.terminal = None;
+                            let phase = Arc::new(std::sync::Mutex::new(String::new()));
+                            tab.mark_reconnecting(new_attempt, 0, phase, None);
+                            tracing::info!("SSH tab {tab_id} disconnected: {reason}, will retry");
+                        } else {
+                            tab.terminal = None;
+                            tab.mark_disconnected(Some(reason.clone()));
+                            tracing::info!("SSH tab {tab_id} disconnected: {reason}");
+                        }
                     }
                     self.update_title();
                 }
@@ -240,24 +249,22 @@ impl ShellKeep {
         match result {
             Ok(()) => {
                 // The async task wrote the channel into pending_channel.
-                // Move it to ssh_channel_holder so the subscription picks it up.
+                // Move it to Connected state so the subscription picks it up.
                 if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id)
-                    && let Some(holder) = tab.pending_channel.take()
+                    && let Some(holder) = tab.take_pending_channel()
                 {
-                    tab.ssh_channel_holder = Some(holder);
-                    tab.connection_phase = None;
+                    tab.mark_connected(holder);
                     tracing::info!("SSH tab {tab_id}: connected, channel ready");
 
                     // FR-TERMINAL-16: send immediate resize to match actual
                     // terminal widget size (PTY was opened with default 80x24)
-                    if let Some(ref terminal) = tab.terminal {
-                        let (cols, rows) = terminal.terminal_size();
+                    let size = tab.terminal.as_ref().map(|t| t.terminal_size());
+                    if let Some((cols, rows)) = size {
                         tracing::info!("tab {tab_id}: terminal widget size {cols}x{rows}");
-                        if cols > 0
-                            && rows > 0
-                            && let Some(ref resize_tx) = tab.ssh_resize_tx
-                        {
-                            let _ = resize_tx.send((cols as u32, rows as u32));
+                        if cols > 0 && rows > 0 {
+                            if let Some(resize_tx) = tab.resize_tx() {
+                                let _ = resize_tx.send((cols as u32, rows as u32));
+                            }
                             tab.needs_initial_resize = false;
                             tracing::info!("tab {tab_id}: sent initial resize {cols}x{rows}");
                         }
@@ -333,20 +340,15 @@ impl ShellKeep {
             Err(e) => {
                 tracing::error!("SSH tab {tab_id}: connection failed: {e}");
                 if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
-                    tab.pending_channel = None;
-                    tab.connection_phase = None;
                     tab.terminal = None;
-                    // FR-RECONNECT-07: classify error
-                    // FR-UI-08: store last error for dead tab display
                     tab.last_error = Some(e.clone());
+                    // FR-RECONNECT-07: classify error
                     if ssh::errors::is_permanent(&e) {
-                        tab.dead = true;
-                        tab.auto_reconnect = false;
+                        tab.mark_disconnected(Some(e.clone()));
                     } else {
-                        tab.dead = true;
-                        tab.auto_reconnect = true;
-                        tab.reconnect_attempts += 1;
-                        tab.reconnect_started = Some(std::time::Instant::now());
+                        let attempt = tab.reconnect_attempts() + 1;
+                        let phase = Arc::new(std::sync::Mutex::new(String::new()));
+                        tab.mark_reconnecting(attempt, 0, phase, None);
                     }
                 }
                 // FR-CONN-14: helpful message when tmux is not installed
@@ -366,8 +368,8 @@ impl ShellKeep {
                 {
                     // FR-CONN-09: show password prompt dialog on auth failure
                     if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
-                        tab.dead = false;
-                        tab.auto_reconnect = false;
+                        // Waiting for user input — not dead, not auto-reconnecting
+                        tab.mark_disconnected(None);
                     }
                     tracing::info!("tab {tab_id}: auth failed, prompting for password");
                     self.dialogs.show_password_dialog = true;
@@ -377,8 +379,7 @@ impl ShellKeep {
                 } else if el.contains("session locked by") || el.contains("lock held by") {
                     // FR-LOCK-05: show lock conflict dialog
                     if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
-                        tab.dead = false;
-                        tab.auto_reconnect = false;
+                        tab.mark_disconnected(None);
                     }
                     tracing::info!("tab {tab_id}: session locked, showing conflict dialog");
                     self.dialogs.show_lock_dialog = true;
@@ -450,7 +451,7 @@ impl ShellKeep {
                                     tab.tmux_session
                                 );
                             }
-                        } else if !tab.dead
+                        } else if !tab.is_dead()
                             && tab.terminal.is_none()
                             && !server_sessions
                                 .iter()
@@ -461,8 +462,7 @@ impl ShellKeep {
                                 "session {} gone from server, marking dead",
                                 tab.session_uuid
                             );
-                            tab.dead = true;
-                            tab.auto_reconnect = false;
+                            tab.mark_disconnected(None);
                         }
                     }
                 }
@@ -519,7 +519,7 @@ impl ShellKeep {
             Message::CloseTab(index) => {
                 self.tab_context_menu = None;
                 if let Some(tab) = self.tabs.get(index)
-                    && !tab.dead
+                    && !tab.is_dead()
                     && tab.terminal.is_some()
                 {
                     // Active session — ask confirmation
@@ -555,7 +555,7 @@ impl ShellKeep {
                     return self.open_tab_russh(&label, &tmux_session);
                 } else if let Some(tab) = self.tabs.last() {
                     // Fallback: use system ssh args from existing tab
-                    let ssh_args = tab.ssh_args.clone();
+                    let ssh_args = tab.ssh_args().to_vec();
                     let n = self.tabs.len() + 1;
                     let label = format!("Session {n}");
                     self.open_tab_with_tmux(&ssh_args, &label);
@@ -566,9 +566,10 @@ impl ShellKeep {
             }
 
             Message::ReconnectTab(index) => {
+                // Manual reconnect: reset state before calling reconnect_tab
+                // which will set up Connecting state
                 if index < self.tabs.len() {
-                    self.tabs[index].auto_reconnect = false;
-                    self.tabs[index].reconnect_attempts = 0;
+                    self.tabs[index].mark_disconnected(None);
                 }
                 self.reconnect_tab(index)
             }
@@ -617,7 +618,7 @@ impl ShellKeep {
                 let has_active = to_close.iter().any(|&i| {
                     self.tabs
                         .get(i)
-                        .is_some_and(|t| !t.dead && t.terminal.is_some())
+                        .is_some_and(|t| !t.is_dead() && t.terminal.is_some())
                 });
                 if has_active {
                     self.dialogs.pending_close_tabs = Some(to_close);
@@ -638,7 +639,7 @@ impl ShellKeep {
                 let has_active = to_close.iter().any(|&i| {
                     self.tabs
                         .get(i)
-                        .is_some_and(|t| !t.dead && t.terminal.is_some())
+                        .is_some_and(|t| !t.is_dead() && t.terminal.is_some())
                 });
                 if has_active {
                     self.dialogs.pending_close_tabs = Some(to_close);
@@ -684,7 +685,7 @@ impl ShellKeep {
                     self.save_state();
 
                     // FR-SESSION-06: also rename tmux session on the server
-                    if self.tabs[index].uses_russh && self.tabs[index].conn_params.is_some() {
+                    if self.tabs[index].is_russh() && self.tabs[index].conn_params().is_some() {
                         let sanitized: String = new_label
                             .chars()
                             .map(|c| {
@@ -698,9 +699,9 @@ impl ShellKeep {
                         let new_tmux = format!("{}--shellkeep-{}", self.client_id, sanitized);
                         self.tabs[index].tmux_session = new_tmux.clone();
                         let mgr = self.conn_manager.clone();
-                        // SAFETY: conn_params.is_some() checked in the enclosing if-let
+                        // SAFETY: conn_params().is_some() checked in the enclosing if-let
                         #[allow(clippy::unwrap_used)]
-                        let conn = self.tabs[index].conn_params.clone().unwrap();
+                        let conn = self.tabs[index].conn_params().cloned().unwrap();
                         rename_task = Task::perform(
                             async move {
                                 let conn_key = conn.key.clone();
@@ -925,7 +926,7 @@ impl ShellKeep {
                     let tmux_session = self.next_tmux_session();
                     return self.open_tab_russh(&label, &tmux_session);
                 } else if let Some(tab) = self.tabs.last() {
-                    let ssh_args = tab.ssh_args.clone();
+                    let ssh_args = tab.ssh_args().to_vec();
                     let n = self.tabs.len() + 1;
                     let label = format!("Session {n}");
                     self.open_tab_with_tmux(&ssh_args, &label);
@@ -1074,7 +1075,7 @@ impl ShellKeep {
                 let active_count = self
                     .tabs
                     .iter()
-                    .filter(|t| !t.dead && t.terminal.is_some())
+                    .filter(|t| !t.is_dead() && t.terminal.is_some())
                     .count();
                 if active_count == 0 {
                     // FR-TABS-18: no active sessions, close immediately
@@ -1315,9 +1316,7 @@ impl ShellKeep {
                 }
                 self.dialogs.pending_host_key_prompt = None;
                 for tab in &mut self.tabs {
-                    tab.dead = true;
-                    tab.auto_reconnect = false;
-                    tab.last_error = Some("Host key rejected by user".to_string());
+                    tab.mark_disconnected(Some("Host key rejected by user".to_string()));
                 }
                 self.error = Some("Connection cancelled: host key rejected.".to_string());
                 Task::none()
@@ -1339,9 +1338,7 @@ impl ShellKeep {
                 if let Some(tab_id) = self.dialogs.password_target_tab.take()
                     && let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id)
                 {
-                    tab.dead = true;
-                    tab.auto_reconnect = false;
-                    tab.last_error = Some("Authentication cancelled".to_string());
+                    tab.mark_disconnected(Some("Authentication cancelled".to_string()));
                 }
                 self.error = Some("Authentication cancelled.".to_string());
                 Task::none()
@@ -1354,9 +1351,7 @@ impl ShellKeep {
                 if let Some(tab_id) = self.dialogs.lock_target_tab.take()
                     && let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id)
                 {
-                    tab.dead = true;
-                    tab.auto_reconnect = false;
-                    tab.last_error = Some("Lock takeover cancelled".to_string());
+                    tab.mark_disconnected(Some("Lock takeover cancelled".to_string()));
                 }
                 Task::none()
             }
@@ -1382,12 +1377,10 @@ impl ShellKeep {
 
             if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
                 let phase = Arc::new(std::sync::Mutex::new(String::new()));
-                tab.connection_phase = Some(phase.clone());
-                tab.dead = false;
                 tab.last_error = None;
 
                 let channel_holder: ChannelHolder = Arc::new(Mutex::new(None));
-                tab.pending_channel = Some(channel_holder.clone());
+                tab.mark_connecting(phase.clone(), channel_holder.clone());
 
                 let params = EstablishParams {
                     conn_manager: mgr.clone(),
@@ -1432,12 +1425,10 @@ impl ShellKeep {
             && let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id)
         {
             let phase = Arc::new(std::sync::Mutex::new(String::new()));
-            tab.connection_phase = Some(phase.clone());
-            tab.dead = false;
             tab.last_error = None;
 
             let channel_holder: ChannelHolder = Arc::new(Mutex::new(None));
-            tab.pending_channel = Some(channel_holder.clone());
+            tab.mark_connecting(phase.clone(), channel_holder.clone());
 
             let params = EstablishParams {
                 conn_manager: self.conn_manager.clone(),
@@ -1490,9 +1481,8 @@ impl ShellKeep {
                         );
                         self.last_gateway = current;
                         for tab in &mut self.tabs {
-                            if tab.terminal.is_none() && tab.auto_reconnect && !tab.dead {
-                                tab.reconnect_delay_ms = 0;
-                                tab.reconnect_attempts = 0;
+                            if tab.is_auto_reconnect() {
+                                tab.reset_reconnect();
                             }
                         }
                     }
@@ -1560,7 +1550,7 @@ impl ShellKeep {
                 let tab_ids: Vec<super::tab::TabId> = self
                     .tabs
                     .iter()
-                    .filter(|t| t.uses_russh && !t.dead && t.terminal.is_some())
+                    .filter(|t| t.is_russh() && !t.is_dead() && t.terminal.is_some())
                     .map(|t| t.id)
                     .collect();
                 if tab_ids.is_empty() {
@@ -1597,7 +1587,7 @@ impl ShellKeep {
                 // All tabs on the same connection share the same latency
                 if self.current_conn.is_some() {
                     for tab in &mut self.tabs {
-                        if tab.uses_russh && !tab.dead && tab.terminal.is_some() {
+                        if tab.is_russh() && !tab.is_dead() && tab.terminal.is_some() {
                             tab.last_latency_ms = latency;
                         }
                     }
@@ -1638,10 +1628,10 @@ impl ShellKeep {
             .tabs
             .iter()
             .filter(|t| {
-                t.uses_russh
+                t.is_russh()
                     && t.terminal.is_some()
-                    && t.ssh_channel_holder.is_none()
-                    && t.pending_channel.is_some()
+                    && !t.has_channel()
+                    && t.pending_channel().is_some()
             })
             .count();
 
@@ -1654,14 +1644,14 @@ impl ShellKeep {
             .tabs
             .iter()
             .enumerate()
-            .filter(|(_, t)| t.terminal.is_none() && t.auto_reconnect && !t.dead)
+            .filter(|(_, t)| t.is_auto_reconnect())
             .map(|(i, _)| i)
             .collect();
 
         if let Some(&index) = reconnect_indices.first() {
             // FR-RECONNECT-06: exponential backoff with jitter
             let base_ms = (self.config.ssh.reconnect_backoff_base * 1000.0) as u64;
-            let attempt = self.tabs[index].reconnect_attempts;
+            let attempt = self.tabs[index].reconnect_attempts();
             let exp_delay = base_ms.saturating_mul(
                 1u64.checked_shl(attempt.saturating_sub(1))
                     .unwrap_or(u64::MAX),
@@ -1675,11 +1665,11 @@ impl ShellKeep {
                 0
             };
             let next_delay = (capped as i64 + jitter).max(base_ms as i64) as u64;
-            self.tabs[index].reconnect_delay_ms = next_delay;
+            self.tabs[index].set_reconnect_delay_ms(next_delay);
             tracing::info!(
                 "auto-reconnecting tab {} (attempt {}, next delay {}ms)",
                 self.tabs[index].id,
-                self.tabs[index].reconnect_attempts,
+                self.tabs[index].reconnect_attempts(),
                 next_delay,
             );
             return self.reconnect_tab(index);
@@ -1832,27 +1822,28 @@ impl ShellKeep {
         let mut shutdown = false;
         let mut resize_info: Option<(u32, u32)> = None;
 
-        if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == id)
-            && let Some(ref mut terminal) = tab.terminal
-        {
-            let action = terminal.handle(iced_term::Command::ProxyToBackend(cmd));
-            match action {
-                iced_term::actions::Action::ChangeTitle(new_title) => {
-                    tab.label = new_title;
-                    needs_title_update = true;
+        if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == id) {
+            let is_russh = tab.is_russh();
+            if let Some(ref mut terminal) = tab.terminal {
+                let action = terminal.handle(iced_term::Command::ProxyToBackend(cmd));
+                match action {
+                    iced_term::actions::Action::ChangeTitle(new_title) => {
+                        tab.label = new_title;
+                        needs_title_update = true;
+                    }
+                    iced_term::actions::Action::Shutdown => {
+                        shutdown = true;
+                        needs_title_update = true;
+                    }
+                    _ => {}
                 }
-                iced_term::actions::Action::Shutdown => {
-                    shutdown = true;
-                    needs_title_update = true;
-                }
-                _ => {}
-            }
 
-            // Collect resize info before dropping the terminal borrow
-            if is_resize && tab.uses_russh && !shutdown {
-                let (cols, rows) = terminal.terminal_size();
-                if cols > 0 && rows > 0 {
-                    resize_info = Some((cols as u32, rows as u32));
+                // Collect resize info before dropping the terminal borrow
+                if is_resize && is_russh && !shutdown {
+                    let (cols, rows) = terminal.terminal_size();
+                    if cols > 0 && rows > 0 {
+                        resize_info = Some((cols as u32, rows as u32));
+                    }
                 }
             }
         }
@@ -1860,17 +1851,23 @@ impl ShellKeep {
         // Handle shutdown after terminal borrow is released
         if shutdown && let Some(tab) = self.tabs.iter_mut().find(|t| t.id == id) {
             tab.terminal = None;
-            if tab.auto_reconnect && tab.reconnect_attempts < self.config.ssh.reconnect_max_attempts
-            {
-                tab.reconnect_attempts += 1;
-                tab.reconnect_started = Some(std::time::Instant::now());
+            let attempt = tab.reconnect_attempts();
+            let was_auto = tab.is_auto_reconnect()
+                || matches!(
+                    tab.conn_state,
+                    super::tab::ConnectionState::Connected { .. }
+                        | super::tab::ConnectionState::Connecting { .. }
+                );
+            if was_auto && attempt < self.config.ssh.reconnect_max_attempts {
+                let new_attempt = attempt + 1;
+                let phase = Arc::new(std::sync::Mutex::new(String::new()));
+                tab.mark_reconnecting(new_attempt, 0, phase, None);
                 tracing::info!(
                     "tab {id} disconnected, will auto-reconnect (attempt {})",
-                    tab.reconnect_attempts
+                    new_attempt
                 );
             } else {
-                tab.dead = true;
-                tab.auto_reconnect = false;
+                tab.mark_disconnected(None);
                 tracing::info!("tab {id} session ended (no more retries)");
             }
         }
@@ -1878,13 +1875,14 @@ impl ShellKeep {
         // Propagate resize to SSH channel
         if let Some((cols, rows)) = resize_info
             && let Some(tab) = self.tabs.iter_mut().find(|t| t.id == id)
-            && let Some(ref resize_tx) = tab.ssh_resize_tx
         {
             if tab.needs_initial_resize {
                 tracing::info!("tab {id}: initial terminal size {cols}x{rows}, sending to SSH");
                 tab.needs_initial_resize = false;
             }
-            let _ = resize_tx.send((cols, rows));
+            if let Some(resize_tx) = tab.resize_tx() {
+                let _ = resize_tx.send((cols, rows));
+            }
         }
 
         if needs_title_update {

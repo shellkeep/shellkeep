@@ -49,7 +49,7 @@ impl ShellKeep {
 
         let tab_bar = self.view_tab_bar();
         let content: Element<'_, Message> = if let Some(tab) = self.tabs.get(self.active_tab) {
-            if tab.dead {
+            if tab.is_dead() {
                 // INV-DEAD-1: dead session never accepts input — the TerminalView
                 // widget is not rendered, so keyboard events cannot reach it.
                 self.view_dead_tab(tab)
@@ -58,12 +58,9 @@ impl ShellKeep {
                 // when ssh_channel_holder is set (after SshConnected). Input is buffered
                 // in ssh_writer_tx but not sent until the channel is ready.
                 // Show "Connecting..." overlay if russh tab without channel yet
-                if tab.uses_russh && tab.ssh_channel_holder.is_none() {
+                if tab.is_russh() && !tab.has_channel() {
                     let phase_text = tab
-                        .connection_phase
-                        .as_ref()
-                        // SAFETY: mutex is never held across a panic path
-                        .and_then(|p| p.lock().ok().map(|g| g.clone()))
+                        .connection_phase_text()
                         .unwrap_or_else(|| i18n::t(i18n::CONNECTING).to_string());
                     stack![
                         container(
@@ -84,21 +81,22 @@ impl ShellKeep {
                         .height(Length::Fill)
                         .into()
                 }
-            } else if tab.auto_reconnect {
+            } else if tab.is_auto_reconnect() {
                 // FR-RECONNECT-02: spinner overlay with attempt count and countdown
                 let spinner = SPINNER_FRAMES[self.spinner_frame % SPINNER_FRAMES.len()];
                 let attempt_text = format!(
                     "{} {}/{}",
                     i18n::t(i18n::RECONNECTING),
-                    tab.reconnect_attempts,
+                    tab.reconnect_attempts(),
                     self.config.ssh.reconnect_max_attempts
                 );
-                let countdown_text = if tab.reconnect_delay_ms > 0 {
+                let delay = tab.reconnect_delay_ms();
+                let countdown_text = if delay > 0 {
                     let elapsed = tab
-                        .reconnect_started
+                        .reconnect_started()
                         .map(|t| t.elapsed().as_millis() as u64)
                         .unwrap_or(0);
-                    let remaining_ms = tab.reconnect_delay_ms.saturating_sub(elapsed);
+                    let remaining_ms = delay.saturating_sub(elapsed);
                     let remaining_secs = remaining_ms.div_ceil(1000);
                     if remaining_secs > 0 {
                         format!("Next retry in {}s", remaining_secs)
@@ -378,7 +376,7 @@ impl ShellKeep {
             let active_count = self
                 .tabs
                 .iter()
-                .filter(|t| !t.dead && t.terminal.is_some())
+                .filter(|t| !t.is_dead() && t.terminal.is_some())
                 .count();
             let session_word = if active_count == 1 {
                 "session"

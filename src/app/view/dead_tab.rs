@@ -16,7 +16,7 @@ impl ShellKeep {
         let index = self.tabs.iter().position(|t| t.id == tab.id).unwrap_or(0);
 
         // FR-UI-07..08: enhanced dead session banner
-        let banner_text = if tab.reconnect_attempts > 0 {
+        let banner_text = if tab.reconnect_attempts() > 0 {
             i18n::t(i18n::DEAD_SESSION_RECONNECTABLE)
         } else {
             i18n::t(i18n::DEAD_SESSION_TERMINATED)
@@ -39,12 +39,13 @@ impl ShellKeep {
         ];
 
         // FR-UI-08: show reconnect attempt count and last error
-        if tab.reconnect_attempts > 0 {
+        let attempts = tab.reconnect_attempts();
+        if attempts > 0 {
             items.push(
                 text(format!(
                     "Connection lost after {} reconnection attempt{}",
-                    tab.reconnect_attempts,
-                    if tab.reconnect_attempts == 1 { "" } else { "s" }
+                    attempts,
+                    if attempts == 1 { "" } else { "s" }
                 ))
                 .size(12)
                 .color(Color::from_rgb8(0xf3, 0x8b, 0xa8))
@@ -63,7 +64,7 @@ impl ShellKeep {
         items.push(Space::new().height(16).into());
 
         // FR-RECONNECT-04: reconnect button — label varies based on context
-        let reconnect_label = if tab.reconnect_attempts > 0 {
+        let reconnect_label = if tab.reconnect_attempts() > 0 {
             i18n::t(i18n::TRY_AGAIN)
         } else {
             i18n::t(i18n::RECONNECT)
