@@ -147,22 +147,42 @@ pub(crate) async fn establish_ssh_session(
         *params.phase.lock().unwrap() = i18n::t(i18n::AUTHENTICATING).to_string();
     }
 
-    let (handle_arc, _host_key_prompt) = {
+    let mut handle_arc = {
         let mut mgr = params.conn_manager.lock().await;
-        let result = mgr
-            .get_or_connect(
-                &conn_key,
-                params.conn.identity_file.as_deref(),
-                params.password.as_deref(),
-                params.keepalive_secs,
-            )
-            .await?;
-        (result.handle, result.host_key_prompt)
+        mgr.get_or_connect(
+            &conn_key,
+            params.conn.identity_file.as_deref(),
+            params.password.as_deref(),
+            params.keepalive_secs,
+        )
+        .await?
+        .handle
     };
 
     // IMPORTANT: Don't hold handle_arc.lock() across the entire function.
     // Multiple tabs share the same Handle via ConnectionManager. Each operation
     // locks briefly, then releases, allowing other tabs to interleave.
+
+    // Health check: verify the cached handle is alive. If stale, evict and reconnect.
+    {
+        let h = handle_arc.lock().await;
+        let alive = ssh::connection::exec_command(&h, "true").await.is_ok();
+        drop(h);
+        if !alive {
+            tracing::info!("cached SSH handle is stale, reconnecting");
+            let mut mgr = params.conn_manager.lock().await;
+            mgr.remove(&conn_key);
+            handle_arc = mgr
+                .get_or_connect(
+                    &conn_key,
+                    params.conn.identity_file.as_deref(),
+                    params.password.as_deref(),
+                    params.keepalive_secs,
+                )
+                .await?
+                .handle;
+        }
+    }
 
     // FR-CONN-13..15: check tmux availability and version
     // SAFETY: mutex is never held across a panic path
