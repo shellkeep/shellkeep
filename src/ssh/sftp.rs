@@ -5,6 +5,10 @@
 //!
 //! Provides file I/O on the remote server for state persistence.
 //! Prefers SFTP when available, falls back to shell commands via exec.
+//!
+//! Syncs two files:
+//! - shared state at `~/.terminal-state/shared.json`
+//! - per-device state at `~/.terminal-state/clients/<client-id>.json`
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -17,6 +21,9 @@ use crate::error::SshError;
 
 /// Remote state directory under the user's home.
 const REMOTE_STATE_DIR: &str = ".terminal-state";
+
+/// Subdirectory for per-device state files.
+const REMOTE_CLIENTS_DIR: &str = "clients";
 
 /// Minimum interval between server state writes (debounce). /* FR-STATE-06 */
 const SYNC_DEBOUNCE: Duration = Duration::from_millis(500);
@@ -71,16 +78,33 @@ pub async fn write_file_atomic(
     }
 }
 
-/// Ensure the remote state directory exists and return the state file path.
-pub async fn ensure_state_dir(sftp: &SftpSession, client_id: &str) -> Result<String, SshError> {
+/// Remote file paths for split state.
+#[derive(Debug, Clone)]
+pub struct RemoteStatePaths {
+    /// Path to shared state: `~/.terminal-state/shared.json`
+    pub shared: String,
+    /// Path to device state: `~/.terminal-state/clients/<client-id>.json`
+    pub device: String,
+}
+
+/// Ensure the remote state directories exist and return both file paths.
+pub async fn ensure_state_dir(
+    sftp: &SftpSession,
+    client_id: &str,
+) -> Result<RemoteStatePaths, SshError> {
     let home = sftp
         .canonicalize(".")
         .await
         .map_err(|e| SshError::Sftp(format!("sftp canonicalize home: {e}")))?;
     let dir = format!("{home}/{REMOTE_STATE_DIR}");
-    // Ignore error if directory already exists.
+    let clients_dir = format!("{dir}/{REMOTE_CLIENTS_DIR}");
+    // Ignore errors if directories already exist.
     let _ = sftp.create_dir(&dir).await;
-    Ok(format!("{dir}/{client_id}.json"))
+    let _ = sftp.create_dir(&clients_dir).await;
+    Ok(RemoteStatePaths {
+        shared: format!("{dir}/shared.json"),
+        device: format!("{clients_dir}/{client_id}.json"),
+    })
 }
 
 // --- Shell command fallback (FR-CONN-20) ---
@@ -105,15 +129,27 @@ pub async fn write_file_shell(
     Ok(())
 }
 
-/// Ensure the remote state directory exists via shell command.
+/// Ensure the remote state directories exist via shell command.
 pub async fn ensure_state_dir_shell(
     handle: &russh::client::Handle<SshHandler>,
     client_id: &str,
-) -> Result<String, SshError> {
-    let cmd =
-        format!("mkdir -p ~/{REMOTE_STATE_DIR} && echo ~/{REMOTE_STATE_DIR}/{client_id}.json");
+) -> Result<RemoteStatePaths, SshError> {
+    let cmd = format!(
+        "mkdir -p ~/{REMOTE_STATE_DIR}/{REMOTE_CLIENTS_DIR} && \
+         echo ~/{REMOTE_STATE_DIR}/shared.json && \
+         echo ~/{REMOTE_STATE_DIR}/{REMOTE_CLIENTS_DIR}/{client_id}.json"
+    );
     let output = super::connection::exec_command(handle, &cmd).await?;
-    Ok(output.trim().to_string())
+    let lines: Vec<&str> = output.trim().lines().collect();
+    if lines.len() < 2 {
+        return Err(SshError::Sftp(
+            "unexpected output from ensure_state_dir_shell".to_string(),
+        ));
+    }
+    Ok(RemoteStatePaths {
+        shared: lines[0].to_string(),
+        device: lines[1].to_string(),
+    })
 }
 
 /// Transport method for remote file I/O.
@@ -128,10 +164,11 @@ type HandleArc = Arc<Mutex<russh::client::Handle<SshHandler>>>;
 ///
 /// Uses the shared SSH connection (via Arc<Mutex<Handle>>) for SFTP or shell fallback.
 /// Debounces writes to at most one per 500ms.
+/// Manages two files: shared state and per-device state.
 pub struct StateSyncer {
     handle: HandleArc,
     transport: Transport,
-    state_path: String,
+    paths: RemoteStatePaths,
     last_write: Mutex<Option<Instant>>,
 }
 
@@ -139,7 +176,7 @@ pub struct StateSyncer {
 impl std::fmt::Debug for StateSyncer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("StateSyncer")
-            .field("state_path", &self.state_path)
+            .field("paths", &self.paths)
             .field("is_sftp", &self.is_sftp())
             .finish()
     }
@@ -152,36 +189,74 @@ impl StateSyncer {
         // Try SFTP first
         match open_sftp(&guard).await {
             Ok(sftp) => {
-                let state_path = ensure_state_dir(&sftp, client_id).await?;
+                let paths = ensure_state_dir(&sftp, client_id).await?;
                 drop(guard);
-                tracing::info!("sftp: state sync via SFTP at {state_path}");
+                tracing::info!("sftp: state sync via SFTP at {:?}", paths);
                 Ok(Self {
                     handle,
                     transport: Transport::Sftp(sftp),
-                    state_path,
+                    paths,
                     last_write: Mutex::new(None),
                 })
             }
             Err(e) => {
                 // E-CONN-8: SFTP unavailable, use shell fallback
                 tracing::warn!("sftp unavailable ({e}), using shell fallback");
-                let state_path = ensure_state_dir_shell(&guard, client_id).await?;
+                let paths = ensure_state_dir_shell(&guard, client_id).await?;
                 drop(guard);
-                tracing::info!("sftp: state sync via shell at {state_path}");
+                tracing::info!("sftp: state sync via shell at {:?}", paths);
                 Ok(Self {
                     handle,
                     transport: Transport::Shell,
-                    state_path,
+                    paths,
                     last_write: Mutex::new(None),
                 })
             }
         }
     }
 
-    /// Read state from the server. Server state takes precedence (FR-STATE-02).
+    /// Read shared state from the server. Server state takes precedence (FR-STATE-02).
+    pub async fn read_shared_state(&self) -> Result<Option<String>, SshError> {
+        self.read_remote_file(&self.paths.shared).await
+    }
+
+    /// Read device state from the server.
+    pub async fn read_device_state(&self) -> Result<Option<String>, SshError> {
+        self.read_remote_file(&self.paths.device).await
+    }
+
+    /// Legacy: read state from server (reads shared state for backward compat).
     pub async fn read_state(&self) -> Result<Option<String>, SshError> {
+        self.read_shared_state().await
+    }
+
+    /// Write shared state to the server, debounced.
+    pub async fn write_shared_state(&self, json: &str) -> Result<(), SshError> {
+        self.write_remote_file(&self.paths.shared, json).await
+    }
+
+    /// Write device state to the server, debounced.
+    pub async fn write_device_state(&self, json: &str) -> Result<(), SshError> {
+        self.write_remote_file(&self.paths.device, json).await
+    }
+
+    /// Legacy: write state to server (writes shared state for backward compat).
+    pub async fn write_state(&self, json: &str) -> Result<(), SshError> {
+        self.write_shared_state(json).await
+    }
+
+    /// Returns whether this syncer is using SFTP (true) or shell fallback (false).
+    pub fn is_sftp(&self) -> bool {
+        matches!(self.transport, Transport::Sftp(_))
+    }
+
+    // -----------------------------------------------------------------------
+    // Internal helpers
+    // -----------------------------------------------------------------------
+
+    async fn read_remote_file(&self, path: &str) -> Result<Option<String>, SshError> {
         match &self.transport {
-            Transport::Sftp(sftp) => match read_file(sftp, &self.state_path).await {
+            Transport::Sftp(sftp) => match read_file(sftp, path).await {
                 Ok(data) => Ok(Some(String::from_utf8_lossy(&data).to_string())),
                 Err(e)
                     if {
@@ -195,7 +270,7 @@ impl StateSyncer {
             },
             Transport::Shell => {
                 let guard = self.handle.lock().await;
-                match read_file_shell(&guard, &self.state_path).await {
+                match read_file_shell(&guard, path).await {
                     Ok(s) if s.is_empty() => Ok(None),
                     Ok(s) => Ok(Some(s)),
                     Err(e) if e.to_string().contains("No such file") => Ok(None),
@@ -205,8 +280,7 @@ impl StateSyncer {
         }
     }
 
-    /// Write state to the server, debounced to at most 1 write per 500ms.
-    pub async fn write_state(&self, json: &str) -> Result<(), SshError> {
+    async fn write_remote_file(&self, path: &str, content: &str) -> Result<(), SshError> {
         {
             let mut last = self.last_write.lock().await;
             if let Some(t) = *last
@@ -218,19 +292,12 @@ impl StateSyncer {
         }
 
         match &self.transport {
-            Transport::Sftp(sftp) => {
-                write_file_atomic(sftp, &self.state_path, json.as_bytes()).await
-            }
+            Transport::Sftp(sftp) => write_file_atomic(sftp, path, content.as_bytes()).await,
             Transport::Shell => {
                 let guard = self.handle.lock().await;
-                write_file_shell(&guard, &self.state_path, json).await
+                write_file_shell(&guard, path, content).await
             }
         }
-    }
-
-    /// Returns whether this syncer is using SFTP (true) or shell fallback (false).
-    pub fn is_sftp(&self) -> bool {
-        matches!(self.transport, Transport::Sftp(_))
     }
 }
 
@@ -241,6 +308,11 @@ mod tests {
     #[test]
     fn remote_state_dir_constant() {
         assert_eq!(REMOTE_STATE_DIR, ".terminal-state");
+    }
+
+    #[test]
+    fn remote_clients_dir_constant() {
+        assert_eq!(REMOTE_CLIENTS_DIR, "clients");
     }
 
     #[test]

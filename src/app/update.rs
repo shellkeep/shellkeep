@@ -29,7 +29,7 @@ use shellkeep::config::Config;
 use shellkeep::ssh;
 use shellkeep::ssh::manager::ConnKey;
 use shellkeep::state::recent::RecentConnection;
-use shellkeep::state::state_file::StateFile;
+use shellkeep::state::state_file::{self, SharedState};
 use shellkeep::tray::{Tray, TrayAction};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -412,7 +412,19 @@ impl ShellKeep {
             tracing::warn!("failed to list existing sessions: {e}");
         }
         if let Ok(server_sessions) = result {
-            let saved_state = StateFile::load_local(&StateFile::local_cache_path(&self.client_id));
+            // Load split state (shared + device), migrating from legacy if needed
+            let (shared_opt, device_opt) = state_file::load_split_state(&self.client_id);
+            let saved_state = shared_opt;
+
+            // FR-STATE-14: restore window geometry from device state
+            if let Some(ref device) = device_opt
+                && let Some(geo) = device.window_geometry.get("main")
+            {
+                self.window_x = geo.x;
+                self.window_y = geo.y;
+                self.window_width = geo.width;
+                self.window_height = geo.height;
+            }
 
             // FR-ENV-05: restore last environment from saved state
             if let Some(ref saved) = saved_state
@@ -2061,32 +2073,32 @@ impl ShellKeep {
                 }
             }
 
-            // FR-STATE-02: server state loaded
+            // FR-STATE-02: server state loaded (shared state from server)
             Message::ServerStateLoaded(result) => {
                 match result {
                     Ok(Some(json)) => {
-                        match serde_json::from_str::<StateFile>(&json) {
+                        match serde_json::from_str::<SharedState>(&json) {
                             Ok(server_state) => {
                                 tracing::info!(
-                                    "loaded server state: {} tabs",
-                                    server_state.tabs.len()
+                                    "loaded server shared state: {} environments",
+                                    server_state.environments.len()
                                 );
                                 // Server state takes precedence — update local cache
-                                let path = StateFile::local_cache_path(&self.client_id);
+                                let path = SharedState::local_cache_path();
                                 if let Err(e) = server_state.save_local(&path) {
-                                    tracing::warn!("failed to cache server state: {e}");
+                                    tracing::warn!("failed to cache server shared state: {e}");
                                 }
                             }
                             Err(e) => {
-                                tracing::warn!("corrupt server state: {e}");
+                                tracing::warn!("corrupt server shared state: {e}");
                             }
                         }
                     }
                     Ok(None) => {
-                        tracing::debug!("no server state found, using local");
+                        tracing::debug!("no server shared state found, using local");
                     }
                     Err(e) => {
-                        tracing::warn!("failed to read server state: {e}");
+                        tracing::warn!("failed to read server shared state: {e}");
                     }
                 }
                 Task::none()

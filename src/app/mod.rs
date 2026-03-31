@@ -24,7 +24,9 @@ use shellkeep::config::Config;
 use shellkeep::ssh::manager::{ConnKey, ConnectionManager};
 use shellkeep::state::history;
 use shellkeep::state::recent::RecentConnections;
-use shellkeep::state::state_file::{StateFile, TabState, WindowState};
+use shellkeep::state::state_file::{
+    DeviceState, Environment, SharedState, TabState, WindowGeometry,
+};
 use shellkeep::tray::Tray;
 use shellkeep::{i18n, ssh};
 use std::sync::Arc;
@@ -708,8 +710,9 @@ impl ShellKeep {
         }
         self.state_dirty = false;
         self.last_state_save = Some(std::time::Instant::now());
-        let mut state = StateFile::new(&self.client_id);
-        // FR-ENV-06: save tabs into the current environment
+
+        // Build shared state (environments, tabs)
+        let mut shared = SharedState::new();
         let env_tabs: Vec<TabState> = self
             .tabs
             .iter()
@@ -721,30 +724,38 @@ impl ShellKeep {
                 position: i,
             })
             .collect();
-        state.environments.insert(
+        shared.environments.insert(
             self.current_environment.clone(),
-            shellkeep::state::state_file::Environment {
+            Environment {
                 name: self.current_environment.clone(),
                 tabs: env_tabs,
             },
         );
-        state.last_environment = Some(self.current_environment.clone());
-        // Preserve other environments from the previously loaded state
-        if let Some(prev) = StateFile::load_local(&StateFile::local_cache_path(&self.client_id)) {
+        shared.last_environment = Some(self.current_environment.clone());
+        // Preserve other environments from the previously loaded shared state
+        if let Some(prev) = SharedState::load_local(&SharedState::local_cache_path()) {
             for (name, env) in &prev.environments {
                 if name != &self.current_environment {
-                    state.environments.insert(name.clone(), env.clone());
+                    shared.environments.insert(name.clone(), env.clone());
                 }
             }
         }
-        // FR-STATE-14: persist window geometry
-        state.window = Some(WindowState {
-            x: self.window_x,
-            y: self.window_y,
-            width: self.window_width,
-            height: self.window_height,
-        });
-        let path = StateFile::local_cache_path(&self.client_id);
+
+        // Build device state (geometry, hidden sessions)
+        let mut device = DeviceState::new(&self.client_id);
+        device.window_geometry.insert(
+            "main".to_string(),
+            WindowGeometry {
+                x: self.window_x,
+                y: self.window_y,
+                width: self.window_width,
+                height: self.window_height,
+            },
+        );
+        device.last_active_window = Some("main".to_string());
+
+        let shared_path = SharedState::local_cache_path();
+        let device_path = DeviceState::local_cache_path(&self.client_id);
 
         // FR-TRAY-02: update tray tooltip with session count
         if let Some(ref tray) = self.tray {
@@ -755,36 +766,64 @@ impl ShellKeep {
         }
 
         // FR-STATE-06: write state to disk asynchronously to avoid blocking the UI
-        match serde_json::to_string_pretty(&state) {
-            Ok(state_json) => {
-                // FR-CONN-20: also sync to server if syncer is available
-                if let Some(ref syncer) = self.state_syncer {
-                    let syncer = syncer.clone();
-                    let json = state_json.clone();
-                    tokio::task::spawn(async move {
-                        if let Err(e) = syncer.write_state(&json).await {
-                            tracing::warn!("server state sync failed: {e}");
-                        }
-                    });
-                }
-                tokio::task::spawn_blocking(move || {
-                    let tmp = path.with_extension("tmp");
-                    if let Some(parent) = path.parent() {
-                        let _ = std::fs::create_dir_all(parent);
-                    }
-                    if let Err(e) = std::fs::write(&tmp, &state_json) {
-                        tracing::warn!("failed to write state tmp: {e}");
-                    } else if let Err(e) = std::fs::rename(&tmp, &path) {
-                        tracing::warn!("failed to rename state file: {e}");
-                    } else {
-                        tracing::debug!("state saved to {}", path.display());
-                    }
-                });
-            }
+        let shared_json = match serde_json::to_string_pretty(&shared) {
+            Ok(j) => j,
             Err(e) => {
-                tracing::warn!("failed to serialize state: {e}");
+                tracing::warn!("failed to serialize shared state: {e}");
+                return;
             }
+        };
+        let device_json = match serde_json::to_string_pretty(&device) {
+            Ok(j) => j,
+            Err(e) => {
+                tracing::warn!("failed to serialize device state: {e}");
+                return;
+            }
+        };
+
+        // FR-CONN-20: sync both files to server if syncer is available
+        if let Some(ref syncer) = self.state_syncer {
+            let syncer = syncer.clone();
+            let shared_remote = shared_json.clone();
+            let device_remote = device_json.clone();
+            tokio::task::spawn(async move {
+                if let Err(e) = syncer.write_shared_state(&shared_remote).await {
+                    tracing::warn!("server shared state sync failed: {e}");
+                }
+                if let Err(e) = syncer.write_device_state(&device_remote).await {
+                    tracing::warn!("server device state sync failed: {e}");
+                }
+            });
         }
+
+        // Write both files locally
+        tokio::task::spawn_blocking(move || {
+            // Write shared state
+            if let Some(parent) = shared_path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let tmp = shared_path.with_extension("tmp");
+            if let Err(e) = std::fs::write(&tmp, &shared_json) {
+                tracing::warn!("failed to write shared state tmp: {e}");
+            } else if let Err(e) = std::fs::rename(&tmp, &shared_path) {
+                tracing::warn!("failed to rename shared state file: {e}");
+            } else {
+                tracing::debug!("shared state saved to {}", shared_path.display());
+            }
+
+            // Write device state
+            if let Some(parent) = device_path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let tmp = device_path.with_extension("tmp");
+            if let Err(e) = std::fs::write(&tmp, &device_json) {
+                tracing::warn!("failed to write device state tmp: {e}");
+            } else if let Err(e) = std::fs::rename(&tmp, &device_path) {
+                tracing::warn!("failed to rename device state file: {e}");
+            } else {
+                tracing::debug!("device state saved to {}", device_path.display());
+            }
+        });
     }
 
     pub(crate) fn update_title(&mut self) {

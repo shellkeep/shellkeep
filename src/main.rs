@@ -16,7 +16,7 @@ pub(crate) use app::ShellKeep;
 use iced::{Point, Size, window};
 use shellkeep::config::Config;
 use shellkeep::i18n;
-use shellkeep::state::state_file::StateFile;
+use shellkeep::state::state_file::DeviceState;
 
 // Re-export for view layer
 pub(crate) use app::update::RENAME_INPUT_ID;
@@ -161,11 +161,12 @@ fn main() -> iced::Result {
         }
     };
 
-    // FR-STATE-14: load saved window geometry for startup
+    // FR-STATE-14: load saved window geometry for startup (from device state)
     let saved_window = {
         let tmp_client_id =
             shellkeep::state::client_id::resolve(Config::load().general.client_id.as_deref());
-        StateFile::load_local(&StateFile::local_cache_path(&tmp_client_id)).and_then(|s| s.window)
+        DeviceState::load_local(&DeviceState::local_cache_path(&tmp_client_id))
+            .and_then(|s| s.window_geometry.get("main").cloned())
     };
 
     let mut app_builder = iced::application(

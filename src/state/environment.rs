@@ -3,11 +3,11 @@
 
 //! FR-ENV-01: environment management — CRUD operations for named session groupings.
 
-use super::state_file::{Environment, StateFile};
+use super::state_file::{Environment, SharedState};
 use crate::error::StateError;
 
 /// FR-ENV-01: create a new empty environment.
-pub fn create_environment(state: &mut StateFile, name: &str) -> Result<(), StateError> {
+pub fn create_environment(state: &mut SharedState, name: &str) -> Result<(), StateError> {
     let name = name.trim();
     if name.is_empty() {
         return Err(StateError::Validation(
@@ -30,7 +30,7 @@ pub fn create_environment(state: &mut StateFile, name: &str) -> Result<(), State
 }
 
 /// FR-ENV-01: delete an environment. Cannot delete the last remaining environment.
-pub fn delete_environment(state: &mut StateFile, name: &str) -> Result<(), StateError> {
+pub fn delete_environment(state: &mut SharedState, name: &str) -> Result<(), StateError> {
     if !state.environments.contains_key(name) {
         return Err(StateError::Validation(format!(
             "environment '{name}' does not exist"
@@ -50,7 +50,7 @@ pub fn delete_environment(state: &mut StateFile, name: &str) -> Result<(), State
 }
 
 /// FR-ENV-01: rename an environment.
-pub fn rename_environment(state: &mut StateFile, old: &str, new: &str) -> Result<(), StateError> {
+pub fn rename_environment(state: &mut SharedState, old: &str, new: &str) -> Result<(), StateError> {
     let new = new.trim();
     if new.is_empty() {
         return Err(StateError::Validation(
@@ -78,7 +78,7 @@ pub fn rename_environment(state: &mut StateFile, old: &str, new: &str) -> Result
 }
 
 /// FR-ENV-01: list all environment names, sorted alphabetically.
-pub fn list_environments(state: &StateFile) -> Vec<String> {
+pub fn list_environments(state: &SharedState) -> Vec<String> {
     let mut names: Vec<String> = state.environments.keys().cloned().collect();
     names.sort();
     names
@@ -88,8 +88,8 @@ pub fn list_environments(state: &StateFile) -> Vec<String> {
 mod tests {
     use super::*;
 
-    fn make_state() -> StateFile {
-        let mut state = StateFile::new("test");
+    fn make_state() -> SharedState {
+        let mut state = SharedState::new();
         create_environment(&mut state, "Default").unwrap();
         state
     }
