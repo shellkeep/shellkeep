@@ -13,8 +13,9 @@ use iced::{Color, Element, Length};
 impl ShellKeep {
     /// FR-ENV-03: environment selection dialog overlay
     pub(crate) fn view_env_dialog(&self) -> Element<'_, Message> {
-        let filter = self.env_filter.to_lowercase();
+        let filter = self.dialogs.env_filter.to_lowercase();
         let filtered: Vec<&String> = self
+            .dialogs
             .env_list
             .iter()
             .filter(|e| filter.is_empty() || e.to_lowercase().contains(&filter))
@@ -22,7 +23,7 @@ impl ShellKeep {
 
         let mut env_buttons: Vec<Element<'_, Message>> = Vec::new();
         for env in &filtered {
-            let is_selected = self.selected_env.as_ref() == Some(env);
+            let is_selected = self.dialogs.selected_env.as_ref() == Some(env);
             let is_current = **env == self.current_environment;
             let label = if is_current {
                 format!("{} (current)", env)
@@ -62,7 +63,7 @@ impl ShellKeep {
                 text("Select environment")
                     .size(18)
                     .color(Color::from_rgb8(0xcd, 0xd6, 0xf4)),
-                text_input("Filter environments...", &self.env_filter)
+                text_input("Filter environments...", &self.dialogs.env_filter)
                     .on_input(Message::EnvFilterChanged)
                     .size(13)
                     .padding(8),
@@ -112,7 +113,7 @@ impl ShellKeep {
                 text("Enter a name for the new environment.")
                     .size(13)
                     .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
-                text_input("Environment name", &self.new_env_input)
+                text_input("Environment name", &self.dialogs.new_env_input)
                     .on_input(Message::NewEnvInputChanged)
                     .on_submit(Message::ConfirmNewEnv)
                     .size(13)
@@ -150,7 +151,11 @@ impl ShellKeep {
 
     /// FR-ENV-08: rename environment dialog
     pub(crate) fn view_rename_env_dialog(&self) -> Element<'_, Message> {
-        let target_name = self.rename_env_target.as_deref().unwrap_or("unknown");
+        let target_name = self
+            .dialogs
+            .rename_env_target
+            .as_deref()
+            .unwrap_or("unknown");
 
         let dialog = container(
             column![
@@ -160,7 +165,7 @@ impl ShellKeep {
                 text(format!("Renaming \"{}\"", target_name))
                     .size(13)
                     .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
-                text_input("New name", &self.rename_env_input)
+                text_input("New name", &self.dialogs.rename_env_input)
                     .on_input(Message::RenameEnvInputChanged)
                     .on_submit(Message::ConfirmRenameEnv)
                     .size(13)
@@ -198,7 +203,11 @@ impl ShellKeep {
 
     /// FR-ENV-09: delete environment confirmation dialog
     pub(crate) fn view_delete_env_dialog(&self) -> Element<'_, Message> {
-        let target_name = self.delete_env_target.as_deref().unwrap_or("unknown");
+        let target_name = self
+            .dialogs
+            .delete_env_target
+            .as_deref()
+            .unwrap_or("unknown");
         // Count sessions in the target environment (stub: 0 for now)
         let session_count = 0_usize;
         let warning = if session_count > 0 {

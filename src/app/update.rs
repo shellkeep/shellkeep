@@ -345,7 +345,7 @@ impl ShellKeep {
                     );
                 } else if (el.contains("auth failed")
                     || el.contains("no authentication method succeeded"))
-                    && !self.show_password_dialog
+                    && !self.dialogs.show_password_dialog
                 {
                     // FR-CONN-09: show password prompt dialog on auth failure
                     if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
@@ -353,10 +353,10 @@ impl ShellKeep {
                         tab.auto_reconnect = false;
                     }
                     tracing::info!("tab {tab_id}: auth failed, prompting for password");
-                    self.show_password_dialog = true;
-                    self.password_input.clear();
-                    self.password_target_tab = Some(tab_id);
-                    self.password_conn_params = self.current_conn.clone();
+                    self.dialogs.show_password_dialog = true;
+                    self.dialogs.password_input.clear();
+                    self.dialogs.password_target_tab = Some(tab_id);
+                    self.dialogs.password_conn_params = self.current_conn.clone();
                 } else if el.contains("session locked by") || el.contains("lock held by") {
                     // FR-LOCK-05: show lock conflict dialog
                     if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
@@ -364,9 +364,9 @@ impl ShellKeep {
                         tab.auto_reconnect = false;
                     }
                     tracing::info!("tab {tab_id}: session locked, showing conflict dialog");
-                    self.show_lock_dialog = true;
-                    self.lock_info_text = e.clone();
-                    self.lock_target_tab = Some(tab_id);
+                    self.dialogs.show_lock_dialog = true;
+                    self.dialogs.lock_info_text = e.clone();
+                    self.dialogs.lock_target_tab = Some(tab_id);
                 } else if el.contains("auth failed") || el.contains("authentication failed") {
                     // FR-CONN-17: descriptive auth error (password already tried)
                     self.error = Some(format!(
@@ -406,8 +406,8 @@ impl ShellKeep {
 
             // FR-ENV-04: populate env_list from saved state
             if let Some(ref saved) = saved_state {
-                self.env_list = saved.environments.keys().cloned().collect();
-                self.env_list.sort();
+                self.dialogs.env_list = saved.environments.keys().cloned().collect();
+                self.dialogs.env_list.sort();
             }
 
             // FR-SESSION-08: reconcile by UUID — match saved tabs to server sessions
@@ -506,7 +506,7 @@ impl ShellKeep {
                     && tab.terminal.is_some()
                 {
                     // Active session — ask confirmation
-                    self.pending_close_tabs = Some(vec![index]);
+                    self.dialogs.pending_close_tabs = Some(vec![index]);
                     return Task::none();
                 }
                 // Dead/disconnected — close immediately
@@ -514,7 +514,7 @@ impl ShellKeep {
             }
 
             Message::ConfirmCloseTabs => {
-                if let Some(indices) = self.pending_close_tabs.take() {
+                if let Some(indices) = self.dialogs.pending_close_tabs.take() {
                     let mut tasks = Vec::new();
                     // Close from end to avoid index shifting
                     for idx in indices.into_iter().rev() {
@@ -526,7 +526,7 @@ impl ShellKeep {
             }
 
             Message::CancelCloseTabs => {
-                self.pending_close_tabs = None;
+                self.dialogs.pending_close_tabs = None;
                 Task::none()
             }
 
@@ -603,7 +603,7 @@ impl ShellKeep {
                         .is_some_and(|t| !t.dead && t.terminal.is_some())
                 });
                 if has_active {
-                    self.pending_close_tabs = Some(to_close);
+                    self.dialogs.pending_close_tabs = Some(to_close);
                 } else {
                     let mut tasks = Vec::new();
                     for idx in to_close.into_iter().rev() {
@@ -624,7 +624,7 @@ impl ShellKeep {
                         .is_some_and(|t| !t.dead && t.terminal.is_some())
                 });
                 if has_active {
-                    self.pending_close_tabs = Some(to_close);
+                    self.dialogs.pending_close_tabs = Some(to_close);
                 } else {
                     let mut tasks = Vec::new();
                     for idx in to_close.into_iter().rev() {
@@ -740,13 +740,13 @@ impl ShellKeep {
             // FR-UI-01: clicking a recent connection fills the form
             Message::ConnectRecent(index) => {
                 if let Some(conn) = self.recent.connections.get(index).cloned() {
-                    self.host_input = conn.host;
-                    self.user_input = conn.user;
-                    self.port_input = conn.port;
-                    self.identity_input = conn.identity_file.unwrap_or_default();
+                    self.welcome.host_input = conn.host;
+                    self.welcome.user_input = conn.user;
+                    self.welcome.port_input = conn.port;
+                    self.welcome.identity_input = conn.identity_file.unwrap_or_default();
                     // Show advanced if non-default port or identity is set
-                    if self.port_input != "22" || !self.identity_input.is_empty() {
-                        self.show_advanced = true;
+                    if self.welcome.port_input != "22" || !self.welcome.identity_input.is_empty() {
+                        self.welcome.show_advanced = true;
                     }
                 }
                 Task::none()
@@ -766,7 +766,7 @@ impl ShellKeep {
 
             // FR-UI-01: toggle advanced connection options
             Message::ToggleAdvanced => {
-                self.show_advanced = !self.show_advanced;
+                self.welcome.show_advanced = !self.welcome.show_advanced;
                 Task::none()
             }
 
@@ -778,7 +778,7 @@ impl ShellKeep {
                     .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
                     .take(64)
                     .collect();
-                self.client_id_input = filtered;
+                self.welcome.client_id_input = filtered;
                 Task::none()
             }
 
@@ -788,51 +788,53 @@ impl ShellKeep {
                 if trimmed.starts_with("ssh ") {
                     let parts: Vec<&str> = trimmed.split_whitespace().skip(1).collect();
                     let parsed = crate::cli::parse_ssh_args(&parts);
-                    self.host_input = parsed.host;
+                    self.welcome.host_input = parsed.host;
                     if parsed.port != 22 {
-                        self.port_input = parsed.port.to_string();
+                        self.welcome.port_input = parsed.port.to_string();
                     }
                     if let Some(user) = parsed.username {
-                        self.user_input = user;
+                        self.welcome.user_input = user;
                     }
                     if let Some(identity) = parsed.identity_file {
-                        self.identity_input = identity;
+                        self.welcome.identity_input = identity;
                     }
                     // Auto-show advanced panel if non-default values were parsed
-                    if self.port_input != "22"
-                        || !self.user_input.is_empty()
-                        || !self.identity_input.is_empty()
+                    if self.welcome.port_input != "22"
+                        || !self.welcome.user_input.is_empty()
+                        || !self.welcome.identity_input.is_empty()
                     {
-                        self.show_advanced = true;
+                        self.welcome.show_advanced = true;
                     }
                 } else {
-                    self.host_input = v;
+                    self.welcome.host_input = v;
                 }
                 Task::none()
             }
 
             Message::PortInputChanged(v) => {
-                self.port_input = v;
+                self.welcome.port_input = v;
                 Task::none()
             }
 
             Message::UserInputChanged(v) => {
-                self.user_input = v;
+                self.welcome.user_input = v;
                 Task::none()
             }
 
             Message::IdentityInputChanged(v) => {
-                self.identity_input = v;
+                self.welcome.identity_input = v;
                 Task::none()
             }
 
             Message::Connect => {
-                if self.host_input.trim().is_empty() {
+                if self.welcome.host_input.trim().is_empty() {
                     return Task::none();
                 }
                 // FR-UI-03: if user provided a client-id name on first use, save it
-                if !self.client_id_input.is_empty() && self.client_id_input != self.client_id {
-                    self.client_id = self.client_id_input.clone();
+                if !self.welcome.client_id_input.is_empty()
+                    && self.welcome.client_id_input != self.client_id
+                {
+                    self.client_id = self.welcome.client_id_input.clone();
                     if let Err(e) = shellkeep::state::client_id::save_client_id(&self.client_id) {
                         tracing::warn!("failed to save client-id: {e}");
                     }
@@ -845,23 +847,23 @@ impl ShellKeep {
 
                 // Store connection params
                 let (parsed_user, parsed_host, parsed_port) =
-                    crate::cli::parse_host_input(self.host_input.trim());
+                    crate::cli::parse_host_input(self.welcome.host_input.trim());
                 let conn = super::tab::ConnParams {
                     key: ConnKey {
                         host: parsed_host,
                         port: parsed_port
                             .and_then(|p| p.parse().ok())
-                            .unwrap_or(self.port_input.trim().parse().unwrap_or(22)),
-                        username: if !self.user_input.is_empty() {
-                            self.user_input.clone()
+                            .unwrap_or(self.welcome.port_input.trim().parse().unwrap_or(22)),
+                        username: if !self.welcome.user_input.is_empty() {
+                            self.welcome.user_input.clone()
                         } else {
                             parsed_user.unwrap_or_else(crate::cli::default_ssh_username)
                         },
                     },
-                    identity_file: if self.identity_input.is_empty() {
+                    identity_file: if self.welcome.identity_input.is_empty() {
                         None
                     } else {
-                        Some(self.identity_input.clone())
+                        Some(self.welcome.identity_input.clone())
                     },
                 };
                 self.current_conn = Some(conn);
@@ -869,13 +871,13 @@ impl ShellKeep {
                 self.recent.push(RecentConnection {
                     label: label.clone(),
                     ssh_args: ssh_args.clone(),
-                    host: self.host_input.clone(),
-                    user: self.user_input.clone(),
-                    port: self.port_input.clone(),
-                    identity_file: if self.identity_input.is_empty() {
+                    host: self.welcome.host_input.clone(),
+                    user: self.welcome.user_input.clone(),
+                    port: self.welcome.port_input.clone(),
+                    identity_file: if self.welcome.identity_input.is_empty() {
                         None
                     } else {
-                        Some(self.identity_input.clone())
+                        Some(self.welcome.identity_input.clone())
                     },
                     alias: None,
                     last_connected: None,
@@ -1005,7 +1007,7 @@ impl ShellKeep {
                 return self.update(Message::CopyScrollback);
             }
             // Enter/Escape on close-tab confirmation dialog
-            if self.pending_close_tabs.is_some() {
+            if self.dialogs.pending_close_tabs.is_some() {
                 if key == keyboard::Key::Named(keyboard::key::Named::Enter) {
                     return self.update(Message::ConfirmCloseTabs);
                 }
@@ -1015,7 +1017,7 @@ impl ShellKeep {
             }
             // Escape — dismiss search, context menu, cancel rename, or cancel welcome
             if key == keyboard::Key::Named(keyboard::key::Named::Escape) {
-                if self.search_active {
+                if self.search.active {
                     return self.update(Message::SearchClose);
                 } else if self.context_menu.is_some() {
                     self.context_menu = None;
@@ -1028,10 +1030,10 @@ impl ShellKeep {
             // Tab / Shift+Tab — cycle focus between form inputs on dialogs/welcome
             if key == keyboard::Key::Named(keyboard::key::Named::Tab)
                 && (self.show_welcome
-                    || self.show_env_dialog
-                    || self.show_new_env_dialog
-                    || self.show_rename_env_dialog
-                    || self.search_active
+                    || self.dialogs.show_env_dialog
+                    || self.dialogs.show_new_env_dialog
+                    || self.dialogs.show_rename_env_dialog
+                    || self.search.active
                     || self.renaming_tab.is_some())
             {
                 return if modifiers.shift() {
@@ -1063,59 +1065,59 @@ impl ShellKeep {
                     return window::close(win_id);
                 }
                 // Show confirmation dialog, remember which window to close
-                self.close_window_id = Some(win_id);
-                self.show_close_dialog = true;
+                self.dialogs.close_window_id = Some(win_id);
+                self.dialogs.show_close_dialog = true;
                 Task::none()
             }
 
             Message::CloseDialogClose => {
-                self.show_close_dialog = false;
+                self.dialogs.show_close_dialog = false;
                 self.flush_state();
                 // FR-LOCK-10: lock is released via orphan detection (2x keepalive timeout)
                 // when the SSH connection drops on process exit.
-                if let Some(id) = self.close_window_id.take() {
+                if let Some(id) = self.dialogs.close_window_id.take() {
                     return window::close(id);
                 }
                 std::process::exit(0);
             }
 
             Message::CloseDialogCancel => {
-                self.show_close_dialog = false;
-                self.close_window_id = None;
+                self.dialogs.show_close_dialog = false;
+                self.dialogs.close_window_id = None;
                 Task::none()
             }
 
             // FR-ENV-03: environment selection dialog
             Message::ShowEnvDialog => {
                 // FR-ENV-04: if only one environment, select it directly
-                if self.env_list.len() == 1 {
-                    let env_name = self.env_list[0].clone();
+                if self.dialogs.env_list.len() == 1 {
+                    let env_name = self.dialogs.env_list[0].clone();
                     if env_name != self.current_environment {
                         return self.update(Message::SwitchEnvironment(env_name));
                     }
                     return Task::none();
                 }
-                self.show_env_dialog = true;
-                self.env_filter.clear();
+                self.dialogs.show_env_dialog = true;
+                self.dialogs.env_filter.clear();
                 // Pre-select current environment
-                self.selected_env = Some(self.current_environment.clone());
+                self.dialogs.selected_env = Some(self.current_environment.clone());
                 Task::none()
             }
 
             Message::EnvFilterChanged(filter) => {
-                self.env_filter = filter;
+                self.dialogs.env_filter = filter;
                 Task::none()
             }
 
             Message::SelectEnv(name) => {
-                self.selected_env = Some(name);
+                self.dialogs.selected_env = Some(name);
                 Task::none()
             }
 
             Message::ConfirmEnv => {
-                if let Some(ref env_name) = self.selected_env {
+                if let Some(ref env_name) = self.dialogs.selected_env {
                     let env_name = env_name.clone();
-                    self.show_env_dialog = false;
+                    self.dialogs.show_env_dialog = false;
                     if env_name != self.current_environment {
                         return self.update(Message::SwitchEnvironment(env_name));
                     }
@@ -1125,34 +1127,34 @@ impl ShellKeep {
 
             Message::NewEnvFromDialog => {
                 // Close env selection, open new-env creation
-                self.show_env_dialog = false;
-                self.new_env_input.clear();
-                self.show_new_env_dialog = true;
+                self.dialogs.show_env_dialog = false;
+                self.dialogs.new_env_input.clear();
+                self.dialogs.show_new_env_dialog = true;
                 Task::none()
             }
 
             Message::CancelEnvDialog => {
-                self.show_env_dialog = false;
+                self.dialogs.show_env_dialog = false;
                 Task::none()
             }
 
             // FR-ENV-07: create new environment
             Message::ShowNewEnvDialog => {
-                self.new_env_input.clear();
-                self.show_new_env_dialog = true;
+                self.dialogs.new_env_input.clear();
+                self.dialogs.show_new_env_dialog = true;
                 Task::none()
             }
 
             Message::NewEnvInputChanged(input) => {
-                self.new_env_input = input;
+                self.dialogs.new_env_input = input;
                 Task::none()
             }
 
             Message::ConfirmNewEnv => {
-                let name = self.new_env_input.trim().to_string();
-                if !name.is_empty() && !self.env_list.contains(&name) {
-                    self.env_list.push(name.clone());
-                    self.env_list.sort();
+                let name = self.dialogs.new_env_input.trim().to_string();
+                if !name.is_empty() && !self.dialogs.env_list.contains(&name) {
+                    self.dialogs.env_list.push(name.clone());
+                    self.dialogs.env_list.sort();
                     self.current_environment = name;
                     self.toast = Some((
                         format!("Environment \"{}\" created", self.current_environment),
@@ -1161,40 +1163,40 @@ impl ShellKeep {
                     self.state_dirty = true;
                     self.flush_state();
                 }
-                self.show_new_env_dialog = false;
-                self.new_env_input.clear();
+                self.dialogs.show_new_env_dialog = false;
+                self.dialogs.new_env_input.clear();
                 Task::none()
             }
 
             Message::CancelNewEnv => {
-                self.show_new_env_dialog = false;
-                self.new_env_input.clear();
+                self.dialogs.show_new_env_dialog = false;
+                self.dialogs.new_env_input.clear();
                 Task::none()
             }
 
             // FR-ENV-08: rename environment
             Message::ShowRenameEnvDialog(name) => {
-                self.rename_env_target = Some(name.clone());
-                self.rename_env_input = name;
-                self.show_rename_env_dialog = true;
+                self.dialogs.rename_env_target = Some(name.clone());
+                self.dialogs.rename_env_input = name;
+                self.dialogs.show_rename_env_dialog = true;
                 Task::none()
             }
 
             Message::RenameEnvInputChanged(input) => {
-                self.rename_env_input = input;
+                self.dialogs.rename_env_input = input;
                 Task::none()
             }
 
             Message::ConfirmRenameEnv => {
-                let new_name = self.rename_env_input.trim().to_string();
-                if let Some(ref old_name) = self.rename_env_target
+                let new_name = self.dialogs.rename_env_input.trim().to_string();
+                if let Some(ref old_name) = self.dialogs.rename_env_target
                     && !new_name.is_empty()
                     && new_name != *old_name
                 {
-                    if let Some(entry) = self.env_list.iter_mut().find(|e| *e == old_name) {
+                    if let Some(entry) = self.dialogs.env_list.iter_mut().find(|e| *e == old_name) {
                         *entry = new_name.clone();
                     }
-                    self.env_list.sort();
+                    self.dialogs.env_list.sort();
                     if self.current_environment == *old_name {
                         self.current_environment = new_name.clone();
                     }
@@ -1205,32 +1207,33 @@ impl ShellKeep {
                     self.state_dirty = true;
                     self.flush_state();
                 }
-                self.show_rename_env_dialog = false;
-                self.rename_env_input.clear();
-                self.rename_env_target = None;
+                self.dialogs.show_rename_env_dialog = false;
+                self.dialogs.rename_env_input.clear();
+                self.dialogs.rename_env_target = None;
                 Task::none()
             }
 
             Message::CancelRenameEnv => {
-                self.show_rename_env_dialog = false;
-                self.rename_env_input.clear();
-                self.rename_env_target = None;
+                self.dialogs.show_rename_env_dialog = false;
+                self.dialogs.rename_env_input.clear();
+                self.dialogs.rename_env_target = None;
                 Task::none()
             }
 
             // FR-ENV-09: delete environment
             Message::ShowDeleteEnvDialog(name) => {
-                self.delete_env_target = Some(name);
-                self.show_delete_env_dialog = true;
+                self.dialogs.delete_env_target = Some(name);
+                self.dialogs.show_delete_env_dialog = true;
                 Task::none()
             }
 
             Message::ConfirmDeleteEnv => {
-                if let Some(ref name) = self.delete_env_target {
+                if let Some(ref name) = self.dialogs.delete_env_target {
                     let name = name.clone();
-                    self.env_list.retain(|e| *e != name);
+                    self.dialogs.env_list.retain(|e| *e != name);
                     if self.current_environment == name {
                         self.current_environment = self
+                            .dialogs
                             .env_list
                             .first()
                             .cloned()
@@ -1243,14 +1246,14 @@ impl ShellKeep {
                     self.state_dirty = true;
                     self.flush_state();
                 }
-                self.show_delete_env_dialog = false;
-                self.delete_env_target = None;
+                self.dialogs.show_delete_env_dialog = false;
+                self.dialogs.delete_env_target = None;
                 Task::none()
             }
 
             Message::CancelDeleteEnv => {
-                self.show_delete_env_dialog = false;
-                self.delete_env_target = None;
+                self.dialogs.show_delete_env_dialog = false;
+                self.dialogs.delete_env_target = None;
                 Task::none()
             }
 
@@ -1279,21 +1282,21 @@ impl ShellKeep {
 
             // FR-CONN-03: host key TOFU — accept and save to known_hosts
             Message::HostKeyAcceptSave => {
-                self.pending_host_key_prompt = None;
+                self.dialogs.pending_host_key_prompt = None;
                 Task::none()
             }
             Message::HostKeyConnectOnce => {
-                if let Some(ref prompt) = self.pending_host_key_prompt {
+                if let Some(ref prompt) = self.dialogs.pending_host_key_prompt {
                     let _ = ssh::known_hosts::remove_host_key(&prompt.host, prompt.port);
                 }
-                self.pending_host_key_prompt = None;
+                self.dialogs.pending_host_key_prompt = None;
                 Task::none()
             }
             Message::HostKeyReject => {
-                if let Some(ref prompt) = self.pending_host_key_prompt {
+                if let Some(ref prompt) = self.dialogs.pending_host_key_prompt {
                     let _ = ssh::known_hosts::remove_host_key(&prompt.host, prompt.port);
                 }
-                self.pending_host_key_prompt = None;
+                self.dialogs.pending_host_key_prompt = None;
                 for tab in &mut self.tabs {
                     tab.dead = true;
                     tab.auto_reconnect = false;
@@ -1303,20 +1306,20 @@ impl ShellKeep {
                 Task::none()
             }
             Message::HostKeyChangedDismiss => {
-                self.pending_host_key_prompt = None;
+                self.dialogs.pending_host_key_prompt = None;
                 Task::none()
             }
 
             // FR-CONN-09: password auth dialog
             Message::PasswordInputChanged(val) => {
-                self.password_input = val;
+                self.dialogs.password_input = val;
                 Task::none()
             }
             Message::PasswordSubmit => self.handle_password_submit(),
             Message::PasswordCancel => {
-                self.show_password_dialog = false;
-                self.password_input.clear();
-                if let Some(tab_id) = self.password_target_tab.take()
+                self.dialogs.show_password_dialog = false;
+                self.dialogs.password_input.clear();
+                if let Some(tab_id) = self.dialogs.password_target_tab.take()
                     && let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id)
                 {
                     tab.dead = true;
@@ -1330,8 +1333,8 @@ impl ShellKeep {
             // FR-LOCK-05: lock conflict — take over
             Message::LockTakeOver => self.handle_lock_takeover(),
             Message::LockCancel => {
-                self.show_lock_dialog = false;
-                if let Some(tab_id) = self.lock_target_tab.take()
+                self.dialogs.show_lock_dialog = false;
+                if let Some(tab_id) = self.dialogs.lock_target_tab.take()
                     && let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id)
                 {
                     tab.dead = true;
@@ -1346,12 +1349,13 @@ impl ShellKeep {
     }
 
     fn handle_password_submit(&mut self) -> Task<Message> {
-        self.show_password_dialog = false;
-        let password = self.password_input.clone();
-        self.password_input.clear();
+        self.dialogs.show_password_dialog = false;
+        let password = self.dialogs.password_input.clone();
+        self.dialogs.password_input.clear();
 
-        if let Some(tab_id) = self.password_target_tab.take()
+        if let Some(tab_id) = self.dialogs.password_target_tab.take()
             && let Some(conn) = self
+                .dialogs
                 .password_conn_params
                 .take()
                 .or(self.current_conn.clone())
@@ -1405,8 +1409,8 @@ impl ShellKeep {
     }
 
     fn handle_lock_takeover(&mut self) -> Task<Message> {
-        self.show_lock_dialog = false;
-        if let Some(tab_id) = self.lock_target_tab.take()
+        self.dialogs.show_lock_dialog = false;
+        if let Some(tab_id) = self.dialogs.lock_target_tab.take()
             && let Some(conn) = self.current_conn.clone()
             && let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id)
         {
@@ -1879,11 +1883,11 @@ impl ShellKeep {
     fn handle_search_message(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::SearchToggle => {
-                self.search_active = !self.search_active;
-                if !self.search_active {
-                    self.search_input.clear();
-                    self.search_regex = None;
-                    self.search_last_match = None;
+                self.search.active = !self.search.active;
+                if !self.search.active {
+                    self.search.input.clear();
+                    self.search.regex = None;
+                    self.search.last_match = None;
                     Task::none()
                 } else {
                     iced_runtime::widget::operation::focus("search-input")
@@ -1891,15 +1895,15 @@ impl ShellKeep {
             }
 
             Message::SearchInputChanged(v) => {
-                self.search_input = v;
-                if self.search_input.is_empty() {
-                    self.search_regex = None;
-                    self.search_last_match = None;
+                self.search.input = v;
+                if self.search.input.is_empty() {
+                    self.search.regex = None;
+                    self.search.last_match = None;
                     Task::none()
                 } else {
-                    let escaped = super::escape_regex(&self.search_input);
-                    self.search_regex = RegexSearch::new(&escaped).ok();
-                    if self.search_regex.is_some() {
+                    let escaped = super::escape_regex(&self.search.input);
+                    self.search.regex = RegexSearch::new(&escaped).ok();
+                    if self.search.regex.is_some() {
                         self.update(Message::SearchNext)
                     } else {
                         Task::none()
@@ -1908,12 +1912,13 @@ impl ShellKeep {
             }
 
             Message::SearchNext => {
-                if let Some(ref mut regex) = self.search_regex
+                if let Some(ref mut regex) = self.search.regex
                     && let Some(tab) = self.tabs.get_mut(self.active_tab)
                     && let Some(ref mut terminal) = tab.terminal
                 {
                     let origin = self
-                        .search_last_match
+                        .search
+                        .last_match
                         .as_ref()
                         .map(|m| {
                             let mut p = *m.end();
@@ -1921,18 +1926,19 @@ impl ShellKeep {
                             p
                         })
                         .unwrap_or(AlacrittyPoint::new(AlacrittyLine(0), AlacrittyColumn(0)));
-                    self.search_last_match = terminal.search_next(regex, origin);
+                    self.search.last_match = terminal.search_next(regex, origin);
                 }
                 Task::none()
             }
 
             Message::SearchPrev => {
-                if let Some(ref mut regex) = self.search_regex
+                if let Some(ref mut regex) = self.search.regex
                     && let Some(tab) = self.tabs.get_mut(self.active_tab)
                     && let Some(ref mut terminal) = tab.terminal
                 {
                     let origin = self
-                        .search_last_match
+                        .search
+                        .last_match
                         .as_ref()
                         .map(|m| {
                             let mut p = *m.start();
@@ -1944,16 +1950,16 @@ impl ShellKeep {
                             p
                         })
                         .unwrap_or(AlacrittyPoint::new(AlacrittyLine(0), AlacrittyColumn(0)));
-                    self.search_last_match = terminal.search_prev(regex, origin);
+                    self.search.last_match = terminal.search_prev(regex, origin);
                 }
                 Task::none()
             }
 
             Message::SearchClose => {
-                self.search_active = false;
-                self.search_input.clear();
-                self.search_regex = None;
-                self.search_last_match = None;
+                self.search.active = false;
+                self.search.input.clear();
+                self.search.regex = None;
+                self.search.last_match = None;
                 Task::none()
             }
 

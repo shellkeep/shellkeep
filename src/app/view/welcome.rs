@@ -22,7 +22,7 @@ impl ShellKeep {
 
         let subtitle: Element<'_, Message> = if is_first_use {
             // FR-UI-03: first-use with client-id naming input
-            let client_id_field = text_input(&self.client_id, &self.client_id_input)
+            let client_id_field = text_input(&self.client_id, &self.welcome.client_id_input)
                 .on_input(Message::ClientIdInputChanged)
                 .size(13)
                 .padding(8)
@@ -56,30 +56,33 @@ impl ShellKeep {
                 .into()
         };
 
-        let host_field = text_input(i18n::t(i18n::HOST_PLACEHOLDER), &self.host_input)
+        let host_field = text_input(i18n::t(i18n::HOST_PLACEHOLDER), &self.welcome.host_input)
             .on_input(Message::HostInputChanged)
             .on_submit(Message::Connect)
             .size(14)
             .padding(10);
 
-        let user_field = text_input("username", &self.user_input)
+        let user_field = text_input("username", &self.welcome.user_input)
             .on_input(Message::UserInputChanged)
             .on_submit(Message::Connect)
             .size(14)
             .padding(10);
 
-        let port_field = text_input("22", &self.port_input)
+        let port_field = text_input("22", &self.welcome.port_input)
             .on_input(Message::PortInputChanged)
             .on_submit(Message::Connect)
             .size(14)
             .padding(10)
             .width(80);
 
-        let identity_field = text_input(i18n::t(i18n::IDENTITY_PLACEHOLDER), &self.identity_input)
-            .on_input(Message::IdentityInputChanged)
-            .on_submit(Message::Connect)
-            .size(14)
-            .padding(10);
+        let identity_field = text_input(
+            i18n::t(i18n::IDENTITY_PLACEHOLDER),
+            &self.welcome.identity_input,
+        )
+        .on_input(Message::IdentityInputChanged)
+        .on_submit(Message::Connect)
+        .size(14)
+        .padding(10);
 
         let connect_btn = button(
             text(i18n::t(i18n::CONNECT))
@@ -94,7 +97,7 @@ impl ShellKeep {
         let host_row = column![text(i18n::t(i18n::HOST_LABEL)).size(12), host_field].spacing(4);
 
         // FR-UI-01: advanced toggle button
-        let advanced_label = if self.show_advanced {
+        let advanced_label = if self.welcome.show_advanced {
             "Hide advanced options"
         } else {
             "Advanced options (port, user, key)"
@@ -109,7 +112,7 @@ impl ShellKeep {
         .style(styles::ghost_button_style);
 
         // FR-UI-01: advanced fields, hidden by default
-        let advanced_section: Element<'_, Message> = if self.show_advanced {
+        let advanced_section: Element<'_, Message> = if self.welcome.show_advanced {
             // Compact layout: username + port on one row, identity on second
             let user_port_row = row![
                 column![text(i18n::t(i18n::USERNAME_LABEL)).size(12), user_field]

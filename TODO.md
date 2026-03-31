@@ -28,9 +28,9 @@ Work through each item in order. Check off when done and committed.
 
 ## Major refactors
 
-- [ ] P-001a: Extract WelcomeState sub-struct and use it
-- [ ] P-001b: Extract SearchState sub-struct and use it
-- [ ] P-001c: Extract DialogState sub-struct and use it
+- [x] P-001a: Extract WelcomeState sub-struct and use it
+- [x] P-001b: Extract SearchState sub-struct and use it
+- [x] P-001c: Extract DialogState sub-struct and use it
 - [ ] P-002: Complete ConnectionState/TabBackend migration (remove boolean duplication)
 - [ ] P-005: Extract connection establishment logic (deduplicate 4 copies)
 - [ ] P-004: Eliminate #[allow(dead_code)] suppressions (after P-001, P-002)

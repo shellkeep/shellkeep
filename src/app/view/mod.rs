@@ -115,13 +115,13 @@ impl ShellKeep {
         };
 
         // FR-TABS-09: search bar overlay
-        let content: Element<'_, Message> = if self.search_active {
-            let match_info: Element<'_, Message> = if self.search_last_match.is_some() {
+        let content: Element<'_, Message> = if self.search.active {
+            let match_info: Element<'_, Message> = if self.search.last_match.is_some() {
                 text(i18n::t(i18n::MATCH_FOUND))
                     .size(11)
                     .color(Color::from_rgb8(0xa6, 0xe3, 0xa1))
                     .into()
-            } else if !self.search_input.is_empty() {
+            } else if !self.search.input.is_empty() {
                 text(i18n::t(i18n::NO_MATCHES))
                     .size(11)
                     .color(Color::from_rgb8(0xf3, 0x8b, 0xa8))
@@ -131,7 +131,7 @@ impl ShellKeep {
             };
             let search_bar = container(
                 row![
-                    text_input("Search...", &self.search_input)
+                    text_input("Search...", &self.search.input)
                         .id("search-input")
                         .on_input(Message::SearchInputChanged)
                         .on_submit(Message::SearchNext)
@@ -312,8 +312,9 @@ impl ShellKeep {
 
         // FR-TABS-17: close confirmation dialog overlay
         // FR-SESSION-10a: close-tab confirmation dialog
-        let main_view: Element<'_, Message> = if self.pending_close_tabs.is_some() {
+        let main_view: Element<'_, Message> = if self.dialogs.pending_close_tabs.is_some() {
             let count = self
+                .dialogs
                 .pending_close_tabs
                 .as_ref()
                 .map(|v| v.len())
@@ -355,7 +356,7 @@ impl ShellKeep {
             )
             .style(styles::dialog_container_style);
             center(dialog).into()
-        } else if self.show_close_dialog {
+        } else if self.dialogs.show_close_dialog {
             let active_count = self
                 .tabs
                 .iter()
@@ -416,117 +417,117 @@ impl ShellKeep {
         };
 
         // FR-ENV-03: environment selection dialog overlay
-        let main_view: Element<'_, Message> = if self.show_env_dialog {
+        let main_view: Element<'_, Message> = if self.dialogs.show_env_dialog {
             stack![main_view, self.view_env_dialog()].into()
-        } else if self.show_new_env_dialog {
+        } else if self.dialogs.show_new_env_dialog {
             stack![main_view, self.view_new_env_dialog()].into()
-        } else if self.show_rename_env_dialog {
+        } else if self.dialogs.show_rename_env_dialog {
             stack![main_view, self.view_rename_env_dialog()].into()
-        } else if self.show_delete_env_dialog {
+        } else if self.dialogs.show_delete_env_dialog {
             stack![main_view, self.view_delete_env_dialog()].into()
         } else {
             main_view
         };
 
         // FR-CONN-03, FR-CONN-02: host key verification dialog overlay
-        let main_view: Element<'_, Message> = if let Some(ref prompt) = self.pending_host_key_prompt
-        {
-            use shellkeep::ssh::known_hosts::HostKeyStatus;
-            let label_color = Color::from_rgb8(0xa6, 0xad, 0xc8);
-            let text_color = Color::from_rgb8(0xcd, 0xd6, 0xf4);
+        let main_view: Element<'_, Message> =
+            if let Some(ref prompt) = self.dialogs.pending_host_key_prompt {
+                use shellkeep::ssh::known_hosts::HostKeyStatus;
+                let label_color = Color::from_rgb8(0xa6, 0xad, 0xc8);
+                let text_color = Color::from_rgb8(0xcd, 0xd6, 0xf4);
 
-            let dialog = match prompt.status {
-                HostKeyStatus::Unknown => {
-                    let host_label = format!("Host: {}:{}", prompt.host, prompt.port);
-                    let fp_label = format!("Fingerprint: {}", prompt.fingerprint);
-                    container(
-                        column![
-                            text("Unknown Host Key").size(18).color(text_color),
-                            Space::new().height(8),
-                            text(host_label.clone()).size(13).color(label_color),
-                            text(fp_label.clone()).size(13).color(label_color),
-                            Space::new().height(8),
-                            text("This host is not in your known_hosts file.")
-                                .size(13)
-                                .color(label_color),
-                            Space::new().height(12),
-                            row![
-                                button(text("Accept and save").size(13))
-                                    .on_press(Message::HostKeyAcceptSave)
-                                    .padding([8, 16])
-                                    .style(styles::primary_button_style),
-                                button(text("Connect once").size(13))
-                                    .on_press(Message::HostKeyConnectOnce)
-                                    .padding([8, 16])
-                                    .style(styles::secondary_button_style),
-                                button(text("Cancel").size(13))
-                                    .on_press(Message::HostKeyReject)
+                let dialog = match prompt.status {
+                    HostKeyStatus::Unknown => {
+                        let host_label = format!("Host: {}:{}", prompt.host, prompt.port);
+                        let fp_label = format!("Fingerprint: {}", prompt.fingerprint);
+                        container(
+                            column![
+                                text("Unknown Host Key").size(18).color(text_color),
+                                Space::new().height(8),
+                                text(host_label.clone()).size(13).color(label_color),
+                                text(fp_label.clone()).size(13).color(label_color),
+                                Space::new().height(8),
+                                text("This host is not in your known_hosts file.")
+                                    .size(13)
+                                    .color(label_color),
+                                Space::new().height(12),
+                                row![
+                                    button(text("Accept and save").size(13))
+                                        .on_press(Message::HostKeyAcceptSave)
+                                        .padding([8, 16])
+                                        .style(styles::primary_button_style),
+                                    button(text("Connect once").size(13))
+                                        .on_press(Message::HostKeyConnectOnce)
+                                        .padding([8, 16])
+                                        .style(styles::secondary_button_style),
+                                    button(text("Cancel").size(13))
+                                        .on_press(Message::HostKeyReject)
+                                        .padding([8, 16])
+                                        .style(styles::danger_button_style),
+                                ]
+                                .spacing(8),
+                            ]
+                            .spacing(4)
+                            .padding(24),
+                        )
+                        .style(styles::dialog_container_style)
+                    }
+                    HostKeyStatus::Changed => {
+                        let host_label = format!("Host: {}:{}", prompt.host, prompt.port);
+                        let new_fp = format!("New: {}", prompt.fingerprint);
+                        let old_fp = prompt
+                            .old_fingerprint
+                            .as_deref()
+                            .map(|fp| format!("Old: {fp}"))
+                            .unwrap_or_default();
+                        container(
+                            column![
+                                text("WARNING: HOST KEY HAS CHANGED")
+                                    .size(18)
+                                    .color(Color::from_rgb8(0xf3, 0x8b, 0xa8)),
+                                Space::new().height(8),
+                                text(host_label.clone()).size(13).color(label_color),
+                                text(old_fp.clone()).size(13).color(label_color),
+                                text(new_fp.clone()).size(13).color(label_color),
+                                Space::new().height(8),
+                                text("This may indicate a man-in-the-middle attack.")
+                                    .size(13)
+                                    .color(Color::from_rgb8(0xf3, 0x8b, 0xa8)),
+                                text("Update your known_hosts file manually if this is expected.")
+                                    .size(13)
+                                    .color(label_color),
+                                Space::new().height(12),
+                                button(text("Disconnect").size(13))
+                                    .on_press(Message::HostKeyChangedDismiss)
                                     .padding([8, 16])
                                     .style(styles::danger_button_style),
                             ]
-                            .spacing(8),
-                        ]
-                        .spacing(4)
-                        .padding(24),
-                    )
-                    .style(styles::dialog_container_style)
-                }
-                HostKeyStatus::Changed => {
-                    let host_label = format!("Host: {}:{}", prompt.host, prompt.port);
-                    let new_fp = format!("New: {}", prompt.fingerprint);
-                    let old_fp = prompt
-                        .old_fingerprint
-                        .as_deref()
-                        .map(|fp| format!("Old: {fp}"))
-                        .unwrap_or_default();
-                    container(
-                        column![
-                            text("WARNING: HOST KEY HAS CHANGED")
-                                .size(18)
-                                .color(Color::from_rgb8(0xf3, 0x8b, 0xa8)),
-                            Space::new().height(8),
-                            text(host_label.clone()).size(13).color(label_color),
-                            text(old_fp.clone()).size(13).color(label_color),
-                            text(new_fp.clone()).size(13).color(label_color),
-                            Space::new().height(8),
-                            text("This may indicate a man-in-the-middle attack.")
-                                .size(13)
-                                .color(Color::from_rgb8(0xf3, 0x8b, 0xa8)),
-                            text("Update your known_hosts file manually if this is expected.")
-                                .size(13)
-                                .color(label_color),
-                            Space::new().height(12),
-                            button(text("Disconnect").size(13))
-                                .on_press(Message::HostKeyChangedDismiss)
-                                .padding([8, 16])
-                                .style(styles::danger_button_style),
-                        ]
-                        .spacing(4)
-                        .padding(24),
-                    )
-                    .style(styles::dialog_container_style)
-                }
-                HostKeyStatus::Known => {
-                    // Should not happen, but dismiss gracefully
-                    container(text(""))
-                }
+                            .spacing(4)
+                            .padding(24),
+                        )
+                        .style(styles::dialog_container_style)
+                    }
+                    HostKeyStatus::Known => {
+                        // Should not happen, but dismiss gracefully
+                        container(text(""))
+                    }
+                };
+
+                let scrim = mouse_area(
+                    container(Space::new().width(Length::Fill).height(Length::Fill))
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .style(styles::scrim_style),
+                )
+                .on_press(Message::HostKeyReject);
+
+                stack![main_view, scrim, center(dialog)].into()
+            } else {
+                main_view
             };
 
-            let scrim = mouse_area(
-                container(Space::new().width(Length::Fill).height(Length::Fill))
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .style(styles::scrim_style),
-            )
-            .on_press(Message::HostKeyReject);
-
-            stack![main_view, scrim, center(dialog)].into()
-        } else {
-            main_view
-        };
-
         // FR-CONN-09: password prompt dialog overlay
-        let main_view: Element<'_, Message> = if self.show_password_dialog {
+        let main_view: Element<'_, Message> = if self.dialogs.show_password_dialog {
             let label_color = Color::from_rgb8(0xa6, 0xad, 0xc8);
             let text_color = Color::from_rgb8(0xcd, 0xd6, 0xf4);
 
@@ -544,7 +545,7 @@ impl ShellKeep {
                         .size(13)
                         .color(label_color),
                     Space::new().height(8),
-                    text_input("Password", &self.password_input)
+                    text_input("Password", &self.dialogs.password_input)
                         .on_input(Message::PasswordInputChanged)
                         .on_submit(Message::PasswordSubmit)
                         .secure(true)
@@ -582,7 +583,7 @@ impl ShellKeep {
         };
 
         // FR-LOCK-05: lock conflict dialog overlay
-        let main_view: Element<'_, Message> = if self.show_lock_dialog {
+        let main_view: Element<'_, Message> = if self.dialogs.show_lock_dialog {
             let text_color = Color::from_rgb8(0xcd, 0xd6, 0xf4);
             let label_color = Color::from_rgb8(0xa6, 0xad, 0xc8);
 
@@ -592,7 +593,9 @@ impl ShellKeep {
                         .size(18)
                         .color(text_color),
                     Space::new().height(8),
-                    text(&self.lock_info_text).size(13).color(label_color),
+                    text(&self.dialogs.lock_info_text)
+                        .size(13)
+                        .color(label_color),
                     Space::new().height(8),
                     text("Taking over will disconnect the other instance.")
                         .size(13)

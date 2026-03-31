@@ -35,7 +35,6 @@ use tokio::sync::Mutex;
 // ---------------------------------------------------------------------------
 
 /// Welcome screen and connection input state.
-#[allow(dead_code)] // Staged for future migration (R-30)
 pub(crate) struct WelcomeState {
     pub(crate) client_id_input: String,
     pub(crate) show_advanced: bool,
@@ -46,7 +45,6 @@ pub(crate) struct WelcomeState {
 }
 
 /// Scrollback search state.
-#[allow(dead_code)] // Staged for future migration (R-30)
 pub(crate) struct SearchState {
     pub(crate) active: bool,
     pub(crate) input: String,
@@ -55,7 +53,6 @@ pub(crate) struct SearchState {
 }
 
 /// All dialog-related state (env, host key, password, lock, close).
-#[allow(dead_code)] // Staged for future migration (R-30)
 pub(crate) struct DialogState {
     pub(crate) show_close_dialog: bool,
     pub(crate) close_window_id: Option<window::Id>,
@@ -113,14 +110,7 @@ pub(crate) struct ShellKeep {
     pub(crate) state_dirty: bool,
 
     // Welcome screen state
-    /// FR-UI-03: first-use client-id name input
-    pub(crate) client_id_input: String,
-    /// FR-UI-01: toggle for advanced connection options (port, user, identity)
-    pub(crate) show_advanced: bool,
-    pub(crate) host_input: String,
-    pub(crate) port_input: String,
-    pub(crate) user_input: String,
-    pub(crate) identity_input: String,
+    pub(crate) welcome: WelcomeState,
 
     pub(crate) config: Config,
     pub(crate) recent: RecentConnections,
@@ -131,18 +121,13 @@ pub(crate) struct ShellKeep {
     pub(crate) tray: Option<Tray>,
 
     // Scrollback search state (FR-TABS-09, FR-TERMINAL-07)
-    pub(crate) search_active: bool,
-    pub(crate) search_input: String,
-    pub(crate) search_regex: Option<RegexSearch>,
-    pub(crate) search_last_match: Option<SearchMatch>,
+    pub(crate) search: SearchState,
 
     /// FR-CONFIG-04: config hot reload receiver
     pub(crate) config_reload_rx: Option<std::sync::mpsc::Receiver<()>>,
 
-    /// FR-TABS-17: close confirmation dialog visible
-    pub(crate) show_close_dialog: bool,
-    /// FR-TABS-17: window ID to close after dialog
-    pub(crate) close_window_id: Option<window::Id>,
+    // Dialog state (close, env, host key, password, lock)
+    pub(crate) dialogs: DialogState,
     /// FR-STATE-14: current window geometry for persistence
     pub(crate) window_width: u32,
     pub(crate) window_height: u32,
@@ -155,35 +140,6 @@ pub(crate) struct ShellKeep {
 
     /// FR-ENV-06: one environment active per instance
     pub(crate) current_environment: String,
-
-    // FR-ENV-03: environment selection dialog state
-    pub(crate) show_env_dialog: bool,
-    pub(crate) env_list: Vec<String>,
-    pub(crate) env_filter: String,
-    pub(crate) selected_env: Option<String>,
-    // FR-ENV-07..09: environment management modals
-    pub(crate) show_new_env_dialog: bool,
-    pub(crate) new_env_input: String,
-    pub(crate) show_rename_env_dialog: bool,
-    pub(crate) rename_env_input: String,
-    pub(crate) rename_env_target: Option<String>,
-    pub(crate) show_delete_env_dialog: bool,
-    pub(crate) delete_env_target: Option<String>,
-
-    // FR-CONN-03: host key TOFU dialog
-    pub(crate) pending_host_key_prompt: Option<ssh::connection::HostKeyPrompt>,
-    // FR-CONN-09: password prompt dialog
-    pub(crate) show_password_dialog: bool,
-    pub(crate) password_input: String,
-    pub(crate) password_target_tab: Option<TabId>,
-    pub(crate) password_conn_params: Option<ConnParams>,
-    // FR-LOCK-05: lock conflict dialog
-    pub(crate) show_lock_dialog: bool,
-    pub(crate) lock_info_text: String,
-    pub(crate) lock_target_tab: Option<TabId>,
-
-    /// FR-SESSION-10a: close-tab confirmation dialog
-    pub(crate) pending_close_tabs: Option<Vec<usize>>,
 
     /// FR-RECONNECT-08: last known default gateway (Linux network monitoring)
     #[cfg(target_os = "linux")]
@@ -219,50 +175,56 @@ impl ShellKeep {
             sessions_listed: false,
             last_state_save: None,
             state_dirty: false,
-            client_id_input: String::new(),
-            show_advanced: false,
-            host_input: String::new(),
-            port_input: default_port,
-            user_input: username,
-            identity_input: String::new(),
+            welcome: WelcomeState {
+                client_id_input: String::new(),
+                show_advanced: false,
+                host_input: String::new(),
+                port_input: default_port,
+                user_input: username,
+                identity_input: String::new(),
+            },
             config,
             recent,
             title_text: "shellkeep".to_string(),
             error: None,
             tray: None,
-            search_active: false,
-            search_input: String::new(),
-            search_regex: None,
-            search_last_match: None,
+            search: SearchState {
+                active: false,
+                input: String::new(),
+                regex: None,
+                last_match: None,
+            },
             config_reload_rx: None,
-            show_close_dialog: false,
-            close_window_id: None,
+            dialogs: DialogState {
+                show_close_dialog: false,
+                close_window_id: None,
+                show_env_dialog: false,
+                env_list: Vec::new(),
+                env_filter: String::new(),
+                selected_env: None,
+                show_new_env_dialog: false,
+                new_env_input: String::new(),
+                show_rename_env_dialog: false,
+                rename_env_input: String::new(),
+                rename_env_target: None,
+                show_delete_env_dialog: false,
+                delete_env_target: None,
+                pending_host_key_prompt: None,
+                show_password_dialog: false,
+                password_input: String::new(),
+                password_target_tab: None,
+                password_conn_params: None,
+                show_lock_dialog: false,
+                lock_info_text: String::new(),
+                lock_target_tab: None,
+                pending_close_tabs: None,
+            },
             window_width: 900,
             window_height: 600,
             window_x: None,
             window_y: None,
             last_geometry_save: None,
             state_syncer: None,
-            show_env_dialog: false,
-            env_list: Vec::new(),
-            env_filter: String::new(),
-            selected_env: None,
-            show_new_env_dialog: false,
-            new_env_input: String::new(),
-            show_rename_env_dialog: false,
-            rename_env_input: String::new(),
-            rename_env_target: None,
-            show_delete_env_dialog: false,
-            delete_env_target: None,
-            pending_host_key_prompt: None,
-            show_password_dialog: false,
-            password_input: String::new(),
-            password_target_tab: None,
-            password_conn_params: None,
-            show_lock_dialog: false,
-            lock_info_text: String::new(),
-            lock_target_tab: None,
-            pending_close_tabs: None,
             #[cfg(target_os = "linux")]
             last_gateway: shellkeep::network::read_default_gateway(),
         };
@@ -855,19 +817,19 @@ impl ShellKeep {
 
     pub(crate) fn build_ssh_args(&self) -> Vec<String> {
         let mut args = Vec::new();
-        let host = self.host_input.trim();
+        let host = self.welcome.host_input.trim();
 
         // Parse user@host:port from host field
         let (parsed_user, parsed_host, parsed_port) = crate::cli::parse_host_input(host);
 
-        let user = if !self.user_input.is_empty() {
-            self.user_input.clone()
+        let user = if !self.welcome.user_input.is_empty() {
+            self.welcome.user_input.clone()
         } else {
             parsed_user.unwrap_or_default()
         };
 
         let host = parsed_host;
-        let port = parsed_port.unwrap_or_else(|| self.port_input.trim().to_string());
+        let port = parsed_port.unwrap_or_else(|| self.welcome.port_input.trim().to_string());
 
         if !user.is_empty() {
             args.push(format!("{user}@{host}"));
@@ -880,9 +842,9 @@ impl ShellKeep {
             args.push(port);
         }
 
-        if !self.identity_input.is_empty() {
+        if !self.welcome.identity_input.is_empty() {
             args.push("-i".to_string());
-            args.push(self.identity_input.clone());
+            args.push(self.welcome.identity_input.clone());
         }
 
         args
