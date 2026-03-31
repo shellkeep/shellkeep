@@ -496,23 +496,44 @@ impl ShellKeep {
             std::time::Instant::now(),
         ));
 
-        // Kill the tmux session on the server
-        if !tab.is_dead() && tab.is_russh() {
+        // Kill the tmux session on the server.
+        // Attempt even for dead tabs — the connection may have recovered,
+        // and failing silently is better than leaving orphaned tmux sessions.
+        if tab.is_russh() {
             let tmux_session = tab.tmux_session.clone();
             let mgr = self.conn_manager.clone();
             if let Some(ref conn) = self.current_conn {
                 let conn_key = conn.key.clone();
+                let identity = conn.identity_file.clone();
+                let keepalive = self.config.ssh.keepalive_interval;
                 return Task::perform(
                     async move {
-                        let mgr_guard = mgr.lock().await;
-                        if let Some(handle_arc) = mgr_guard.get_cached(&conn_key) {
-                            let handle = handle_arc.lock().await;
-                            let cmd = format!("tmux kill-session -t {tmux_session} 2>/dev/null");
-                            if let Err(e) = ssh::connection::exec_command(&handle, &cmd).await {
-                                tracing::warn!("failed to kill tmux session {tmux_session}: {e}");
-                            } else {
-                                tracing::info!("killed tmux session: {tmux_session}");
+                        // Try cached handle first, fall back to fresh connection
+                        let mut mgr_guard = mgr.lock().await;
+                        let handle_arc = if let Some(h) = mgr_guard.get_cached(&conn_key) {
+                            h
+                        } else {
+                            // No cached handle — try a fresh connection for the kill
+                            match mgr_guard
+                                .get_or_connect(&conn_key, identity.as_deref(), None, keepalive)
+                                .await
+                            {
+                                Ok(r) => r.handle,
+                                Err(e) => {
+                                    tracing::warn!(
+                                        "cannot kill tmux session {tmux_session}: no connection ({e})"
+                                    );
+                                    return;
+                                }
                             }
+                        };
+                        drop(mgr_guard);
+                        let handle = handle_arc.lock().await;
+                        let cmd = format!("tmux kill-session -t {tmux_session} 2>/dev/null");
+                        if let Err(e) = ssh::connection::exec_command(&handle, &cmd).await {
+                            tracing::warn!("failed to kill tmux session {tmux_session}: {e}");
+                        } else {
+                            tracing::info!("killed tmux session: {tmux_session}");
                         }
                     },
                     |_| Message::Noop,

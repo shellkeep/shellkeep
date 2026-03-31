@@ -472,28 +472,70 @@ impl ShellKeep {
             // explicitly closed (close_tab kills tmux) should not be reopened.
             let existing_tmux: Vec<String> =
                 self.tabs.iter().map(|t| t.tmux_session.clone()).collect();
-            let orphaned: Vec<(&str, &str)> = server_sessions
-                .iter()
-                .filter(|s| !existing_tmux.contains(s))
-                .filter_map(|s| {
-                    // Only reopen if the session was in the saved state (user intended to keep it)
-                    saved_env_tabs
-                        .iter()
-                        .find(|t| t.tmux_session_name == *s)
-                        .map(|t| (t.title.as_str(), s.as_str()))
-                })
-                .collect();
 
-            if !orphaned.is_empty() {
+            let mut restorable: Vec<(&str, &str)> = Vec::new();
+            let mut stale: Vec<String> = Vec::new();
+
+            for session in &server_sessions {
+                if existing_tmux.contains(session) {
+                    continue; // Already open in a tab
+                }
+                if let Some(saved) = saved_env_tabs
+                    .iter()
+                    .find(|t| t.tmux_session_name == *session)
+                {
+                    // In saved state — restore it
+                    restorable.push((saved.title.as_str(), session.as_str()));
+                } else if session.contains("--shellkeep-") {
+                    // Shellkeep session NOT in saved state — orphan from a failed kill.
+                    // Only clean up sessions with our naming convention to avoid
+                    // touching user's manually-created tmux sessions.
+                    stale.push(session.clone());
+                }
+            }
+
+            // Build a task list: restore saved sessions + clean up stale orphans
+            let mut tasks = Vec::new();
+
+            // Clean up stale orphans
+            if !stale.is_empty() {
+                tracing::info!(
+                    "cleaning up {} stale tmux session(s): {:?}",
+                    stale.len(),
+                    stale
+                );
+                let mgr = self.conn_manager.clone();
+                if let Some(ref conn) = self.current_conn {
+                    let conn_key = conn.key.clone();
+                    tasks.push(Task::perform(
+                        async move {
+                            let mgr_guard = mgr.lock().await;
+                            if let Some(handle_arc) = mgr_guard.get_cached(&conn_key) {
+                                let handle = handle_arc.lock().await;
+                                for name in &stale {
+                                    let cmd = format!("tmux kill-session -t {name} 2>/dev/null");
+                                    let _ = ssh::connection::exec_command(&handle, &cmd).await;
+                                    tracing::info!("killed stale tmux session: {name}");
+                                }
+                            }
+                        },
+                        |_| Message::Noop,
+                    ));
+                }
+            }
+
+            if !restorable.is_empty() {
                 tracing::info!(
                     "restoring {} saved session(s): {:?}",
-                    orphaned.len(),
-                    orphaned
+                    restorable.len(),
+                    restorable
                 );
-                let mut tasks = Vec::new();
-                for (label, session_name) in &orphaned {
+                for (label, session_name) in &restorable {
                     tasks.push(self.open_tab_russh(label, session_name));
                 }
+            }
+
+            if !tasks.is_empty() {
                 return Task::batch(tasks);
             }
         }
