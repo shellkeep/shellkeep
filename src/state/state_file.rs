@@ -16,6 +16,8 @@ use serde::{Deserialize, Serialize};
 const SCHEMA_VERSION: u32 = 2;
 
 /// Cached regex for validating tmux session names.
+// SAFETY: this regex pattern is a compile-time constant and is known to be valid
+#[allow(clippy::unwrap_used)]
 static TMUX_NAME_RE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"^[a-zA-Z0-9_][a-zA-Z0-9_.:\-]*$").unwrap());
 
