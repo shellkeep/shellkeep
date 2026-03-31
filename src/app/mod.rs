@@ -390,32 +390,16 @@ impl ShellKeep {
         self.save_state();
         tracing::info!("opened SSH tab {id}: {label} (tmux: {tmux_session}) via russh");
 
-        // Launch async connection — writes channel into the pre-allocated holder
-        let holder = channel_holder;
-        let params = EstablishParams {
-            conn_manager: self.conn_manager.clone(),
-            conn,
-            tmux_session: tmux_session.to_string(),
-            cols: 80,
-            rows: 24,
-            keepalive_secs: self.config.ssh.keepalive_interval,
-            client_id: self.client_id.clone(),
-            session_uuid: suuid,
+        // Launch async connection
+        self.start_ssh_connection(
+            id,
+            &conn,
+            tmux_session,
+            &suuid,
             phase,
-            password: None,
-            force_lock: false,
-        };
-        Task::perform(
-            async move {
-                match establish_ssh_session(params).await {
-                    Ok(channel) => {
-                        *holder.lock().await = Some(channel);
-                        Ok(())
-                    }
-                    Err(e) => Err(e.to_string()),
-                }
-            },
-            move |result: Result<(), String>| Message::SshConnected(id, result),
+            channel_holder,
+            None,
+            false,
         )
     }
 
@@ -591,33 +575,19 @@ impl ShellKeep {
                         None => return Task::none(),
                     };
                     let tab_id = tab.id;
-                    let holder = channel_holder;
-                    let params = EstablishParams {
-                        conn_manager: self.conn_manager.clone(),
-                        conn,
-                        tmux_session: tab.tmux_session.clone(),
-                        cols: 80,
-                        rows: 24,
-                        keepalive_secs: self.config.ssh.keepalive_interval,
-                        client_id: self.client_id.clone(),
-                        session_uuid: tab.session_uuid.clone(),
-                        phase,
-                        password: None,
-                        force_lock: false,
-                    };
+                    let tmux = tab.tmux_session.clone();
+                    let suuid = tab.session_uuid.clone();
                     self.update_title();
 
-                    Task::perform(
-                        async move {
-                            match establish_ssh_session(params).await {
-                                Ok(channel) => {
-                                    *holder.lock().await = Some(channel);
-                                    Ok(())
-                                }
-                                Err(e) => Err(e.to_string()),
-                            }
-                        },
-                        move |result: Result<(), String>| Message::SshConnected(tab_id, result),
+                    self.start_ssh_connection(
+                        tab_id,
+                        &conn,
+                        &tmux,
+                        &suuid,
+                        phase,
+                        channel_holder,
+                        None,
+                        false,
                     )
                 }
                 Err(e) => {
@@ -644,6 +614,50 @@ impl ShellKeep {
             }
             Task::none()
         }
+    }
+
+    /// Launch an async SSH connection for an existing tab.
+    ///
+    /// Shared logic for open_tab_russh, reconnect_tab, password retry, and lock takeover.
+    /// The tab must already exist and be in a state ready for connecting (Connecting or similar).
+    /// The `channel_holder` must already be set on the tab via `mark_connecting`.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn start_ssh_connection(
+        &self,
+        tab_id: tab::TabId,
+        conn: &ConnParams,
+        tmux_session: &str,
+        session_uuid: &str,
+        phase: Arc<std::sync::Mutex<String>>,
+        channel_holder: ChannelHolder,
+        password: Option<String>,
+        force_lock: bool,
+    ) -> Task<Message> {
+        let params = EstablishParams {
+            conn_manager: self.conn_manager.clone(),
+            conn: conn.clone(),
+            tmux_session: tmux_session.to_string(),
+            cols: 80,
+            rows: 24,
+            keepalive_secs: self.config.ssh.keepalive_interval,
+            client_id: self.client_id.clone(),
+            session_uuid: session_uuid.to_string(),
+            phase,
+            password,
+            force_lock,
+        };
+        Task::perform(
+            async move {
+                match establish_ssh_session(params).await {
+                    Ok(channel) => {
+                        *channel_holder.lock().await = Some(channel);
+                        Ok(())
+                    }
+                    Err(e) => Err(e.to_string()),
+                }
+            },
+            move |result: Result<(), String>| Message::SshConnected(tab_id, result),
+        )
     }
 
     pub(crate) fn apply_font_to_all_tabs(&mut self) {

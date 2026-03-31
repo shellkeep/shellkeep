@@ -20,7 +20,6 @@
 
 use super::ShellKeep;
 use super::message::Message;
-use super::session::{EstablishParams, establish_ssh_session};
 use super::tab::{ChannelHolder, SPINNER_FRAMES};
 
 use iced::{Task, keyboard, window};
@@ -1381,38 +1380,30 @@ impl ShellKeep {
 
                 let channel_holder: ChannelHolder = Arc::new(Mutex::new(None));
                 tab.mark_connecting(phase.clone(), channel_holder.clone());
+                let tmux = tab.tmux_session.clone();
+                let suuid = tab.session_uuid.clone();
 
-                let params = EstablishParams {
-                    conn_manager: mgr.clone(),
-                    conn,
-                    tmux_session: tab.tmux_session.clone(),
-                    cols: 80,
-                    rows: 24,
-                    keepalive_secs: self.config.ssh.keepalive_interval,
-                    client_id: self.client_id.clone(),
-                    session_uuid: tab.session_uuid.clone(),
+                // Remove cached connection before retrying with password
+                let mgr2 = mgr.clone();
+                let conn_key2 = conn_key.clone();
+                let connect_task = self.start_ssh_connection(
+                    tab_id,
+                    &conn,
+                    &tmux,
+                    &suuid,
                     phase,
-                    password: Some(password),
-                    force_lock: false,
-                };
-
+                    channel_holder,
+                    Some(password),
+                    false,
+                );
                 return Task::perform(
                     async move {
-                        // Remove cached connection asynchronously (was blocking_lock)
-                        {
-                            let mut m = mgr.lock().await;
-                            m.remove(&conn_key);
-                        }
-                        match establish_ssh_session(params).await {
-                            Ok(channel) => {
-                                *channel_holder.lock().await = Some(channel);
-                                Ok(())
-                            }
-                            Err(e) => Err(e.to_string()),
-                        }
+                        let mut m = mgr2.lock().await;
+                        m.remove(&conn_key2);
                     },
-                    move |result: Result<(), String>| Message::SshConnected(tab_id, result),
-                );
+                    |_| Message::Noop,
+                )
+                .chain(connect_task);
             }
         }
         Task::none()
@@ -1429,32 +1420,18 @@ impl ShellKeep {
 
             let channel_holder: ChannelHolder = Arc::new(Mutex::new(None));
             tab.mark_connecting(phase.clone(), channel_holder.clone());
+            let tmux = tab.tmux_session.clone();
+            let suuid = tab.session_uuid.clone();
 
-            let params = EstablishParams {
-                conn_manager: self.conn_manager.clone(),
-                conn,
-                tmux_session: tab.tmux_session.clone(),
-                cols: 80,
-                rows: 24,
-                keepalive_secs: self.config.ssh.keepalive_interval,
-                client_id: self.client_id.clone(),
-                session_uuid: tab.session_uuid.clone(),
+            return self.start_ssh_connection(
+                tab_id,
+                &conn,
+                &tmux,
+                &suuid,
                 phase,
-                password: None,
-                force_lock: true,
-            };
-
-            return Task::perform(
-                async move {
-                    match establish_ssh_session(params).await {
-                        Ok(channel) => {
-                            *channel_holder.lock().await = Some(channel);
-                            Ok(())
-                        }
-                        Err(e) => Err(e.to_string()),
-                    }
-                },
-                move |result: Result<(), String>| Message::SshConnected(tab_id, result),
+                channel_holder,
+                None,
+                true,
             );
         }
         Task::none()
