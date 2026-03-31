@@ -130,7 +130,9 @@ impl ShellKeep {
             | Message::ContextMenuDismiss
             | Message::ToastDismiss
             | Message::WindowMoved(..)
-            | Message::WindowResized(..) => self.handle_terminal_message(message),
+            | Message::WindowResized(..)
+            | Message::NewWindow
+            | Message::WindowOpened(..) => self.handle_terminal_message(message),
 
             // --- Search messages ---
             Message::SearchToggle
@@ -157,7 +159,7 @@ impl ShellKeep {
     fn handle_ssh_message(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::SshData(tab_id, data) => {
-                if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+                if let Some(tab) = self.find_tab_mut(tab_id) {
                     if let Some(ref mut terminal) = tab.terminal {
                         terminal.process_ssh_data(&data);
                         // FR-HISTORY-02: write to local JSONL history
@@ -187,7 +189,8 @@ impl ShellKeep {
             }
 
             Message::SshDisconnected(tab_id, reason) => {
-                if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+                let max_attempts = self.config.ssh.reconnect_max_attempts;
+                if let Some(tab) = self.find_tab_mut(tab_id) {
                     // Clear channel state so subscription stops
                     tab.clear_resize_tx();
                     // FR-UI-08: store last error for dead tab display
@@ -207,7 +210,7 @@ impl ShellKeep {
                                 super::tab::ConnectionState::Connected { .. }
                                     | super::tab::ConnectionState::Connecting { .. }
                             );
-                        if was_reconnectable && attempt < self.config.ssh.reconnect_max_attempts {
+                        if was_reconnectable && attempt < max_attempts {
                             let new_attempt = attempt + 1;
                             tab.terminal = None;
                             let phase = Arc::new(std::sync::Mutex::new(String::new()));
@@ -219,8 +222,8 @@ impl ShellKeep {
                             tracing::info!("SSH tab {tab_id} disconnected: {reason}");
                         }
                     }
-                    self.update_title();
                 }
+                self.update_title();
                 Task::none()
             }
 
@@ -229,7 +232,7 @@ impl ShellKeep {
             Message::ExistingSessionsFound(result) => self.handle_existing_sessions(result),
 
             Message::PasteToTerminal(tab_id, data) => {
-                if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id)
+                if let Some(tab) = self.find_tab_mut(tab_id)
                     && let Some(ref mut terminal) = tab.terminal
                 {
                     terminal.handle(iced_term::Command::ProxyToBackend(
@@ -252,7 +255,7 @@ impl ShellKeep {
             Ok(()) => {
                 // The async task wrote the channel into pending_channel.
                 // Move it to Connected state so the subscription picks it up.
-                if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id)
+                if let Some(tab) = self.find_tab_mut(tab_id)
                     && let Some(holder) = tab.take_pending_channel()
                 {
                     tab.mark_connected(holder);
@@ -341,7 +344,7 @@ impl ShellKeep {
             }
             Err(e) => {
                 tracing::error!("SSH tab {tab_id}: connection failed: {e}");
-                if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+                if let Some(tab) = self.find_tab_mut(tab_id) {
                     tab.terminal = None;
                     tab.last_error = Some(e.clone());
                     // FR-RECONNECT-07: classify error
@@ -369,7 +372,7 @@ impl ShellKeep {
                     && !self.dialogs.show_password_dialog
                 {
                     // FR-CONN-09: show password prompt dialog on auth failure
-                    if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+                    if let Some(tab) = self.find_tab_mut(tab_id) {
                         // Waiting for user input — not dead, not auto-reconnecting
                         tab.mark_disconnected(None);
                     }
@@ -380,7 +383,7 @@ impl ShellKeep {
                     self.dialogs.password_conn_params = self.current_conn.clone();
                 } else if el.contains("session locked by") || el.contains("lock held by") {
                     // FR-LOCK-05: show lock conflict dialog
-                    if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+                    if let Some(tab) = self.find_tab_mut(tab_id) {
                         tab.mark_disconnected(None);
                     }
                     tracing::info!("tab {tab_id}: session locked, showing conflict dialog");
@@ -422,11 +425,12 @@ impl ShellKeep {
             // FR-STATE-14: restore window geometry from device state
             if let Some(ref device) = device_opt
                 && let Some(geo) = device.window_geometry.get("main")
+                && let Some(win) = self.active_window_mut()
             {
-                self.window_x = geo.x;
-                self.window_y = geo.y;
-                self.window_width = geo.width;
-                self.window_height = geo.height;
+                win.window_x = geo.x;
+                win.window_y = geo.y;
+                win.window_width = geo.width;
+                win.window_height = geo.height;
             }
 
             // Load hidden sessions from device state
@@ -453,7 +457,7 @@ impl ShellKeep {
                 .map(|s| s.env_tabs(&self.current_environment))
                 .unwrap_or_default();
             if !saved_env_tabs.is_empty() {
-                for tab in &mut self.tabs {
+                for tab in self.all_tabs_mut() {
                     // Find saved tab entry by UUID
                     if let Some(saved_tab) = saved_env_tabs
                         .iter()
@@ -491,7 +495,7 @@ impl ShellKeep {
             // Only restore sessions that exist in saved state — sessions the user
             // explicitly closed (close_tab kills tmux) should not be reopened.
             let existing_tmux: Vec<String> =
-                self.tabs.iter().map(|t| t.tmux_session.clone()).collect();
+                self.all_tabs().map(|t| t.tmux_session.clone()).collect();
 
             let mut restorable: Vec<(&str, &str)> = Vec::new();
             let mut stale: Vec<String> = Vec::new();
@@ -578,23 +582,28 @@ impl ShellKeep {
     fn handle_tab_message(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::SelectTab(index) => {
-                if index < self.tabs.len() {
-                    self.active_tab = index;
-                    self.show_welcome = false;
-                    self.renaming_tab = None;
-                    self.tab_context_menu = None;
-                    self.update_title();
+                if let Some(win) = self.active_window_mut()
+                    && index < win.tabs.len()
+                {
+                    win.active_tab = index;
+                    win.show_welcome = false;
+                    win.renaming_tab = None;
+                    win.tab_context_menu = None;
+                    win.update_title();
                 }
                 Task::none()
             }
 
             // FR-SESSION-10a: close tab with confirmation for active sessions
             Message::CloseTab(index) => {
-                self.tab_context_menu = None;
-                if let Some(tab) = self.tabs.get(index)
-                    && !tab.is_dead()
-                    && tab.terminal.is_some()
-                {
+                if let Some(win) = self.active_window_mut() {
+                    win.tab_context_menu = None;
+                }
+                let needs_confirm = self
+                    .active_window()
+                    .and_then(|w| w.tabs.get(index))
+                    .is_some_and(|tab| !tab.is_dead() && tab.terminal.is_some());
+                if needs_confirm {
                     // Active session — ask confirmation
                     self.dialogs.pending_close_tabs = Some(vec![index]);
                     return Task::none();
@@ -621,19 +630,24 @@ impl ShellKeep {
             }
 
             Message::NewTab => {
+                let tab_count = self.active_window().map(|w| w.tabs.len()).unwrap_or(0);
                 if self.current_conn.is_some() {
-                    let n = self.tabs.len() + 1;
+                    let n = tab_count + 1;
                     let label = format!("Session {n}");
                     let tmux_session = self.next_tmux_session();
                     return self.open_tab_russh(&label, &tmux_session);
-                } else if let Some(tab) = self.tabs.last() {
-                    // Fallback: use system ssh args from existing tab
-                    let ssh_args = tab.ssh_args().to_vec();
-                    let n = self.tabs.len() + 1;
-                    let label = format!("Session {n}");
-                    self.open_tab_with_tmux(&ssh_args, &label);
                 } else {
-                    self.show_welcome = true;
+                    let ssh_args = self
+                        .active_window()
+                        .and_then(|w| w.tabs.last())
+                        .map(|t| t.ssh_args().to_vec());
+                    if let Some(args) = ssh_args {
+                        let n = tab_count + 1;
+                        let label = format!("Session {n}");
+                        self.open_tab_with_tmux(&args, &label);
+                    } else if let Some(win) = self.active_window_mut() {
+                        win.show_welcome = true;
+                    }
                 }
                 Task::none()
             }
@@ -641,34 +655,45 @@ impl ShellKeep {
             Message::ReconnectTab(index) => {
                 // Manual reconnect: reset state before calling reconnect_tab
                 // which will set up Connecting state
-                if index < self.tabs.len() {
-                    self.tabs[index].mark_disconnected(None);
+                if let Some(win) = self.active_window_mut()
+                    && index < win.tabs.len()
+                {
+                    win.tabs[index].mark_disconnected(None);
                 }
                 self.reconnect_tab(index)
             }
 
             // FR-UI-07: create a fresh session replacing a dead tab
             Message::CreateNewSession(index) => {
-                if index < self.tabs.len() && self.current_conn.is_some() {
-                    let tab = &self.tabs[index];
-                    let label = tab.label.clone();
-                    // Reuse same tmux session name prefix but generate new UUID
+                let can_create = self.active_window().is_some_and(|w| index < w.tabs.len())
+                    && self.current_conn.is_some();
+                if can_create {
+                    let label = self
+                        .active_window()
+                        .and_then(|w| w.tabs.get(index))
+                        .map(|t| t.label.clone())
+                        .unwrap_or_default();
                     let tmux_session = self.next_tmux_session();
                     // Remove the dead tab
-                    self.tabs.remove(index);
-                    if self.active_tab >= self.tabs.len() && self.active_tab > 0 {
-                        self.active_tab -= 1;
+                    if let Some(win) = self.active_window_mut() {
+                        win.tabs.remove(index);
+                        if win.active_tab >= win.tabs.len() && win.active_tab > 0 {
+                            win.active_tab -= 1;
+                        }
                     }
                     // Open fresh tab
                     let task = self.open_tab_russh(&label, &tmux_session);
                     // Move the new tab to the original position
-                    if self.tabs.len() > 1 && index < self.tabs.len() {
+                    if let Some(win) = self.active_window_mut()
+                        && win.tabs.len() > 1
+                        && index < win.tabs.len()
+                    {
                         // SAFETY: len() > 1 guarantees pop() returns Some
                         #[allow(clippy::unwrap_used)]
-                        let new_tab = self.tabs.pop().unwrap();
-                        self.tabs.insert(index, new_tab);
-                        self.active_tab = index;
-                        self.update_title();
+                        let new_tab = win.tabs.pop().unwrap();
+                        win.tabs.insert(index, new_tab);
+                        win.active_tab = index;
+                        win.update_title();
                     }
                     return task;
                 }
@@ -677,22 +702,32 @@ impl ShellKeep {
 
             Message::HideTab(index) => {
                 self.hide_tab(index);
-                self.tab_context_menu = None;
+                if let Some(win) = self.active_window_mut() {
+                    win.tab_context_menu = None;
+                }
                 Task::none()
             }
 
             Message::CloseOtherTabs(keep_index) => {
-                self.tab_context_menu = None;
-                let keep_id = self.tabs.get(keep_index).map(|t| t.id);
-                let to_close: Vec<usize> = (0..self.tabs.len())
-                    .filter(|&i| self.tabs.get(i).map(|t| t.id) != keep_id)
-                    .collect();
-                // FR-SESSION-10a: if any active tabs, ask confirmation
-                let has_active = to_close.iter().any(|&i| {
-                    self.tabs
-                        .get(i)
-                        .is_some_and(|t| !t.is_dead() && t.terminal.is_some())
-                });
+                if let Some(win) = self.active_window_mut() {
+                    win.tab_context_menu = None;
+                }
+                let (to_close, has_active) = {
+                    let win = match self.active_window() {
+                        Some(w) => w,
+                        None => return Task::none(),
+                    };
+                    let keep_id = win.tabs.get(keep_index).map(|t| t.id);
+                    let to_close: Vec<usize> = (0..win.tabs.len())
+                        .filter(|&i| win.tabs.get(i).map(|t| t.id) != keep_id)
+                        .collect();
+                    let has_active = to_close.iter().any(|&i| {
+                        win.tabs
+                            .get(i)
+                            .is_some_and(|t| !t.is_dead() && t.terminal.is_some())
+                    });
+                    (to_close, has_active)
+                };
                 if has_active {
                     self.dialogs.pending_close_tabs = Some(to_close);
                 } else {
@@ -700,20 +735,31 @@ impl ShellKeep {
                     for idx in to_close.into_iter().rev() {
                         tasks.push(self.close_tab(idx));
                     }
-                    self.active_tab = 0;
+                    if let Some(win) = self.active_window_mut() {
+                        win.active_tab = 0;
+                    }
                     return Task::batch(tasks);
                 }
                 Task::none()
             }
 
             Message::CloseTabsToRight(index) => {
-                self.tab_context_menu = None;
-                let to_close: Vec<usize> = (index + 1..self.tabs.len()).collect();
-                let has_active = to_close.iter().any(|&i| {
-                    self.tabs
-                        .get(i)
-                        .is_some_and(|t| !t.is_dead() && t.terminal.is_some())
-                });
+                if let Some(win) = self.active_window_mut() {
+                    win.tab_context_menu = None;
+                }
+                let (to_close, has_active) = {
+                    let win = match self.active_window() {
+                        Some(w) => w,
+                        None => return Task::none(),
+                    };
+                    let to_close: Vec<usize> = (index + 1..win.tabs.len()).collect();
+                    let has_active = to_close.iter().any(|&i| {
+                        win.tabs
+                            .get(i)
+                            .is_some_and(|t| !t.is_dead() && t.terminal.is_some())
+                    });
+                    (to_close, has_active)
+                };
                 if has_active {
                     self.dialogs.pending_close_tabs = Some(to_close);
                 } else {
@@ -727,11 +773,19 @@ impl ShellKeep {
             }
 
             Message::StartRename(index) => {
-                self.tab_context_menu = None;
-                if index < self.tabs.len() {
-                    self.active_tab = index;
-                    self.rename_input = self.tabs[index].label.clone();
-                    self.renaming_tab = Some(index);
+                let label = self
+                    .active_window()
+                    .and_then(|w| w.tabs.get(index))
+                    .map(|t| t.label.clone());
+                if let Some(win) = self.active_window_mut() {
+                    win.tab_context_menu = None;
+                    if index < win.tabs.len() {
+                        win.active_tab = index;
+                        win.renaming_tab = Some(index);
+                    }
+                }
+                if let Some(label) = label {
+                    self.rename_input = label;
                     return Task::batch([
                         iced_runtime::widget::operation::focus(RENAME_INPUT_ID),
                         iced_runtime::widget::operation::select_all(RENAME_INPUT_ID),
@@ -747,86 +801,111 @@ impl ShellKeep {
 
             Message::FinishRename => {
                 let mut rename_task = Task::none();
-                if let Some(index) = self.renaming_tab
-                    && index < self.tabs.len()
-                    && !self.rename_input.trim().is_empty()
-                {
-                    let new_label = self.rename_input.trim().to_string();
-                    let old_tmux = self.tabs[index].tmux_session.clone();
-                    self.tabs[index].label = new_label.clone();
-                    self.update_title();
-                    self.save_state();
+                let renaming_tab = self.active_window().and_then(|w| w.renaming_tab);
+                if let Some(index) = renaming_tab {
+                    let valid = self.active_window().is_some_and(|w| index < w.tabs.len())
+                        && !self.rename_input.trim().is_empty();
+                    if valid {
+                        let new_label = self.rename_input.trim().to_string();
+                        let (old_tmux, is_russh, has_conn_params, conn_params) = {
+                            // SAFETY: `valid` check above ensures window and index exist
+                            #[allow(clippy::unwrap_used)]
+                            let win = self.active_window().unwrap();
+                            let tab = &win.tabs[index];
+                            (
+                                tab.tmux_session.clone(),
+                                tab.is_russh(),
+                                tab.conn_params().is_some(),
+                                tab.conn_params().cloned(),
+                            )
+                        };
+                        if let Some(win) = self.active_window_mut() {
+                            win.tabs[index].label = new_label.clone();
+                            win.update_title();
+                        }
+                        self.save_state();
 
-                    // FR-SESSION-06: also rename tmux session on the server
-                    if self.tabs[index].is_russh() && self.tabs[index].conn_params().is_some() {
-                        let sanitized: String = new_label
-                            .chars()
-                            .map(|c| {
-                                if c.is_alphanumeric() || c == '-' || c == '_' {
-                                    c
-                                } else {
-                                    '-'
-                                }
-                            })
-                            .collect();
-                        let new_tmux =
-                            format!("{}--shellkeep-{}", self.current_environment, sanitized);
-                        self.tabs[index].tmux_session = new_tmux.clone();
-                        let mgr = self.conn_manager.clone();
-                        // SAFETY: conn_params().is_some() checked in the enclosing if-let
-                        #[allow(clippy::unwrap_used)]
-                        let conn = self.tabs[index].conn_params().cloned().unwrap();
-                        rename_task = Task::perform(
-                            async move {
-                                let conn_key = conn.key.clone();
-                                let mgr_guard = mgr.lock().await;
-                                if let Some(handle_arc) = mgr_guard.get_cached(&conn_key) {
-                                    let handle = handle_arc.lock().await;
-                                    let cmd = format!(
-                                        "tmux rename-session -t {} {} 2>/dev/null || true",
-                                        old_tmux, new_tmux
-                                    );
-                                    let _ = ssh::connection::exec_command(&handle, &cmd).await;
-                                }
-                            },
-                            |_| Message::Noop,
-                        );
+                        // FR-SESSION-06: also rename tmux session on the server
+                        if is_russh && has_conn_params {
+                            let sanitized: String = new_label
+                                .chars()
+                                .map(|c| {
+                                    if c.is_alphanumeric() || c == '-' || c == '_' {
+                                        c
+                                    } else {
+                                        '-'
+                                    }
+                                })
+                                .collect();
+                            let new_tmux =
+                                format!("{}--shellkeep-{}", self.current_environment, sanitized);
+                            if let Some(win) = self.active_window_mut() {
+                                win.tabs[index].tmux_session = new_tmux.clone();
+                            }
+                            let mgr = self.conn_manager.clone();
+                            // SAFETY: has_conn_params checked above
+                            #[allow(clippy::unwrap_used)]
+                            let conn = conn_params.unwrap();
+                            rename_task = Task::perform(
+                                async move {
+                                    let conn_key = conn.key.clone();
+                                    let mgr_guard = mgr.lock().await;
+                                    if let Some(handle_arc) = mgr_guard.get_cached(&conn_key) {
+                                        let handle = handle_arc.lock().await;
+                                        let cmd = format!(
+                                            "tmux rename-session -t {} {} 2>/dev/null || true",
+                                            old_tmux, new_tmux
+                                        );
+                                        let _ = ssh::connection::exec_command(&handle, &cmd).await;
+                                    }
+                                },
+                                |_| Message::Noop,
+                            );
+                        }
                     }
                 }
-                self.renaming_tab = None;
+                if let Some(win) = self.active_window_mut() {
+                    win.renaming_tab = None;
+                }
                 rename_task
             }
 
             Message::TabMoveLeft(index) => {
-                self.tab_context_menu = None;
-                if index > 0 && index < self.tabs.len() {
-                    self.tabs.swap(index, index - 1);
-                    if self.active_tab == index {
-                        self.active_tab -= 1;
-                    } else if self.active_tab == index - 1 {
-                        self.active_tab += 1;
+                if let Some(win) = self.active_window_mut() {
+                    win.tab_context_menu = None;
+                    if index > 0 && index < win.tabs.len() {
+                        win.tabs.swap(index, index - 1);
+                        if win.active_tab == index {
+                            win.active_tab -= 1;
+                        } else if win.active_tab == index - 1 {
+                            win.active_tab += 1;
+                        }
                     }
                 }
                 Task::none()
             }
 
             Message::TabMoveRight(index) => {
-                self.tab_context_menu = None;
-                if index + 1 < self.tabs.len() {
-                    self.tabs.swap(index, index + 1);
-                    if self.active_tab == index {
-                        self.active_tab += 1;
-                    } else if self.active_tab == index + 1 {
-                        self.active_tab -= 1;
+                if let Some(win) = self.active_window_mut() {
+                    win.tab_context_menu = None;
+                    if index + 1 < win.tabs.len() {
+                        win.tabs.swap(index, index + 1);
+                        if win.active_tab == index {
+                            win.active_tab += 1;
+                        } else if win.active_tab == index + 1 {
+                            win.active_tab -= 1;
+                        }
                     }
                 }
                 Task::none()
             }
 
             Message::TabContextMenu(index, x, y) => {
-                self.tab_context_menu = Some((index, x, y));
-                self.context_menu = None;
-                self.show_restore_dropdown = false;
+                if let Some(win) = self.active_window_mut() {
+                    win.tab_context_menu = Some((index, x, y));
+                    win.context_menu = None;
+                    win.show_restore_dropdown = false;
+                }
                 Task::none()
             }
 
@@ -846,17 +925,23 @@ impl ShellKeep {
             }
 
             Message::ShowRestoreDropdown => {
-                self.show_restore_dropdown = !self.show_restore_dropdown;
+                if let Some(win) = self.active_window_mut() {
+                    win.show_restore_dropdown = !win.show_restore_dropdown;
+                }
                 Task::none()
             }
 
             Message::DismissRestoreDropdown => {
-                self.show_restore_dropdown = false;
+                if let Some(win) = self.active_window_mut() {
+                    win.show_restore_dropdown = false;
+                }
                 Task::none()
             }
 
             Message::RestoreHiddenSession(session_uuid) => {
-                self.show_restore_dropdown = false;
+                if let Some(win) = self.active_window_mut() {
+                    win.show_restore_dropdown = false;
+                }
 
                 // Find the hidden session in saved state to get its tmux name and title
                 let shared_path = SharedState::local_cache_path();
@@ -1029,7 +1114,9 @@ impl ShellKeep {
 
                 // Use russh for new connections: open tab immediately, connect async
                 let tmux_session = self.next_tmux_session();
-                self.show_welcome = false;
+                if let Some(win) = self.active_window_mut() {
+                    win.show_welcome = false;
+                }
                 self.open_tab_russh(&label, &tmux_session)
             }
 
@@ -1039,73 +1126,72 @@ impl ShellKeep {
 
     fn handle_key_event(&mut self, event: keyboard::Event) -> Task<Message> {
         if let keyboard::Event::KeyPressed { key, modifiers, .. } = event {
+            let win_tab_count = self.active_window().map(|w| w.tabs.len()).unwrap_or(0);
             // Ctrl+Shift+T — new tab (same server)
             if modifiers.control()
                 && modifiers.shift()
                 && key == keyboard::Key::Character("t".into())
             {
-                if self.current_conn.is_some() {
-                    let n = self.tabs.len() + 1;
-                    let label = format!("Session {n}");
-                    let tmux_session = self.next_tmux_session();
-                    return self.open_tab_russh(&label, &tmux_session);
-                } else if let Some(tab) = self.tabs.last() {
-                    let ssh_args = tab.ssh_args().to_vec();
-                    let n = self.tabs.len() + 1;
-                    let label = format!("Session {n}");
-                    self.open_tab_with_tmux(&ssh_args, &label);
-                } else {
-                    self.show_welcome = true;
-                }
+                return self.update(Message::NewTab);
             }
-            // Ctrl+Shift+N — new window
+            // Ctrl+Shift+N — new window for the current server
             if modifiers.control()
                 && modifiers.shift()
                 && key == keyboard::Key::Character("n".into())
-                && let Ok(exe) = std::env::current_exe()
             {
-                let _ = std::process::Command::new(exe).spawn();
+                return self.update(Message::NewWindow);
             }
             // Ctrl+Shift+W — close current tab (goes through confirmation)
             if modifiers.control()
                 && modifiers.shift()
                 && key == keyboard::Key::Character("w".into())
-                && !self.tabs.is_empty()
+                && win_tab_count > 0
             {
-                return self.update(Message::CloseTab(self.active_tab));
+                let active = self.active_window().map(|w| w.active_tab).unwrap_or(0);
+                return self.update(Message::CloseTab(active));
             }
             // Ctrl+Tab — next tab
             if modifiers.control()
                 && !modifiers.shift()
                 && key == keyboard::Key::Named(keyboard::key::Named::Tab)
-                && !self.tabs.is_empty()
+                && win_tab_count > 0
+                && let Some(win) = self.active_window_mut()
             {
-                self.active_tab = (self.active_tab + 1) % self.tabs.len();
-                self.show_welcome = false;
-                self.update_title();
+                win.active_tab = (win.active_tab + 1) % win.tabs.len();
+                win.show_welcome = false;
+                win.update_title();
             }
             // Ctrl+Shift+Tab — previous tab
             if modifiers.control()
                 && modifiers.shift()
                 && key == keyboard::Key::Named(keyboard::key::Named::Tab)
-                && !self.tabs.is_empty()
+                && win_tab_count > 0
+                && let Some(win) = self.active_window_mut()
             {
-                if self.active_tab == 0 {
-                    self.active_tab = self.tabs.len() - 1;
+                if win.active_tab == 0 {
+                    win.active_tab = win.tabs.len() - 1;
                 } else {
-                    self.active_tab -= 1;
+                    win.active_tab -= 1;
                 }
-                self.show_welcome = false;
-                self.update_title();
+                win.show_welcome = false;
+                win.update_title();
             }
             // F2 — rename current tab
-            if key == keyboard::Key::Named(keyboard::key::Named::F2)
-                && !self.tabs.is_empty()
-                && self.renaming_tab.is_none()
-            {
-                self.rename_input = self.tabs[self.active_tab].label.clone();
-                self.renaming_tab = Some(self.active_tab);
-                return iced_runtime::widget::operation::focus(RENAME_INPUT_ID);
+            if key == keyboard::Key::Named(keyboard::key::Named::F2) && win_tab_count > 0 {
+                let renaming = self.active_window().and_then(|w| w.renaming_tab);
+                if renaming.is_none() {
+                    let label = self
+                        .active_window()
+                        .and_then(|w| w.tabs.get(w.active_tab))
+                        .map(|t| t.label.clone());
+                    if let Some(win) = self.active_window_mut() {
+                        win.renaming_tab = Some(win.active_tab);
+                    }
+                    if let Some(label) = label {
+                        self.rename_input = label;
+                    }
+                    return iced_runtime::widget::operation::focus(RENAME_INPUT_ID);
+                }
             }
             // Ctrl+Shift+= or Ctrl+= — zoom in
             if modifiers.control()
@@ -1136,7 +1222,7 @@ impl ShellKeep {
             if modifiers.control()
                 && modifiers.shift()
                 && key == keyboard::Key::Character("s".into())
-                && !self.tabs.is_empty()
+                && win_tab_count > 0
             {
                 return self.update(Message::ExportScrollback);
             }
@@ -1144,7 +1230,7 @@ impl ShellKeep {
             if modifiers.control()
                 && modifiers.shift()
                 && key == keyboard::Key::Character("a".into())
-                && !self.tabs.is_empty()
+                && win_tab_count > 0
             {
                 return self.update(Message::CopyScrollback);
             }
@@ -1161,22 +1247,28 @@ impl ShellKeep {
             if key == keyboard::Key::Named(keyboard::key::Named::Escape) {
                 if self.search.active {
                     return self.update(Message::SearchClose);
-                } else if self.context_menu.is_some() {
-                    self.context_menu = None;
-                } else if self.renaming_tab.is_some() {
-                    self.renaming_tab = None;
-                } else if self.show_welcome && !self.tabs.is_empty() {
-                    self.show_welcome = false;
+                } else if let Some(win) = self.active_window_mut() {
+                    if win.context_menu.is_some() {
+                        win.context_menu = None;
+                    } else if win.renaming_tab.is_some() {
+                        win.renaming_tab = None;
+                    } else if win.show_welcome && !win.tabs.is_empty() {
+                        win.show_welcome = false;
+                    }
                 }
             }
             // Tab / Shift+Tab — cycle focus between form inputs on dialogs/welcome
+            let show_welcome = self.active_window().is_some_and(|w| w.show_welcome);
+            let is_renaming = self
+                .active_window()
+                .is_some_and(|w| w.renaming_tab.is_some());
             if key == keyboard::Key::Named(keyboard::key::Named::Tab)
-                && (self.show_welcome
+                && (show_welcome
                     || self.dialogs.show_env_dialog
                     || self.dialogs.show_new_env_dialog
                     || self.dialogs.show_rename_env_dialog
                     || self.search.active
-                    || self.renaming_tab.is_some())
+                    || is_renaming)
             {
                 return if modifiers.shift() {
                     iced_runtime::widget::operation::focus_previous()
@@ -1196,14 +1288,29 @@ impl ShellKeep {
         match message {
             // FR-TABS-17: window close requested by window manager
             Message::WindowCloseRequested(win_id) => {
+                // Count active sessions in the window being closed
                 let active_count = self
-                    .tabs
-                    .iter()
-                    .filter(|t| !t.is_dead() && t.terminal.is_some())
-                    .count();
+                    .windows
+                    .get(&win_id)
+                    .map(|w| {
+                        w.tabs
+                            .iter()
+                            .filter(|t| !t.is_dead() && t.terminal.is_some())
+                            .count()
+                    })
+                    .unwrap_or(0);
                 if active_count == 0 {
-                    // FR-TABS-18: no active sessions, close immediately
+                    // No active sessions in this window — close it
+                    self.windows.remove(&win_id);
+                    self.window_order.retain(|&id| id != win_id);
+                    if self.focused_window == Some(win_id) {
+                        self.focused_window = self.window_order.first().copied();
+                    }
                     self.flush_state();
+                    // If this was the last window, exit
+                    if self.windows.is_empty() {
+                        return Task::batch([window::close(win_id), iced::exit()]);
+                    }
                     return window::close(win_id);
                 }
                 // Show confirmation dialog, remember which window to close
@@ -1215,12 +1322,18 @@ impl ShellKeep {
             Message::CloseDialogClose => {
                 self.dialogs.show_close_dialog = false;
                 self.flush_state();
-                // FR-LOCK-10: lock is released via orphan detection (2x keepalive timeout)
-                // when the SSH connection drops on process exit.
                 if let Some(id) = self.dialogs.close_window_id.take() {
+                    self.windows.remove(&id);
+                    self.window_order.retain(|&wid| wid != id);
+                    if self.focused_window == Some(id) {
+                        self.focused_window = self.window_order.first().copied();
+                    }
+                    if self.windows.is_empty() {
+                        return Task::batch([window::close(id), iced::exit()]);
+                    }
                     return window::close(id);
                 }
-                std::process::exit(0);
+                iced::exit()
             }
 
             Message::CloseDialogCancel => {
@@ -1439,7 +1552,7 @@ impl ShellKeep {
                     let _ = ssh::known_hosts::remove_host_key(&prompt.host, prompt.port);
                 }
                 self.dialogs.pending_host_key_prompt = None;
-                for tab in &mut self.tabs {
+                for tab in self.all_tabs_mut() {
                     tab.mark_disconnected(Some("Host key rejected by user".to_string()));
                 }
                 self.error = Some("Connection cancelled: host key rejected.".to_string());
@@ -1460,7 +1573,7 @@ impl ShellKeep {
                 self.dialogs.show_password_dialog = false;
                 self.dialogs.password_input.clear();
                 if let Some(tab_id) = self.dialogs.password_target_tab.take()
-                    && let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id)
+                    && let Some(tab) = self.find_tab_mut(tab_id)
                 {
                     tab.mark_disconnected(Some("Authentication cancelled".to_string()));
                 }
@@ -1473,7 +1586,7 @@ impl ShellKeep {
             Message::LockCancel => {
                 self.dialogs.show_lock_dialog = false;
                 if let Some(tab_id) = self.dialogs.lock_target_tab.take()
-                    && let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id)
+                    && let Some(tab) = self.find_tab_mut(tab_id)
                 {
                     tab.mark_disconnected(Some("Lock takeover cancelled".to_string()));
                 }
@@ -1499,7 +1612,7 @@ impl ShellKeep {
             let mgr = self.conn_manager.clone();
             let conn_key = conn.key.clone();
 
-            if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+            if let Some(tab) = self.find_tab_mut(tab_id) {
                 let phase = Arc::new(std::sync::Mutex::new(String::new()));
                 tab.last_error = None;
 
@@ -1538,7 +1651,7 @@ impl ShellKeep {
         self.dialogs.show_lock_dialog = false;
         if let Some(tab_id) = self.dialogs.lock_target_tab.take()
             && let Some(conn) = self.current_conn.clone()
-            && let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id)
+            && let Some(tab) = self.find_tab_mut(tab_id)
         {
             let phase = Arc::new(std::sync::Mutex::new(String::new()));
             tab.last_error = None;
@@ -1582,7 +1695,7 @@ impl ShellKeep {
                             current
                         );
                         self.last_gateway = current;
-                        for tab in &mut self.tabs {
+                        for tab in self.all_tabs_mut() {
                             if tab.is_auto_reconnect() {
                                 tab.reset_reconnect();
                             }
@@ -1649,8 +1762,7 @@ impl ShellKeep {
                 let conn_key = conn.key.clone();
                 // Collect tab IDs that are connected via russh
                 let tab_ids: Vec<super::tab::TabId> = self
-                    .tabs
-                    .iter()
+                    .all_tabs()
                     .filter(|t| t.is_russh() && !t.is_dead() && t.terminal.is_some())
                     .map(|t| t.id)
                     .collect();
@@ -1687,7 +1799,7 @@ impl ShellKeep {
             Message::LatencyMeasured(_, latency) => {
                 // All tabs on the same connection share the same latency
                 if self.current_conn.is_some() {
-                    for tab in &mut self.tabs {
+                    for tab in self.all_tabs_mut() {
                         if tab.is_russh() && !tab.is_dead() && tab.terminal.is_some() {
                             tab.last_latency_ms = latency;
                         }
@@ -1726,8 +1838,7 @@ impl ShellKeep {
     fn handle_auto_reconnect(&mut self) -> Task<Message> {
         // FR-RECONNECT-05: limit concurrent reconnections to 5
         let reconnecting_count = self
-            .tabs
-            .iter()
+            .all_tabs()
             .filter(|t| {
                 t.is_russh()
                     && t.terminal.is_some()
@@ -1741,25 +1852,87 @@ impl ShellKeep {
             return Task::none();
         }
 
-        let reconnect_indices: Vec<usize> = self
-            .tabs
+        // Find the first window and tab index that needs reconnection
+        let reconnect_target: Option<(window::Id, usize)> = self
+            .windows
             .iter()
-            .enumerate()
-            .filter(|(_, t)| t.is_auto_reconnect())
-            .map(|(i, _)| i)
-            .collect();
+            .flat_map(|(win_id, win)| {
+                win.tabs
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, t)| t.is_auto_reconnect())
+                    .map(move |(i, _)| (*win_id, i))
+            })
+            .next();
 
-        if let Some(&index) = reconnect_indices.first() {
-            let attempt = self.tabs[index].reconnect_attempts();
+        // Legacy compatibility: also build flat indices for the active window
+        let win_id = match self.active_window_id() {
+            Some(id) => id,
+            None => return Task::none(),
+        };
+        let reconnect_indices: Vec<usize> = self
+            .windows
+            .get(&win_id)
+            .map(|w| {
+                w.tabs
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, t)| t.is_auto_reconnect())
+                    .map(|(i, _)| i)
+                    .collect()
+            })
+            .unwrap_or_default();
+        // If we found a target in any window, use that
+        if let Some((target_win_id, target_idx)) = reconnect_target
+            && (!reconnect_indices.contains(&target_idx) || target_win_id != win_id)
+        {
+            // Target is in a different window — reconnect there
+            let win = match self.windows.get_mut(&target_win_id) {
+                Some(w) => w,
+                None => return Task::none(),
+            };
+            let tab = &mut win.tabs[target_idx];
+            let attempt = tab.reconnect_attempts();
             let next_delay =
                 reconnect_backoff_delay(self.config.ssh.reconnect_backoff_base, attempt);
-            self.tabs[index].set_reconnect_delay_ms(next_delay);
+            tab.set_reconnect_delay_ms(next_delay);
             tracing::info!(
                 "auto-reconnecting tab {} (attempt {}, next delay {}ms)",
-                self.tabs[index].id,
-                self.tabs[index].reconnect_attempts(),
+                tab.id,
+                tab.reconnect_attempts(),
                 next_delay,
             );
+            return self.reconnect_tab_in_window(target_win_id, target_idx);
+        }
+
+        // For simplicity, reconnect within the active window using flat indices
+        let reconnect_indices: Vec<usize> = self
+            .active_window()
+            .map(|w| {
+                w.tabs
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, t)| t.is_auto_reconnect())
+                    .map(|(i, _)| i)
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        if let Some(&index) = reconnect_indices.first() {
+            let backoff_base = self.config.ssh.reconnect_backoff_base;
+            if let Some(win) = self.active_window_mut()
+                && index < win.tabs.len()
+            {
+                let attempt = win.tabs[index].reconnect_attempts();
+                let next_delay = reconnect_backoff_delay(backoff_base, attempt);
+                win.tabs[index].set_reconnect_delay_ms(next_delay);
+                tracing::info!(
+                    "auto-reconnecting tab {} (attempt {}, next delay {}ms)",
+                    win.tabs[index].id,
+                    win.tabs[index].reconnect_attempts(),
+                    next_delay,
+                );
+            }
             return self.reconnect_tab(index);
         }
         Task::none()
@@ -1789,7 +1962,7 @@ impl ShellKeep {
                 font_family: new_config.terminal.font_family.clone(),
                 ..FontSettings::default()
             };
-            for tab in &mut self.tabs {
+            for tab in self.all_tabs_mut() {
                 if let Some(ref mut terminal) = tab.terminal {
                     terminal.handle(iced_term::Command::ChangeFont(new_font.clone()));
                 }
@@ -1828,16 +2001,21 @@ impl ShellKeep {
     fn handle_terminal_message(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::TerminalEvent(iced_term::Event::ContextMenu(_id, x, y)) => {
-                self.context_menu = Some((x, y));
-                self.renaming_tab = None;
-                self.tab_context_menu = None;
+                if let Some(win) = self.active_window_mut() {
+                    win.context_menu = Some((x, y));
+                    win.renaming_tab = None;
+                    win.tab_context_menu = None;
+                }
                 Task::none()
             }
 
             // FR-TABS-11: context menu copy — copy selected text to clipboard
             Message::ContextMenuCopy => {
-                self.context_menu = None;
-                if let Some(tab) = self.tabs.get(self.active_tab)
+                if let Some(win) = self.active_window_mut() {
+                    win.context_menu = None;
+                }
+                if let Some(win) = self.active_window()
+                    && let Some(tab) = win.tabs.get(win.active_tab)
                     && let Some(ref terminal) = tab.terminal
                 {
                     let selected = terminal.selectable_content();
@@ -1850,10 +2028,12 @@ impl ShellKeep {
 
             // FR-TABS-11: context menu paste — read clipboard and send to terminal
             Message::ContextMenuPaste => {
-                self.context_menu = None;
+                if let Some(win) = self.active_window_mut() {
+                    win.context_menu = None;
+                }
                 let tab_id = self
-                    .tabs
-                    .get(self.active_tab)
+                    .active_window()
+                    .and_then(|w| w.tabs.get(w.active_tab))
                     .map(|t| t.id)
                     .unwrap_or(super::tab::TabId(0));
                 iced::clipboard::read().map(move |text| {
@@ -1866,10 +2046,12 @@ impl ShellKeep {
             }
 
             Message::ContextMenuDismiss => {
-                self.context_menu = None;
-                self.tab_context_menu = None;
-                self.renaming_tab = None;
-                self.show_restore_dropdown = false;
+                if let Some(win) = self.active_window_mut() {
+                    win.context_menu = None;
+                    win.tab_context_menu = None;
+                    win.renaming_tab = None;
+                    win.show_restore_dropdown = false;
+                }
                 Task::none()
             }
 
@@ -1882,18 +2064,44 @@ impl ShellKeep {
                 self.handle_terminal_backend_call(super::tab::TabId(id), cmd)
             }
 
-            // FR-STATE-14: track window geometry changes
-            Message::WindowMoved(pos) => {
-                self.window_x = Some(pos.x as i32);
-                self.window_y = Some(pos.y as i32);
-                self.save_geometry();
+            // FR-STATE-14: track window geometry changes (per-window)
+            Message::WindowMoved(win_id, pos) => {
+                if let Some(win) = self.windows.get_mut(&win_id) {
+                    win.window_x = Some(pos.x as i32);
+                    win.window_y = Some(pos.y as i32);
+                }
+                // Also track focus
+                self.focused_window = Some(win_id);
+                self.save_geometry(win_id);
                 Task::none()
             }
 
-            Message::WindowResized(size) => {
-                self.window_width = size.width as u32;
-                self.window_height = size.height as u32;
-                self.save_geometry();
+            Message::WindowResized(win_id, size) => {
+                if let Some(win) = self.windows.get_mut(&win_id) {
+                    win.window_width = size.width as u32;
+                    win.window_height = size.height as u32;
+                }
+                self.save_geometry(win_id);
+                Task::none()
+            }
+
+            // Phase 4: open a new window
+            Message::NewWindow => {
+                let (new_id, open_task) = window::open(window::Settings {
+                    size: iced::Size::new(900.0, 600.0),
+                    ..window::Settings::default()
+                });
+                let mut new_win = super::AppWindow::new(new_id);
+                new_win.show_welcome = true;
+                self.windows.insert(new_id, new_win);
+                self.window_order.push(new_id);
+                self.focused_window = Some(new_id);
+                open_task.map(|_| Message::Noop)
+            }
+
+            // Phase 4: window opened callback
+            Message::WindowOpened(win_id) => {
+                self.focused_window = Some(win_id);
                 Task::none()
             }
 
@@ -1911,7 +2119,7 @@ impl ShellKeep {
         let mut shutdown = false;
         let mut resize_info: Option<(u32, u32)> = None;
 
-        if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == id) {
+        if let Some(tab) = self.find_tab_mut(id) {
             let is_russh = tab.is_russh();
             if let Some(ref mut terminal) = tab.terminal {
                 let action = terminal.handle(iced_term::Command::ProxyToBackend(cmd));
@@ -1938,7 +2146,8 @@ impl ShellKeep {
         }
 
         // Handle shutdown after terminal borrow is released
-        if shutdown && let Some(tab) = self.tabs.iter_mut().find(|t| t.id == id) {
+        let max_attempts = self.config.ssh.reconnect_max_attempts;
+        if shutdown && let Some(tab) = self.find_tab_mut(id) {
             tab.terminal = None;
             let attempt = tab.reconnect_attempts();
             let was_auto = tab.is_auto_reconnect()
@@ -1947,7 +2156,7 @@ impl ShellKeep {
                     super::tab::ConnectionState::Connected { .. }
                         | super::tab::ConnectionState::Connecting { .. }
                 );
-            if was_auto && attempt < self.config.ssh.reconnect_max_attempts {
+            if was_auto && attempt < max_attempts {
                 let new_attempt = attempt + 1;
                 let phase = Arc::new(std::sync::Mutex::new(String::new()));
                 tab.mark_reconnecting(new_attempt, 0, phase, None);
@@ -1963,7 +2172,7 @@ impl ShellKeep {
 
         // Propagate resize to SSH channel
         if let Some((cols, rows)) = resize_info
-            && let Some(tab) = self.tabs.iter_mut().find(|t| t.id == id)
+            && let Some(tab) = self.find_tab_mut(id)
         {
             if tab.needs_initial_resize {
                 tracing::info!("tab {id}: initial terminal size {cols}x{rows}, sending to SSH");
@@ -2016,8 +2225,11 @@ impl ShellKeep {
             }
 
             Message::SearchNext => {
-                if let Some(ref mut regex) = self.search.regex
-                    && let Some(tab) = self.tabs.get_mut(self.active_tab)
+                let active_tab = self.active_window().map(|w| w.active_tab).unwrap_or(0);
+                let win_id = self.active_window_id();
+                if let (Some(regex), Some(wid)) = (&mut self.search.regex, win_id)
+                    && let Some(win) = self.windows.get_mut(&wid)
+                    && let Some(tab) = win.tabs.get_mut(active_tab)
                     && let Some(ref mut terminal) = tab.terminal
                 {
                     let origin = self
@@ -2036,8 +2248,11 @@ impl ShellKeep {
             }
 
             Message::SearchPrev => {
-                if let Some(ref mut regex) = self.search.regex
-                    && let Some(tab) = self.tabs.get_mut(self.active_tab)
+                let active_tab = self.active_window().map(|w| w.active_tab).unwrap_or(0);
+                let win_id = self.active_window_id();
+                if let (Some(regex), Some(wid)) = (&mut self.search.regex, win_id)
+                    && let Some(win) = self.windows.get_mut(&wid)
+                    && let Some(tab) = win.tabs.get_mut(active_tab)
                     && let Some(ref mut terminal) = tab.terminal
                 {
                     let origin = self
@@ -2069,7 +2284,8 @@ impl ShellKeep {
 
             // FR-TERMINAL-18: export scrollback to text file
             Message::ExportScrollback => {
-                if let Some(tab) = self.tabs.get(self.active_tab)
+                if let Some(win) = self.active_window()
+                    && let Some(tab) = win.tabs.get(win.active_tab)
                     && let Some(ref terminal) = tab.terminal
                 {
                     let text = terminal.scrollback_text();
@@ -2097,7 +2313,8 @@ impl ShellKeep {
 
             // FR-TABS-12: copy entire scrollback to clipboard
             Message::CopyScrollback => {
-                if let Some(tab) = self.tabs.get(self.active_tab)
+                if let Some(win) = self.active_window()
+                    && let Some(tab) = win.tabs.get(win.active_tab)
                     && let Some(ref terminal) = tab.terminal
                 {
                     let text = terminal.scrollback_text();

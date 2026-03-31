@@ -78,9 +78,13 @@ pub(crate) enum Message {
     CloseDialogClose,
     /// FR-TABS-17: close dialog — cancel (dismiss dialog)
     CloseDialogCancel,
-    /// FR-STATE-14: window moved or resized
-    WindowMoved(Point),
-    WindowResized(Size),
+    /// FR-STATE-14: window moved or resized (with window ID)
+    WindowMoved(window::Id, Point),
+    WindowResized(window::Id, Size),
+    /// Phase 4: open a new window for the current server
+    NewWindow,
+    /// Phase 4: a new window has been opened (iced assigned ID)
+    WindowOpened(window::Id),
     /// FR-TERMINAL-18: export scrollback to file
     ExportScrollback,
     /// FR-TABS-12: copy entire scrollback to clipboard

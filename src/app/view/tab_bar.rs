@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 shellkeep contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+use crate::app::AppWindow;
 use crate::app::Message;
 use crate::app::view::styles;
 use crate::{RENAME_INPUT_ID, ShellKeep};
@@ -10,12 +11,12 @@ use iced::{Color, Element, Length, Theme};
 use shellkeep::state::state_file::SharedState;
 
 impl ShellKeep {
-    pub(crate) fn view_tab_bar(&self) -> Element<'_, Message> {
+    pub(crate) fn view_tab_bar<'a>(&'a self, win: &'a AppWindow) -> Element<'a, Message> {
         let mut tabs_row: Vec<Element<'_, Message>> = Vec::new();
 
-        for (i, tab) in self.tabs.iter().enumerate() {
-            let is_active = i == self.active_tab && !self.show_welcome;
-            let is_renaming = self.renaming_tab == Some(i);
+        for (i, tab) in win.tabs.iter().enumerate() {
+            let is_active = i == win.active_tab && !win.show_welcome;
+            let is_renaming = win.renaming_tab == Some(i);
 
             let bg = if is_active {
                 Color::from_rgb8(0x31, 0x32, 0x44)

@@ -169,8 +169,22 @@ fn main() -> iced::Result {
             .and_then(|s| s.window_geometry.get("main").cloned())
     };
 
-    let mut app_builder = iced::application(
-        move || ShellKeep::new(initial_ssh_args.clone()),
+    // Build initial window settings from saved geometry
+    let mut window_settings = window::Settings::default();
+    if let Some(ref geo) = saved_window {
+        window_settings.size = Size::new(geo.width as f32, geo.height as f32);
+        if let (Some(x), Some(y)) = (geo.x, geo.y) {
+            window_settings.position = window::Position::Specific(Point::new(x as f32, y as f32));
+        }
+    } else {
+        window_settings.size = Size::new(900.0, 600.0);
+    }
+
+    // Use daemon builder for multi-window support. The first window is
+    // opened inside ShellKeep::new() via window::open().
+    let initial_window_settings = window_settings;
+    iced::daemon(
+        move || ShellKeep::new(initial_ssh_args.clone(), initial_window_settings.clone()),
         ShellKeep::update,
         ShellKeep::view,
     )
@@ -178,18 +192,5 @@ fn main() -> iced::Result {
     .subscription(ShellKeep::subscription)
     .theme(ShellKeep::theme)
     .antialiasing(true)
-    // FR-TABS-17: intercept window close to show confirmation dialog
-    .exit_on_close_request(false);
-
-    if let Some(ref geo) = saved_window {
-        app_builder = app_builder.window_size(Size::new(geo.width as f32, geo.height as f32));
-        if let (Some(x), Some(y)) = (geo.x, geo.y) {
-            app_builder =
-                app_builder.position(window::Position::Specific(Point::new(x as f32, y as f32)));
-        }
-    } else {
-        app_builder = app_builder.window_size((900.0, 600.0));
-    }
-
-    app_builder.run()
+    .run()
 }

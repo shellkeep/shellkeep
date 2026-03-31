@@ -13,7 +13,10 @@ use shellkeep::state::history;
 
 impl ShellKeep {
     pub(crate) fn view_dead_tab<'a>(&'a self, tab: &'a Tab) -> Element<'a, Message> {
-        let index = self.tabs.iter().position(|t| t.id == tab.id).unwrap_or(0);
+        let index = self
+            .active_window()
+            .and_then(|w| w.tabs.iter().position(|t| t.id == tab.id))
+            .unwrap_or(0);
 
         // FR-UI-07..08: enhanced dead session banner
         let banner_text = if tab.reconnect_attempts() > 0 {

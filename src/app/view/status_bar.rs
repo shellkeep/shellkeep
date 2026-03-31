@@ -8,11 +8,13 @@ use crate::app::view::styles;
 use iced::widget::{Space, container, row, text};
 use iced::{Color, Element, Length};
 
+use crate::app::AppWindow;
+
 impl ShellKeep {
-    pub(crate) fn view_status_bar(&self) -> Element<'_, Message> {
-        let active_count = self.tabs.iter().filter(|t| !t.is_dead()).count();
-        let dead_count = self.tabs.iter().filter(|t| t.is_dead()).count();
-        let total = self.tabs.len();
+    pub(crate) fn view_status_bar<'a>(&'a self, win: &'a AppWindow) -> Element<'a, Message> {
+        let active_count = win.tabs.iter().filter(|t| !t.is_dead()).count();
+        let dead_count = win.tabs.iter().filter(|t| t.is_dead()).count();
+        let total = win.tabs.len();
 
         let zoom_info = if (self.current_font_size - self.config.terminal.font_size).abs() > 0.1 {
             format!("  {}pt", self.current_font_size)
@@ -29,7 +31,7 @@ impl ShellKeep {
             )
         };
 
-        let active_label = if let Some(tab) = self.tabs.get(self.active_tab) {
+        let active_label = if let Some(tab) = win.tabs.get(win.active_tab) {
             tab.label.clone()
         } else {
             String::new()

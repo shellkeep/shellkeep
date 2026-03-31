@@ -29,6 +29,7 @@ use shellkeep::state::state_file::{
 };
 use shellkeep::tray::Tray;
 use shellkeep::{i18n, ssh};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -81,21 +82,81 @@ pub(crate) struct DialogState {
 }
 
 // ---------------------------------------------------------------------------
+// Per-window state — Phase 4: server > window > tab hierarchy
+// ---------------------------------------------------------------------------
+
+/// Per-window state. Each window contains tabs for a single server connection.
+#[allow(dead_code)]
+pub(crate) struct AppWindow {
+    pub(crate) id: window::Id,
+    /// Stable UUID for state persistence across restarts
+    pub(crate) server_window_id: String,
+    pub(crate) tabs: Vec<tab::Tab>,
+    pub(crate) active_tab: usize,
+    pub(crate) title: String,
+    /// Whether the welcome screen is shown in this window
+    pub(crate) show_welcome: bool,
+    pub(crate) renaming_tab: Option<usize>,
+    pub(crate) context_menu: Option<(f32, f32)>,
+    pub(crate) tab_context_menu: Option<(usize, f32, f32)>,
+    /// Whether the restore-hidden-sessions dropdown is visible
+    pub(crate) show_restore_dropdown: bool,
+    /// FR-STATE-14: current window geometry for persistence
+    pub(crate) window_width: u32,
+    pub(crate) window_height: u32,
+    pub(crate) window_x: Option<i32>,
+    pub(crate) window_y: Option<i32>,
+    /// FR-STATE-14: debounce timer for geometry saves
+    pub(crate) last_geometry_save: Option<std::time::Instant>,
+}
+
+impl AppWindow {
+    pub(crate) fn new(id: window::Id) -> Self {
+        Self {
+            id,
+            server_window_id: uuid::Uuid::new_v4().to_string(),
+            tabs: Vec::new(),
+            active_tab: 0,
+            title: "shellkeep".to_string(),
+            show_welcome: false,
+            renaming_tab: None,
+            context_menu: None,
+            tab_context_menu: None,
+            show_restore_dropdown: false,
+            window_width: 900,
+            window_height: 600,
+            window_x: None,
+            window_y: None,
+            last_geometry_save: None,
+        }
+    }
+
+    pub(crate) fn update_title(&mut self) {
+        if let Some(tab) = self.tabs.get(self.active_tab) {
+            let status = if tab.is_dead() { " (disconnected)" } else { "" };
+            self.title = format!("shellkeep — {}{}", tab.label, status);
+        } else {
+            self.title = "shellkeep".to_string();
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // App state
 // ---------------------------------------------------------------------------
 
 pub(crate) struct ShellKeep {
-    pub(crate) tabs: Vec<tab::Tab>,
-    pub(crate) active_tab: usize,
+    /// Multi-window state: each window has its own tabs
+    pub(crate) windows: HashMap<window::Id, AppWindow>,
+    /// Ordered list of window IDs for consistent iteration
+    pub(crate) window_order: Vec<window::Id>,
+    /// The currently focused window
+    pub(crate) focused_window: Option<window::Id>,
     pub(crate) next_id: u64,
-    pub(crate) show_welcome: bool,
-    pub(crate) renaming_tab: Option<usize>,
     /// FR-RECONNECT-02: spinner animation frame index
     pub(crate) spinner_frame: usize,
     pub(crate) rename_input: String,
     pub(crate) current_font_size: f32,
-    pub(crate) context_menu: Option<(f32, f32)>,
-    pub(crate) tab_context_menu: Option<(usize, f32, f32)>,
     /// Toast message (auto-dismisses)
     pub(crate) toast: Option<(String, std::time::Instant)>,
     /// Current connection params (for russh control connection)
@@ -116,7 +177,6 @@ pub(crate) struct ShellKeep {
 
     pub(crate) config: Config,
     pub(crate) recent: RecentConnections,
-    pub(crate) title_text: String,
     pub(crate) error: Option<String>,
 
     /// System tray icon (FR-TRAY-01)
@@ -130,13 +190,6 @@ pub(crate) struct ShellKeep {
 
     // Dialog state (close, env, host key, password, lock)
     pub(crate) dialogs: DialogState,
-    /// FR-STATE-14: current window geometry for persistence
-    pub(crate) window_width: u32,
-    pub(crate) window_height: u32,
-    pub(crate) window_x: Option<i32>,
-    pub(crate) window_y: Option<i32>,
-    /// FR-STATE-14: debounce timer for geometry saves
-    pub(crate) last_geometry_save: Option<std::time::Instant>,
     /// FR-CONN-20: remote state syncer (SFTP or shell fallback)
     pub(crate) state_syncer: Option<Arc<ssh::sftp::StateSyncer>>,
 
@@ -145,8 +198,6 @@ pub(crate) struct ShellKeep {
 
     /// Hidden session UUIDs (per-device, not restored as tabs on connect)
     pub(crate) hidden_sessions: Vec<String>,
-    /// Whether the restore-hidden-sessions dropdown is visible
-    pub(crate) show_restore_dropdown: bool,
 
     /// FR-RECONNECT-08: last known default gateway (Linux network monitoring)
     #[cfg(target_os = "linux")]
@@ -158,28 +209,36 @@ pub(crate) struct ShellKeep {
 // ---------------------------------------------------------------------------
 
 impl ShellKeep {
-    pub(crate) fn new(initial_ssh_args: Option<Vec<String>>) -> (Self, Task<Message>) {
+    pub(crate) fn new(
+        initial_ssh_args: Option<Vec<String>>,
+        initial_window_settings: window::Settings,
+    ) -> (Self, Task<Message>) {
         let username = crate::cli::default_ssh_username();
         let config = Config::load();
         let recent = RecentConnections::load();
         let default_port = config.ssh.default_port.to_string();
+
+        // Open the first window via daemon API
+        let (first_window_id, open_task) = window::open(initial_window_settings);
+        let mut first_window = AppWindow::new(first_window_id);
+        first_window.server_window_id = "main".to_string();
+
+        let mut windows = HashMap::new();
+        windows.insert(first_window_id, first_window);
+
         let mut app = ShellKeep {
-            tabs: Vec::new(),
-            active_tab: 0,
+            windows,
+            window_order: vec![first_window_id],
+            focused_window: Some(first_window_id),
             next_id: 0,
-            show_welcome: false,
-            renaming_tab: None,
             spinner_frame: 0,
             rename_input: String::new(),
             current_font_size: config.terminal.font_size,
-            context_menu: None,
-            tab_context_menu: None,
             toast: None,
             current_conn: None,
             client_id: shellkeep::state::client_id::resolve(config.general.client_id.as_deref()),
             current_environment: "Default".to_string(),
             hidden_sessions: Vec::new(),
-            show_restore_dropdown: false,
             conn_manager: Arc::new(Mutex::new(ConnectionManager::new())),
             sessions_listed: false,
             last_state_save: None,
@@ -194,7 +253,6 @@ impl ShellKeep {
             },
             config,
             recent,
-            title_text: "shellkeep".to_string(),
             error: None,
             tray: None,
             search: SearchState {
@@ -228,11 +286,6 @@ impl ShellKeep {
                 lock_target_tab: None,
                 pending_close_tabs: None,
             },
-            window_width: 900,
-            window_height: 600,
-            window_x: None,
-            window_y: None,
-            last_geometry_save: None,
             state_syncer: None,
             #[cfg(target_os = "linux")]
             last_gateway: shellkeep::network::read_default_gateway(),
@@ -249,6 +302,10 @@ impl ShellKeep {
 
         // FR-HISTORY-11: clean up old history files on startup
         history::cleanup_old_history(app.config.state.history_max_days);
+
+        // The open_task just signals when the window is ready; map it to a Noop
+        let open_task = open_task.map(|_| Message::Noop);
+
         if let Some(ssh_args) = initial_ssh_args {
             // Parse connection params from CLI args
             let arg_refs: Vec<&str> = ssh_args.iter().map(|s| s.as_str()).collect();
@@ -268,10 +325,13 @@ impl ShellKeep {
             // FR-CONN-21: CLI launch via russh (async, non-blocking)
             // Opens one tab immediately; existing sessions discovered after connect
             let tmux_session = app.next_tmux_session();
-            let task = app.open_tab_russh(&label, &tmux_session);
-            return (app, task);
+            let tab_task = app.open_tab_russh(&label, &tmux_session);
+            return (app, Task::batch([open_task, tab_task]));
         } else {
-            app.show_welcome = true;
+            // Show welcome screen in the first window
+            if let Some(win) = app.windows.get_mut(&first_window_id) {
+                win.show_welcome = true;
+            }
         }
 
         // NFR-OBS-11: check for previous crash dumps
@@ -290,7 +350,7 @@ impl ShellKeep {
             }
         }
 
-        (app, Task::none())
+        (app, open_task)
     }
 }
 
@@ -314,6 +374,73 @@ pub(crate) fn escape_regex(input: &str) -> String {
 // ---------------------------------------------------------------------------
 
 impl ShellKeep {
+    // -----------------------------------------------------------------------
+    // Multi-window helpers
+    // -----------------------------------------------------------------------
+
+    /// Get the focused window ID, falling back to the first window.
+    pub(crate) fn active_window_id(&self) -> Option<window::Id> {
+        self.focused_window
+            .or_else(|| self.window_order.first().copied())
+    }
+
+    /// Get an immutable reference to the active (focused) window.
+    pub(crate) fn active_window(&self) -> Option<&AppWindow> {
+        self.active_window_id().and_then(|id| self.windows.get(&id))
+    }
+
+    /// Get a mutable reference to the active (focused) window.
+    pub(crate) fn active_window_mut(&mut self) -> Option<&mut AppWindow> {
+        let id = self.active_window_id();
+        id.and_then(move |id| self.windows.get_mut(&id))
+    }
+
+    /// Get all tabs across all windows (for subscriptions, etc.).
+    pub(crate) fn all_tabs(&self) -> impl Iterator<Item = &tab::Tab> {
+        self.windows.values().flat_map(|w| w.tabs.iter())
+    }
+
+    /// Get all tabs mutably across all windows.
+    pub(crate) fn all_tabs_mut(&mut self) -> impl Iterator<Item = &mut tab::Tab> {
+        self.windows.values_mut().flat_map(|w| w.tabs.iter_mut())
+    }
+
+    /// Find which window contains a tab by TabId. Returns (window_id, tab_index).
+    #[allow(dead_code)]
+    pub(crate) fn find_tab_window(&self, tab_id: TabId) -> Option<(window::Id, usize)> {
+        for (win_id, win) in &self.windows {
+            if let Some(idx) = win.tabs.iter().position(|t| t.id == tab_id) {
+                return Some((*win_id, idx));
+            }
+        }
+        None
+    }
+
+    /// Find a tab by TabId (mutable) across all windows.
+    pub(crate) fn find_tab_mut(&mut self, tab_id: TabId) -> Option<&mut tab::Tab> {
+        for win in self.windows.values_mut() {
+            if let Some(tab) = win.tabs.iter_mut().find(|t| t.id == tab_id) {
+                return Some(tab);
+            }
+        }
+        None
+    }
+
+    /// Find a tab by TabId (immutable) across all windows.
+    #[allow(dead_code)]
+    pub(crate) fn find_tab(&self, tab_id: TabId) -> Option<&tab::Tab> {
+        for win in self.windows.values() {
+            if let Some(tab) = win.tabs.iter().find(|t| t.id == tab_id) {
+                return Some(tab);
+            }
+        }
+        None
+    }
+
+    // -----------------------------------------------------------------------
+    // Tab / session management
+    // -----------------------------------------------------------------------
+
     /// Open a new tab, assigning it the next unused tmux session name.
     /// FR-SESSION-04, FR-SESSION-05, FR-ENV-02: generate tmux session name with
     /// environment and timestamp.
@@ -322,6 +449,7 @@ impl ShellKeep {
     }
 
     /// Open a tab using russh SSH. Returns a Task that establishes the connection.
+    /// The tab is added to the currently focused window.
     pub(crate) fn open_tab_russh(&mut self, label: &str, tmux_session: &str) -> Task<Message> {
         let conn = match &self.current_conn {
             Some(c) => c.clone(),
@@ -365,7 +493,8 @@ impl ShellKeep {
         let history_writer =
             history::HistoryWriter::new(&session_uuid, self.config.state.history_max_size_mb);
         let suuid = session_uuid.clone();
-        self.tabs.push(tab::Tab {
+
+        let new_tab = tab::Tab {
             id,
             label: label.to_string(),
             session_uuid,
@@ -392,10 +521,15 @@ impl ShellKeep {
             },
             history_writer,
             needs_initial_resize: true,
-        });
-        self.active_tab = self.tabs.len() - 1;
+        };
+
+        // Add tab to the active window
+        if let Some(win) = self.active_window_mut() {
+            win.tabs.push(new_tab);
+            win.active_tab = win.tabs.len() - 1;
+            win.update_title();
+        }
         self.error = None;
-        self.update_title();
         self.save_state();
         tracing::info!("opened SSH tab {id}: {label} (tmux: {tmux_session}) via russh");
 
@@ -449,7 +583,7 @@ impl ShellKeep {
 
         match iced_term::Terminal::new(id.0, settings) {
             Ok(terminal) => {
-                self.tabs.push(tab::Tab {
+                let new_tab = tab::Tab {
                     id,
                     label: label.to_string(),
                     session_uuid: uuid::Uuid::new_v4().to_string(),
@@ -467,10 +601,13 @@ impl ShellKeep {
                     },
                     history_writer: None,
                     needs_initial_resize: true,
-                });
-                self.active_tab = self.tabs.len() - 1;
+                };
+                if let Some(win) = self.active_window_mut() {
+                    win.tabs.push(new_tab);
+                    win.active_tab = win.tabs.len() - 1;
+                    win.update_title();
+                }
                 self.error = None;
-                self.update_title();
                 self.save_state();
                 tracing::info!("opened tab {id}: {label} (tmux: {tmux_session})");
             }
@@ -481,20 +618,40 @@ impl ShellKeep {
         }
     }
 
-    /// Close a tab and kill the tmux session on the server.
+    /// Close a tab by index in the active window and kill the tmux session on the server.
     pub(crate) fn close_tab(&mut self, index: usize) -> Task<Message> {
-        if index >= self.tabs.len() {
-            return Task::none();
-        }
-        let count_before = self.tabs.len();
-        let tab = self.tabs.remove(index);
+        let win_id = match self.active_window_id() {
+            Some(id) => id,
+            None => return Task::none(),
+        };
+        self.close_tab_in_window(win_id, index)
+    }
+
+    /// Close a tab by index in a specific window and kill the tmux session.
+    pub(crate) fn close_tab_in_window(
+        &mut self,
+        win_id: window::Id,
+        index: usize,
+    ) -> Task<Message> {
+        let tab = {
+            let win = match self.windows.get_mut(&win_id) {
+                Some(w) => w,
+                None => return Task::none(),
+            };
+            if index >= win.tabs.len() {
+                return Task::none();
+            }
+            let count_before = win.tabs.len();
+            let tab = win.tabs.remove(index);
+            win.active_tab = update::active_tab_after_removal(win.active_tab, count_before, index);
+            win.update_title();
+            tab
+        };
         tracing::info!(
             "closed tab {}: {} (killing tmux session)",
             tab.id,
             tab.label
         );
-        self.active_tab = update::active_tab_after_removal(self.active_tab, count_before, index);
-        self.update_title();
         // Force immediate flush (bypass debounce) so the closed tab is removed
         // from saved state before the app can exit or reconnect.
         self.state_dirty = true;
@@ -506,8 +663,6 @@ impl ShellKeep {
         ));
 
         // Kill the tmux session on the server.
-        // Attempt even for dead tabs — the connection may have recovered,
-        // and failing silently is better than leaving orphaned tmux sessions.
         if tab.is_russh() {
             let tmux_session = tab.tmux_session.clone();
             let mgr = self.conn_manager.clone();
@@ -517,12 +672,10 @@ impl ShellKeep {
                 let keepalive = self.config.ssh.keepalive_interval;
                 return Task::perform(
                     async move {
-                        // Try cached handle first, fall back to fresh connection
                         let mut mgr_guard = mgr.lock().await;
                         let handle_arc = if let Some(h) = mgr_guard.get_cached(&conn_key) {
                             h
                         } else {
-                            // No cached handle — try a fresh connection for the kill
                             match mgr_guard
                                 .get_or_connect(&conn_key, identity.as_deref(), None, keepalive)
                                 .await
@@ -555,18 +708,29 @@ impl ShellKeep {
     /// Hide a tab — disconnect SSH but keep the tmux session alive on the server.
     /// Adds the session UUID to hidden_sessions so it won't be auto-restored.
     pub(crate) fn hide_tab(&mut self, index: usize) {
-        if index >= self.tabs.len() {
-            return;
-        }
-        let count_before = self.tabs.len();
-        let tab = self.tabs.remove(index);
+        let win_id = match self.active_window_id() {
+            Some(id) => id,
+            None => return,
+        };
+        let tab = {
+            let win = match self.windows.get_mut(&win_id) {
+                Some(w) => w,
+                None => return,
+            };
+            if index >= win.tabs.len() {
+                return;
+            }
+            let count_before = win.tabs.len();
+            let tab = win.tabs.remove(index);
+            win.active_tab = update::active_tab_after_removal(win.active_tab, count_before, index);
+            win.update_title();
+            tab
+        };
         // Track the hidden session UUID so it's not restored on reconnect
         if !self.hidden_sessions.contains(&tab.session_uuid) {
             self.hidden_sessions.push(tab.session_uuid.clone());
         }
         tracing::info!("hid tab {}: {} (session kept on server)", tab.id, tab.label);
-        self.active_tab = update::active_tab_after_removal(self.active_tab, count_before, index);
-        self.update_title();
         self.save_state();
         self.toast = Some((
             i18n::t(i18n::SESSION_KEPT).into(),
@@ -575,11 +739,27 @@ impl ShellKeep {
     }
 
     pub(crate) fn reconnect_tab(&mut self, index: usize) -> Task<Message> {
-        if index >= self.tabs.len() {
+        let win_id = match self.active_window_id() {
+            Some(id) => id,
+            None => return Task::none(),
+        };
+        self.reconnect_tab_in_window(win_id, index)
+    }
+
+    pub(crate) fn reconnect_tab_in_window(
+        &mut self,
+        win_id: window::Id,
+        index: usize,
+    ) -> Task<Message> {
+        let win = match self.windows.get_mut(&win_id) {
+            Some(w) => w,
+            None => return Task::none(),
+        };
+        if index >= win.tabs.len() {
             return Task::none();
         }
 
-        let tab = &mut self.tabs[index];
+        let tab = &mut win.tabs[index];
 
         if tab.is_russh() {
             // Russh reconnection: clear old state, create new terminal, launch connection
@@ -613,7 +793,7 @@ impl ShellKeep {
                     let tab_id = tab.id;
                     let tmux = tab.tmux_session.clone();
                     let suuid = tab.session_uuid.clone();
-                    self.update_title();
+                    win.update_title();
 
                     self.start_ssh_connection(
                         tab_id,
@@ -637,16 +817,20 @@ impl ShellKeep {
             let label = tab.label.clone();
             let tmux_session = tab.tmux_session.clone();
 
-            self.tabs.remove(index);
+            win.tabs.remove(index);
+            // Drop mutable borrow before calling method that needs &mut self
             self.open_tab_with_tmux_session(&ssh_args, &label, &tmux_session);
 
-            if self.tabs.len() > 1 && index < self.tabs.len() - 1 {
+            if let Some(win) = self.windows.get_mut(&win_id)
+                && win.tabs.len() > 1
+                && index < win.tabs.len() - 1
+            {
                 // SAFETY: len() > 1 guarantees pop() returns Some
                 #[allow(clippy::unwrap_used)]
-                let tab = self.tabs.pop().unwrap();
-                self.tabs.insert(index, tab);
-                self.active_tab = index;
-                self.update_title();
+                let tab = win.tabs.pop().unwrap();
+                win.tabs.insert(index, tab);
+                win.active_tab = index;
+                win.update_title();
             }
             Task::none()
         }
@@ -698,7 +882,7 @@ impl ShellKeep {
 
     pub(crate) fn apply_font_to_all_tabs(&mut self) {
         let font_settings = make_font_settings(&self.config, self.current_font_size);
-        for tab in &mut self.tabs {
+        for tab in self.all_tabs_mut() {
             if let Some(ref mut terminal) = tab.terminal {
                 terminal.handle(iced_term::Command::ChangeFont(font_settings.clone()));
             }
@@ -723,19 +907,23 @@ impl ShellKeep {
         self.state_dirty = false;
         self.last_state_save = Some(std::time::Instant::now());
 
-        // Build shared state (environments, tabs)
+        // Build shared state (environments, tabs from all windows)
         let mut shared = SharedState::new();
-        let env_tabs: Vec<TabState> = self
-            .tabs
-            .iter()
-            .enumerate()
-            .map(|(i, tab)| TabState {
-                session_uuid: tab.session_uuid.clone(),
-                tmux_session_name: tab.tmux_session.clone(),
-                title: tab.label.clone(),
-                position: i,
-            })
-            .collect();
+        let mut pos = 0usize;
+        let mut env_tabs: Vec<TabState> = Vec::new();
+        for win_id in &self.window_order {
+            if let Some(win) = self.windows.get(win_id) {
+                for tab in &win.tabs {
+                    env_tabs.push(TabState {
+                        session_uuid: tab.session_uuid.clone(),
+                        tmux_session_name: tab.tmux_session.clone(),
+                        title: tab.label.clone(),
+                        position: pos,
+                    });
+                    pos += 1;
+                }
+            }
+        }
         shared.environments.insert(
             self.current_environment.clone(),
             Environment {
@@ -753,29 +941,34 @@ impl ShellKeep {
             }
         }
 
-        // Build device state (geometry, hidden sessions)
+        // Build device state (geometry per window, hidden sessions)
         let mut device = DeviceState::new(&self.client_id);
-        device.window_geometry.insert(
-            "main".to_string(),
-            WindowGeometry {
-                x: self.window_x,
-                y: self.window_y,
-                width: self.window_width,
-                height: self.window_height,
-            },
-        );
-        device.last_active_window = Some("main".to_string());
+        for (win_id, win) in &self.windows {
+            device.window_geometry.insert(
+                win.server_window_id.clone(),
+                WindowGeometry {
+                    x: win.window_x,
+                    y: win.window_y,
+                    width: win.window_width,
+                    height: win.window_height,
+                },
+            );
+            if Some(*win_id) == self.focused_window {
+                device.last_active_window = Some(win.server_window_id.clone());
+            }
+        }
         device.hidden_sessions = self.hidden_sessions.clone();
 
         let shared_path = SharedState::local_cache_path();
         let device_path = DeviceState::local_cache_path(&self.client_id);
 
         // FR-TRAY-02: update tray tooltip with session count
+        let any_show_welcome = self.windows.values().any(|w| w.show_welcome);
         if let Some(ref tray) = self.tray {
-            let active_count = self.tabs.iter().filter(|t| !t.is_dead()).count();
+            let active_count = self.all_tabs().filter(|t| !t.is_dead()).count();
             tray.set_session_count(active_count);
             // FR-TRAY-04: change icon when active sessions exist but window may be hidden
-            tray.set_hidden_active(active_count > 0 && !self.show_welcome);
+            tray.set_hidden_active(active_count > 0 && !any_show_welcome);
         }
 
         // FR-STATE-06: write state to disk asynchronously to avoid blocking the UI
@@ -840,11 +1033,8 @@ impl ShellKeep {
     }
 
     pub(crate) fn update_title(&mut self) {
-        if let Some(tab) = self.tabs.get(self.active_tab) {
-            let status = if tab.is_dead() { " (disconnected)" } else { "" };
-            self.title_text = format!("shellkeep — {}{}", tab.label, status);
-        } else {
-            self.title_text = "shellkeep".to_string();
+        if let Some(win) = self.active_window_mut() {
+            win.update_title();
         }
     }
 
@@ -883,19 +1073,28 @@ impl ShellKeep {
         args
     }
 
-    pub(crate) fn title(&self) -> String {
-        self.title_text.clone()
+    pub(crate) fn title(&self, window_id: window::Id) -> String {
+        self.windows
+            .get(&window_id)
+            .map(|w| w.title.clone())
+            .unwrap_or_else(|| "shellkeep".to_string())
     }
 
-    /// FR-STATE-14: save window geometry (debounced)
-    pub(crate) fn save_geometry(&mut self) {
-        if let Some(last) = self.last_geometry_save
-            && last.elapsed() < std::time::Duration::from_millis(500)
-        {
+    /// FR-STATE-14: save window geometry (debounced, per-window)
+    pub(crate) fn save_geometry(&mut self, window_id: window::Id) {
+        let debounced = if let Some(win) = self.windows.get(&window_id) {
+            win.last_geometry_save
+                .is_some_and(|last| last.elapsed() < std::time::Duration::from_millis(500))
+        } else {
+            false
+        };
+        if debounced {
             self.state_dirty = true;
             return;
         }
-        self.last_geometry_save = Some(std::time::Instant::now());
+        if let Some(win) = self.windows.get_mut(&window_id) {
+            win.last_geometry_save = Some(std::time::Instant::now());
+        }
         self.state_dirty = true;
         self.flush_state();
     }
@@ -903,7 +1102,7 @@ impl ShellKeep {
     pub(crate) fn subscription(&self) -> Subscription<Message> {
         let mut subs: Vec<Subscription<Message>> = Vec::new();
 
-        for tab in &self.tabs {
+        for tab in self.all_tabs() {
             if let Some(ref terminal) = tab.terminal {
                 subs.push(terminal.subscription().map(Message::TerminalEvent));
             }
@@ -927,11 +1126,7 @@ impl ShellKeep {
         }
 
         // FR-CONN-16: poll for connection phase updates
-        if self
-            .tabs
-            .iter()
-            .any(|t| t.connection_phase_text().is_some())
-        {
+        if self.all_tabs().any(|t| t.connection_phase_text().is_some()) {
             subs.push(
                 iced::time::every(std::time::Duration::from_millis(200))
                     .map(|_| Message::ConnectionPhaseTick),
@@ -941,7 +1136,7 @@ impl ShellKeep {
         subs.push(keyboard::listen().map(Message::KeyEvent));
 
         // FR-RECONNECT-02: spinner animation subscription (100ms tick)
-        let any_reconnecting = self.tabs.iter().any(|t| t.is_auto_reconnect());
+        let any_reconnecting = self.all_tabs().any(|t| t.is_auto_reconnect());
         if any_reconnecting {
             subs.push(
                 iced::time::every(std::time::Duration::from_millis(100))
@@ -951,8 +1146,7 @@ impl ShellKeep {
 
         // FR-RECONNECT-06: exponential backoff auto-reconnect timer
         if let Some(delay_ms) = self
-            .tabs
-            .iter()
+            .all_tabs()
             .filter(|t| t.is_auto_reconnect())
             .map(|t| {
                 let d = t.reconnect_delay_ms();
@@ -969,6 +1163,8 @@ impl ShellKeep {
                     .map(|_| Message::AutoReconnectTick),
             );
         }
+
+        let has_any_tabs = self.all_tabs().next().is_some();
 
         // State debounce flush — FR-STATE-03
         if self.state_dirty {
@@ -988,7 +1184,7 @@ impl ShellKeep {
         }
 
         // FR-LOCK-04: heartbeat timer — keepalive_interval * 2
-        if self.current_conn.is_some() && !self.tabs.is_empty() {
+        if self.current_conn.is_some() && has_any_tabs {
             let heartbeat_secs = (self.config.ssh.keepalive_interval as u64) * 2;
             subs.push(
                 iced::time::every(std::time::Duration::from_secs(heartbeat_secs))
@@ -998,8 +1194,7 @@ impl ShellKeep {
 
         // FR-UI-04/05: latency measurement timer — every keepalive_interval
         let has_connected_russh = self
-            .tabs
-            .iter()
+            .all_tabs()
             .any(|t| t.is_russh() && !t.is_dead() && t.terminal.is_some());
         if has_connected_russh && self.current_conn.is_some() {
             let interval = self.config.ssh.keepalive_interval.max(5) as u64;
@@ -1026,7 +1221,7 @@ impl ShellKeep {
 
         // FR-RECONNECT-08: poll network gateway changes (Linux only, every 5s)
         #[cfg(target_os = "linux")]
-        if self.tabs.iter().any(|t| t.is_auto_reconnect()) {
+        if self.all_tabs().any(|t| t.is_auto_reconnect()) {
             subs.push(
                 iced::time::every(std::time::Duration::from_secs(5))
                     .map(|_| Message::NetworkChanged),
@@ -1037,16 +1232,16 @@ impl ShellKeep {
         subs.push(window::close_requests().map(Message::WindowCloseRequested));
 
         // FR-STATE-14: track window move/resize for geometry persistence
-        subs.push(window::events().map(|(_id, event)| match event {
-            window::Event::Moved(pos) => Message::WindowMoved(pos),
-            window::Event::Resized(size) => Message::WindowResized(size),
+        subs.push(window::events().map(|(id, event)| match event {
+            window::Event::Moved(pos) => Message::WindowMoved(id, pos),
+            window::Event::Resized(size) => Message::WindowResized(id, size),
             _ => Message::Noop,
         }));
 
         Subscription::batch(subs)
     }
 
-    pub(crate) fn theme(&self) -> Theme {
+    pub(crate) fn theme(&self, _window_id: window::Id) -> Theme {
         Theme::CatppuccinMocha
     }
 }

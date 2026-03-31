@@ -33,22 +33,27 @@ use crate::app::tab::SPINNER_FRAMES;
 use iced::widget::{
     Space, button, center, column, container, mouse_area, row, stack, text, text_input,
 };
-use iced::{Color, Element, Length};
+use iced::{Color, Element, Length, window};
 use shellkeep::i18n;
 
 impl ShellKeep {
-    pub(crate) fn view(&self) -> Element<'_, Message> {
-        if self.tabs.is_empty() {
+    pub(crate) fn view(&self, window_id: window::Id) -> Element<'_, Message> {
+        let win = match self.windows.get(&window_id) {
+            Some(w) => w,
+            None => return text("Unknown window").into(),
+        };
+
+        if win.tabs.is_empty() {
             return self.view_welcome();
         }
 
-        if self.show_welcome {
-            let tab_bar = self.view_tab_bar();
+        if win.show_welcome {
+            let tab_bar = self.view_tab_bar(win);
             return column![tab_bar, self.view_welcome()].into();
         }
 
-        let tab_bar = self.view_tab_bar();
-        let content: Element<'_, Message> = if let Some(tab) = self.tabs.get(self.active_tab) {
+        let tab_bar = self.view_tab_bar(win);
+        let content: Element<'_, Message> = if let Some(tab) = win.tabs.get(win.active_tab) {
             if tab.is_dead() {
                 // INV-DEAD-1: dead session never accepts input — the TerminalView
                 // widget is not rendered, so keyboard events cannot reach it.
@@ -180,10 +185,10 @@ impl ShellKeep {
             content
         };
 
-        let status_bar = self.view_status_bar();
+        let status_bar = self.view_status_bar(win);
 
         // Wrap with tab context menu if active
-        let main_view: Element<'_, Message> = if let Some((tab_idx, _x, _y)) = self.tab_context_menu
+        let main_view: Element<'_, Message> = if let Some((tab_idx, _x, _y)) = win.tab_context_menu
         {
             let mut menu_items: Vec<Element<'_, Message>> = Vec::new();
 
@@ -197,7 +202,7 @@ impl ShellKeep {
                         .into(),
                 );
             }
-            if tab_idx + 1 < self.tabs.len() {
+            if tab_idx + 1 < win.tabs.len() {
                 menu_items.push(
                     button(text(i18n::t(i18n::MOVE_RIGHT)).size(13))
                         .on_press(Message::TabMoveRight(tab_idx))
@@ -230,7 +235,7 @@ impl ShellKeep {
                     .style(styles::separator_style)
                     .into(),
             );
-            if self.tabs.len() > 1 {
+            if win.tabs.len() > 1 {
                 menu_items.push(
                     button(text("Close other tabs").size(13))
                         .on_press(Message::CloseOtherTabs(tab_idx))
@@ -240,7 +245,7 @@ impl ShellKeep {
                         .into(),
                 );
             }
-            if tab_idx + 1 < self.tabs.len() {
+            if tab_idx + 1 < win.tabs.len() {
                 menu_items.push(
                     button(text("Close tabs to the right").size(13))
                         .on_press(Message::CloseTabsToRight(tab_idx))
@@ -285,7 +290,7 @@ impl ShellKeep {
                 }),
             ]
             .into()
-        } else if let Some((x, y)) = self.context_menu {
+        } else if let Some((x, y)) = win.context_menu {
             let menu = container(
                 column![
                     button(text(format!("{}        Ctrl+Shift+C", i18n::t(i18n::COPY))).size(13))
@@ -322,7 +327,7 @@ impl ShellKeep {
                 }),
             ]
             .into()
-        } else if self.show_restore_dropdown {
+        } else if win.show_restore_dropdown {
             let hidden_items = self.build_hidden_session_items();
             let dropdown_content: Element<'_, Message> = if hidden_items.is_empty() {
                 container(
@@ -409,8 +414,7 @@ impl ShellKeep {
             center(dialog).into()
         } else if self.dialogs.show_close_dialog {
             let active_count = self
-                .tabs
-                .iter()
+                .all_tabs()
                 .filter(|t| !t.is_dead() && t.terminal.is_some())
                 .count();
             let session_word = if active_count == 1 {
