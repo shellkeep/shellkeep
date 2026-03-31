@@ -8,13 +8,17 @@
 
 use std::process::Command;
 
-const SSH_KEY: &str = concat!(env!("HOME"), "/.ssh/id_shellkeep");
+fn ssh_key_path() -> String {
+    dirs::home_dir()
+        .map(|h| h.join(".ssh").join("id_shellkeep").display().to_string())
+        .unwrap_or_else(|| "/root/.ssh/id_shellkeep".to_string())
+}
 const SSH_HOST: &str = "root@209.38.150.61";
 
 fn ssh_args() -> Vec<String> {
     vec![
         "-i".to_string(),
-        SSH_KEY.to_string(),
+        ssh_key_path(),
         "-o".to_string(),
         "StrictHostKeyChecking=no".to_string(),
         "-o".to_string(),

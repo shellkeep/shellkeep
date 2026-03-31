@@ -14,18 +14,13 @@ use notify::{Event, EventKind, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 
 /// Terminal cursor shape.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CursorShape {
+    #[default]
     Block,
     Ibeam,
     Underline,
-}
-
-impl Default for CursorShape {
-    fn default() -> Self {
-        Self::Block
-    }
 }
 
 impl std::fmt::Display for CursorShape {
@@ -304,7 +299,7 @@ mod tests {
         assert_eq!(config.ssh.connect_timeout, 10);
         assert_eq!(config.terminal.scrollback_lines, 10_000);
         assert_eq!(config.keybindings.new_tab, "Ctrl+Shift+T");
-        assert_eq!(config.tray.enabled, true);
+        assert!(config.tray.enabled);
         assert_eq!(config.state.history_max_days, 90);
     }
 

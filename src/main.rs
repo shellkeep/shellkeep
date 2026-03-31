@@ -192,4 +192,3 @@ fn main() -> iced::Result {
 
     app_builder.run()
 }
-

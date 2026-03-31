@@ -5,13 +5,18 @@
 //!
 //! Run with: cargo test --test e2e_features -- --ignored --test-threads=1
 
-const SSH_KEY: &str = concat!(env!("HOME"), "/.ssh/id_shellkeep");
+fn ssh_key_path() -> String {
+    dirs::home_dir()
+        .map(|h| h.join(".ssh").join("id_shellkeep").display().to_string())
+        .unwrap_or_else(|| "/root/.ssh/id_shellkeep".to_string())
+}
 const SSH_HOST: &str = "209.38.150.61";
 const SSH_PORT: u16 = 22;
 const SSH_USER: &str = "root";
 
 async fn connect() -> russh::client::Handle<shellkeep::ssh::connection::SshHandler> {
-    shellkeep::ssh::connection::connect(SSH_HOST, SSH_PORT, SSH_USER, Some(SSH_KEY), None, 15)
+    let key = ssh_key_path();
+    shellkeep::ssh::connection::connect(SSH_HOST, SSH_PORT, SSH_USER, Some(&key), None, 15)
         .await
         .expect("failed to connect")
         .handle

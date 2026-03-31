@@ -5,7 +5,11 @@
 //!
 //! Run with: cargo test --test e2e_russh -- --ignored
 
-const SSH_KEY: &str = concat!(env!("HOME"), "/.ssh/id_shellkeep");
+fn ssh_key_path() -> String {
+    dirs::home_dir()
+        .map(|h| h.join(".ssh").join("id_shellkeep").display().to_string())
+        .unwrap_or_else(|| "/root/.ssh/id_shellkeep".to_string())
+}
 const SSH_HOST: &str = "209.38.150.61";
 const SSH_PORT: u16 = 22;
 const SSH_USER: &str = "root";
@@ -13,8 +17,9 @@ const SSH_USER: &str = "root";
 #[tokio::test]
 #[ignore]
 async fn test_russh_connect() {
+    let key = ssh_key_path();
     let result =
-        shellkeep::ssh::connection::connect(SSH_HOST, SSH_PORT, SSH_USER, Some(SSH_KEY), None, 15)
+        shellkeep::ssh::connection::connect(SSH_HOST, SSH_PORT, SSH_USER, Some(&key), None, 15)
             .await
             .expect("failed to connect");
     let handle = result.handle;
@@ -33,8 +38,9 @@ async fn test_russh_connect() {
 #[tokio::test]
 #[ignore]
 async fn test_russh_list_tmux_sessions() {
+    let key = ssh_key_path();
     let result =
-        shellkeep::ssh::connection::connect(SSH_HOST, SSH_PORT, SSH_USER, Some(SSH_KEY), None, 15)
+        shellkeep::ssh::connection::connect(SSH_HOST, SSH_PORT, SSH_USER, Some(&key), None, 15)
             .await
             .expect("failed to connect");
     let handle = result.handle;
@@ -65,8 +71,9 @@ async fn test_russh_list_tmux_sessions() {
 #[tokio::test]
 #[ignore]
 async fn test_russh_open_shell() {
+    let key = ssh_key_path();
     let result =
-        shellkeep::ssh::connection::connect(SSH_HOST, SSH_PORT, SSH_USER, Some(SSH_KEY), None, 15)
+        shellkeep::ssh::connection::connect(SSH_HOST, SSH_PORT, SSH_USER, Some(&key), None, 15)
             .await
             .expect("failed to connect");
     let handle = result.handle;
