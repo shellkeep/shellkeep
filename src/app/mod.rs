@@ -477,15 +477,14 @@ impl ShellKeep {
         if index >= self.tabs.len() {
             return Task::none();
         }
+        let count_before = self.tabs.len();
         let tab = self.tabs.remove(index);
         tracing::info!(
             "closed tab {}: {} (killing tmux session)",
             tab.id,
             tab.label
         );
-        if self.active_tab >= self.tabs.len() && self.active_tab > 0 {
-            self.active_tab -= 1;
-        }
+        self.active_tab = update::active_tab_after_removal(self.active_tab, count_before, index);
         self.update_title();
         self.save_state();
 
@@ -525,11 +524,10 @@ impl ShellKeep {
         if index >= self.tabs.len() {
             return;
         }
+        let count_before = self.tabs.len();
         let tab = self.tabs.remove(index);
         tracing::info!("hid tab {}: {} (session kept on server)", tab.id, tab.label);
-        if self.active_tab >= self.tabs.len() && self.active_tab > 0 {
-            self.active_tab -= 1;
-        }
+        self.active_tab = update::active_tab_after_removal(self.active_tab, count_before, index);
         self.update_title();
         self.save_state();
         self.toast = Some((

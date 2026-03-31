@@ -1626,22 +1626,9 @@ impl ShellKeep {
             .collect();
 
         if let Some(&index) = reconnect_indices.first() {
-            // FR-RECONNECT-06: exponential backoff with jitter
-            let base_ms = (self.config.ssh.reconnect_backoff_base * 1000.0) as u64;
             let attempt = self.tabs[index].reconnect_attempts();
-            let exp_delay = base_ms.saturating_mul(
-                1u64.checked_shl(attempt.saturating_sub(1))
-                    .unwrap_or(u64::MAX),
-            );
-            let capped = exp_delay.min(60_000);
-            use rand::Rng;
-            let jitter_range = capped / 4;
-            let jitter = if jitter_range > 0 {
-                rand::rng().random_range(0..jitter_range * 2) as i64 - jitter_range as i64
-            } else {
-                0
-            };
-            let next_delay = (capped as i64 + jitter).max(base_ms as i64) as u64;
+            let next_delay =
+                reconnect_backoff_delay(self.config.ssh.reconnect_backoff_base, attempt);
             self.tabs[index].set_reconnect_delay_ms(next_delay);
             tracing::info!(
                 "auto-reconnecting tab {} (attempt {}, next delay {}ms)",
@@ -2061,6 +2048,346 @@ impl ShellKeep {
             }
 
             _ => Task::none(),
+        }
+    }
+}
+
+/// FR-RECONNECT-06: calculate exponential backoff delay with jitter.
+///
+/// Pure function extracted from `handle_auto_reconnect` for testability.
+/// Returns the delay in milliseconds for the given attempt number.
+///
+/// Formula: base_ms * 2^(attempt-1), capped at 60s, with +/-25% jitter,
+/// floored at base_ms.
+pub(crate) fn reconnect_backoff_delay(backoff_base_secs: f64, attempt: u32) -> u64 {
+    let base_ms = (backoff_base_secs * 1000.0) as u64;
+    let exp_delay = base_ms.saturating_mul(
+        1u64.checked_shl(attempt.saturating_sub(1))
+            .unwrap_or(u64::MAX),
+    );
+    let capped = exp_delay.min(60_000);
+    use rand::Rng;
+    let jitter_range = capped / 4;
+    let jitter = if jitter_range > 0 {
+        rand::rng().random_range(0..jitter_range * 2) as i64 - jitter_range as i64
+    } else {
+        0
+    };
+    (capped as i64 + jitter).max(base_ms as i64) as u64
+}
+
+/// Compute the new active_tab index after removing a tab at `removed_index`.
+///
+/// Pure function extracted from `close_tab`/`hide_tab` for testability.
+pub(crate) fn active_tab_after_removal(
+    active_tab: usize,
+    tab_count_before: usize,
+    removed_index: usize,
+) -> usize {
+    debug_assert!(removed_index < tab_count_before);
+    let new_len = tab_count_before - 1;
+    if new_len == 0 {
+        return 0;
+    }
+    if active_tab >= new_len && active_tab > 0 {
+        active_tab - 1
+    } else {
+        active_tab
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -------------------------------------------------------------------
+    // Exponential backoff
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn backoff_attempt_1_is_base() {
+        // Attempt 1: base * 2^0 = base (with jitter)
+        let base_secs = 2.0;
+        let base_ms = 2000u64;
+        for _ in 0..50 {
+            let delay = reconnect_backoff_delay(base_secs, 1);
+            // Jitter is +/-25%, so range is [base*0.75, base*1.25]
+            assert!(
+                delay >= base_ms * 3 / 4 && delay <= base_ms * 5 / 4,
+                "attempt 1 delay {delay} out of range [{}, {}]",
+                base_ms * 3 / 4,
+                base_ms * 5 / 4,
+            );
+        }
+    }
+
+    #[test]
+    fn backoff_doubles_each_attempt() {
+        // Without jitter noise, verify the central tendency doubles.
+        // Run many samples and check the average is close to expected.
+        let base_secs = 1.0;
+        for attempt in 1..=5 {
+            let expected_center = 1000u64 * (1u64 << (attempt - 1));
+            let expected_center = expected_center.min(60_000);
+            let sum: u64 = (0..200)
+                .map(|_| reconnect_backoff_delay(base_secs, attempt))
+                .sum();
+            let avg = sum / 200;
+            let tolerance = expected_center / 3; // generous tolerance for randomness
+            assert!(
+                avg.abs_diff(expected_center) < tolerance,
+                "attempt {attempt}: avg {avg} too far from expected {expected_center}",
+            );
+        }
+    }
+
+    #[test]
+    fn backoff_capped_at_60s() {
+        // Very high attempt should not exceed 60s + jitter
+        let base_secs = 2.0;
+        for _ in 0..50 {
+            let delay = reconnect_backoff_delay(base_secs, 100);
+            // Cap is 60_000, jitter +25% max = 75_000, but floor is base_ms
+            assert!(delay <= 75_000, "delay {delay} exceeds cap+jitter");
+            assert!(delay >= 2000, "delay {delay} below base_ms floor");
+        }
+    }
+
+    #[test]
+    fn backoff_attempt_0_uses_base() {
+        // Attempt 0 (edge case): 2^(0-1) wraps to 2^(u32::MAX) = overflow -> u64::MAX
+        // saturating_mul with base gives u64::MAX, capped at 60s
+        let base_secs = 2.0;
+        for _ in 0..20 {
+            let delay = reconnect_backoff_delay(base_secs, 0);
+            // Should be capped at 60s with jitter
+            assert!(delay >= 2000, "delay {delay} below base_ms floor");
+            assert!(delay <= 75_000, "delay {delay} exceeds cap+jitter");
+        }
+    }
+
+    #[test]
+    fn backoff_never_below_base() {
+        // Even with max negative jitter, should never go below base_ms
+        let base_secs = 3.0;
+        for attempt in 1..=10 {
+            for _ in 0..50 {
+                let delay = reconnect_backoff_delay(base_secs, attempt);
+                assert!(
+                    delay >= 3000,
+                    "delay {delay} below base 3000ms at attempt {attempt}"
+                );
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------
+    // Tab index adjustment after removal
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn active_tab_stays_when_removing_after() {
+        // 5 tabs, active=1, remove tab 3 -> active stays 1
+        assert_eq!(active_tab_after_removal(1, 5, 3), 1);
+    }
+
+    #[test]
+    fn active_tab_decrements_when_at_end() {
+        // 3 tabs, active=2, remove tab 2 -> active=1
+        assert_eq!(active_tab_after_removal(2, 3, 2), 1);
+    }
+
+    #[test]
+    fn active_tab_stays_when_removing_before() {
+        // 4 tabs, active=2, remove tab 0 -> active stays 2
+        // (close_tab/hide_tab don't shift active when removing before,
+        // they only clamp if active >= new_len)
+        assert_eq!(active_tab_after_removal(2, 4, 0), 2);
+    }
+
+    #[test]
+    fn active_tab_clamps_to_last() {
+        // 2 tabs, active=1, remove tab 0 -> new_len=1, active=1 >= 1 -> active=0
+        assert_eq!(active_tab_after_removal(1, 2, 0), 0);
+    }
+
+    #[test]
+    fn active_tab_zero_when_single_tab_removed() {
+        // 1 tab, active=0, remove tab 0 -> returns 0
+        assert_eq!(active_tab_after_removal(0, 1, 0), 0);
+    }
+
+    #[test]
+    fn active_tab_stays_zero() {
+        // 3 tabs, active=0, remove tab 2 -> active stays 0
+        assert_eq!(active_tab_after_removal(0, 3, 2), 0);
+    }
+
+    // -------------------------------------------------------------------
+    // SSH command paste detection (logic from HostInputChanged)
+    // -------------------------------------------------------------------
+
+    /// Simulates the SSH paste detection logic from handle_input_message.
+    fn simulate_ssh_paste(input: &str) -> super::super::WelcomeState {
+        let mut state = super::super::WelcomeState {
+            client_id_input: String::new(),
+            show_advanced: false,
+            host_input: String::new(),
+            port_input: "22".to_string(),
+            user_input: String::new(),
+            identity_input: String::new(),
+        };
+
+        let trimmed = input.trim();
+        if trimmed.starts_with("ssh ") {
+            let parts: Vec<&str> = trimmed.split_whitespace().skip(1).collect();
+            let parsed = crate::cli::parse_ssh_args(&parts);
+            state.host_input = parsed.host;
+            if parsed.port != 22 {
+                state.port_input = parsed.port.to_string();
+            }
+            if let Some(user) = parsed.username {
+                state.user_input = user;
+            }
+            if let Some(identity) = parsed.identity_file {
+                state.identity_input = identity;
+            }
+            if state.port_input != "22"
+                || !state.user_input.is_empty()
+                || !state.identity_input.is_empty()
+            {
+                state.show_advanced = true;
+            }
+        } else {
+            state.host_input = input.to_string();
+        }
+
+        state
+    }
+
+    #[test]
+    fn paste_ssh_command_basic() {
+        let state = simulate_ssh_paste("ssh user@example.com");
+        assert_eq!(state.host_input, "example.com");
+        assert_eq!(state.user_input, "user");
+        assert_eq!(state.port_input, "22");
+        assert!(state.show_advanced); // user is non-empty
+    }
+
+    #[test]
+    fn paste_ssh_command_with_port() {
+        let state = simulate_ssh_paste("ssh -p 2222 root@myserver.io");
+        assert_eq!(state.host_input, "myserver.io");
+        assert_eq!(state.user_input, "root");
+        assert_eq!(state.port_input, "2222");
+        assert!(state.show_advanced);
+    }
+
+    #[test]
+    fn paste_ssh_command_with_identity() {
+        let state = simulate_ssh_paste("ssh -i /home/me/.ssh/key user@host");
+        assert_eq!(state.host_input, "host");
+        assert_eq!(state.user_input, "user");
+        assert_eq!(state.identity_input, "/home/me/.ssh/key");
+        assert!(state.show_advanced);
+    }
+
+    #[test]
+    fn paste_ssh_command_port_after_host() {
+        let state = simulate_ssh_paste("ssh alice@server.com -p 3333");
+        assert_eq!(state.host_input, "server.com");
+        assert_eq!(state.user_input, "alice");
+        assert_eq!(state.port_input, "3333");
+        assert!(state.show_advanced);
+    }
+
+    #[test]
+    fn paste_ssh_command_host_only() {
+        let state = simulate_ssh_paste("ssh example.com");
+        assert_eq!(state.host_input, "example.com");
+        assert_eq!(state.user_input, "");
+        assert_eq!(state.port_input, "22");
+        assert!(!state.show_advanced); // nothing non-default
+    }
+
+    #[test]
+    fn paste_normal_hostname() {
+        let state = simulate_ssh_paste("example.com");
+        assert_eq!(state.host_input, "example.com");
+        assert_eq!(state.user_input, "");
+        assert!(!state.show_advanced);
+    }
+
+    #[test]
+    fn paste_ssh_with_leading_whitespace() {
+        let state = simulate_ssh_paste("  ssh -p 22 root@box  ");
+        assert_eq!(state.host_input, "box");
+        assert_eq!(state.user_input, "root");
+        assert!(state.show_advanced);
+    }
+
+    // -------------------------------------------------------------------
+    // Client ID input validation
+    // -------------------------------------------------------------------
+
+    fn filter_client_id(input: &str) -> String {
+        input
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+            .take(64)
+            .collect()
+    }
+
+    #[test]
+    fn client_id_strips_special_chars() {
+        assert_eq!(filter_client_id("my laptop!@#$"), "mylaptop");
+    }
+
+    #[test]
+    fn client_id_allows_dashes_underscores() {
+        assert_eq!(filter_client_id("work-laptop_01"), "work-laptop_01");
+    }
+
+    #[test]
+    fn client_id_truncates_at_64() {
+        let long = "a".repeat(100);
+        assert_eq!(filter_client_id(&long).len(), 64);
+    }
+
+    #[test]
+    fn client_id_empty_input() {
+        assert_eq!(filter_client_id(""), "");
+    }
+
+    // -------------------------------------------------------------------
+    // escape_regex
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn escape_regex_special_chars() {
+        assert_eq!(
+            super::super::escape_regex("hello.world*"),
+            "hello\\.world\\*"
+        );
+    }
+
+    #[test]
+    fn escape_regex_no_specials() {
+        assert_eq!(super::super::escape_regex("foobar"), "foobar");
+    }
+
+    #[test]
+    fn escape_regex_all_specials() {
+        let input = r"\\.+*?()|[]{}^$";
+        let escaped = super::super::escape_regex(input);
+        // Every char should be preceded by backslash
+        for c in input.chars() {
+            let expected = format!("\\{c}");
+            assert!(escaped.contains(&expected), "missing escape for '{c}'");
         }
     }
 }

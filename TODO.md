@@ -34,7 +34,7 @@ Work through each item in order. Check off when done and committed.
 - [x] P-002: Complete ConnectionState/TabBackend migration (remove boolean duplication)
 - [x] P-005: Extract connection establishment logic (deduplicate 4 copies)
 - [x] P-004: Eliminate #[allow(dead_code)] suppressions (message.rs, theme.rs; tab.rs deferred to P-002)
-- [ ] P-014: Add unit tests for app/update.rs (after P-001, P-002)
+- [x] P-014: Add unit tests for app/update.rs (25 tests: backoff, tab index, paste, client-id, regex)
 
 ## Packaging
 
