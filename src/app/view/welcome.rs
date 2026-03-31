@@ -229,8 +229,22 @@ impl ShellKeep {
             if let Some(ref conn) = self.current_conn {
                 let server_label =
                     format!("{}@{}:{}", conn.key.username, conn.key.host, conn.key.port);
-                let session_count = self.all_tabs().filter(|t| !t.is_dead()).count();
-                let total_count = self.all_tabs().count();
+                // Bug 6 fix: count only tabs in session windows that have a
+                // terminal and are not dead, so the count updates immediately
+                // when tabs are closed.
+                let session_count = self
+                    .windows
+                    .values()
+                    .filter(|w| w.kind == crate::app::WindowKind::Session)
+                    .flat_map(|w| w.tabs.iter())
+                    .filter(|t| !t.is_dead() && t.terminal.is_some())
+                    .count();
+                let total_count = self
+                    .windows
+                    .values()
+                    .filter(|w| w.kind == crate::app::WindowKind::Session)
+                    .flat_map(|w| w.tabs.iter())
+                    .count();
                 let status_text = if session_count > 0 {
                     format!(
                         "{session_count} active session{}",

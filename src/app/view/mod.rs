@@ -35,7 +35,7 @@ use crate::app::WindowKind;
 use iced::widget::{
     Space, button, center, column, container, mouse_area, row, stack, text, text_input,
 };
-use iced::{Color, Element, Length, window};
+use iced::{Color, Element, Length, Theme, window};
 use shellkeep::i18n;
 
 impl ShellKeep {
@@ -292,10 +292,16 @@ impl ShellKeep {
                 .padding(4)
                 .style(styles::context_menu_container_style);
 
+            // Bug 4 fix: explicitly make the dismiss overlay fully transparent
+            // so it doesn't render a visible background over the terminal.
             let dismiss = mouse_area(
                 container(Space::new().width(Length::Fill).height(Length::Fill))
                     .width(Length::Fill)
-                    .height(Length::Fill),
+                    .height(Length::Fill)
+                    .style(|_: &Theme| container::Style {
+                        background: None,
+                        ..Default::default()
+                    }),
             )
             .on_press(Message::ContextMenuDismiss);
 
@@ -365,20 +371,28 @@ impl ShellKeep {
                 .padding(4)
                 .style(styles::context_menu_container_style);
 
+            // Bug 5 fix: position the dropdown near the restore button
+            // rather than at the far right edge of the window. Estimate
+            // position from tab count (each tab ~120px) + buttons (~60px).
+            let dropdown_left = (win.tabs.len() as f32) * 120.0 + 40.0;
             stack![
                 column![tab_bar, content, status_bar],
                 mouse_area(
                     container(Space::new().width(Length::Fill).height(Length::Fill))
                         .width(Length::Fill)
-                        .height(Length::Fill),
+                        .height(Length::Fill)
+                        .style(|_: &Theme| container::Style {
+                            background: None,
+                            ..Default::default()
+                        }),
                 )
                 .on_press(Message::DismissRestoreDropdown),
-                // Position dropdown at top-right, below the tab bar
-                column![row![Space::new().width(Length::Fill), dropdown],].padding(iced::Padding {
+                // Position dropdown below tab bar, near the restore button
+                container(dropdown).padding(iced::Padding {
                     top: 28.0,
-                    right: 8.0,
+                    right: 0.0,
                     bottom: 0.0,
-                    left: 0.0,
+                    left: dropdown_left,
                 }),
             ]
             .into()

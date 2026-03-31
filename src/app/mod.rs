@@ -1290,9 +1290,12 @@ impl ShellKeep {
         subs.push(window::close_requests().map(Message::WindowCloseRequested));
 
         // FR-STATE-14: track window move/resize for geometry persistence
+        // Bug 7 fix: also track Focused events so focused_window is always
+        // accurate, ensuring NewTab goes to the correct window.
         subs.push(window::events().map(|(id, event)| match event {
             window::Event::Moved(pos) => Message::WindowMoved(id, pos),
             window::Event::Resized(size) => Message::WindowResized(id, size),
+            window::Event::Focused => Message::WindowFocused(id),
             _ => Message::Noop,
         }));
 

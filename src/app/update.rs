@@ -131,6 +131,7 @@ impl ShellKeep {
             | Message::ToastDismiss
             | Message::WindowMoved(..)
             | Message::WindowResized(..)
+            | Message::WindowFocused(..)
             | Message::NewWindow
             | Message::WindowOpened(..)
             | Message::ShowControlWindow => self.handle_terminal_message(message),
@@ -1706,6 +1707,10 @@ impl ShellKeep {
 
     fn handle_lock_takeover(&mut self) -> Task<Message> {
         self.dialogs.show_lock_dialog = false;
+        // Bug 1 fix: after lock takeover, reset sessions_listed so that
+        // handle_ssh_connected will re-discover all tmux sessions on the server,
+        // not just the single tab that triggered the lock conflict.
+        self.sessions_listed = false;
         if let Some(tab_id) = self.dialogs.lock_target_tab.take()
             && let Some(conn) = self.current_conn.clone()
             && let Some(tab) = self.find_tab_mut(tab_id)
@@ -2143,24 +2148,62 @@ impl ShellKeep {
                 Task::none()
             }
 
+            // Bug 7 fix: track OS-level window focus changes so that
+            // NewTab always targets the window the user is interacting with.
+            Message::WindowFocused(win_id) => {
+                if self.windows.contains_key(&win_id) {
+                    self.focused_window = Some(win_id);
+                }
+                Task::none()
+            }
+
             // Phase 4: open a new window
+            // Bug 7 fix: if connected to a server, auto-create a session tab
+            // in the new window so it's immediately useful.
             Message::NewWindow => {
                 let (new_id, open_task) = window::open(window::Settings {
                     size: iced::Size::new(900.0, 600.0),
                     ..window::Settings::default()
                 });
                 let mut new_win = super::AppWindow::new(new_id);
-                new_win.show_welcome = true;
+                new_win.server_window_id = uuid::Uuid::new_v4().to_string();
                 self.windows.insert(new_id, new_win);
                 self.window_order.push(new_id);
                 self.focused_window = Some(new_id);
+
+                if self.current_conn.is_some() {
+                    // Auto-create a session tab in the new window
+                    let tmux_session = self.next_tmux_session();
+                    let label = format!("Session {}", self.all_tabs().count() + 1);
+                    let tab_task = self.open_tab_russh(&label, &tmux_session);
+                    return Task::batch([open_task.map(Message::WindowOpened), tab_task]);
+                }
+
+                // No active connection — show welcome screen
+                if let Some(win) = self.windows.get_mut(&new_id) {
+                    win.show_welcome = true;
+                }
                 open_task.map(|_| Message::Noop)
             }
 
             // Phase 4: window opened callback
             Message::WindowOpened(win_id) => {
                 self.focused_window = Some(win_id);
-                Task::none()
+                // Bug 3 fix: focus the terminal widget in the new window so
+                // keyboard input goes to it without requiring a mouse click.
+                let terminal_id = self
+                    .windows
+                    .get(&win_id)
+                    .and_then(|w| w.tabs.get(w.active_tab))
+                    .and_then(|t| t.terminal.as_ref())
+                    .map(|t| t.widget_id().clone());
+                if let Some(id) = terminal_id {
+                    return Task::batch([
+                        window::gain_focus(win_id),
+                        iced_term::TerminalView::focus(id),
+                    ]);
+                }
+                window::gain_focus(win_id)
             }
 
             // Phase 5: show (focus) the control window
