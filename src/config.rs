@@ -13,6 +13,31 @@ use std::sync::mpsc;
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 
+/// Terminal cursor shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CursorShape {
+    Block,
+    Ibeam,
+    Underline,
+}
+
+impl Default for CursorShape {
+    fn default() -> Self {
+        Self::Block
+    }
+}
+
+impl std::fmt::Display for CursorShape {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Block => write!(f, "block"),
+            Self::Ibeam => write!(f, "ibeam"),
+            Self::Underline => write!(f, "underline"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -42,8 +67,8 @@ pub struct TerminalConfig {
     pub font_family: Option<String>,
     /// Scrollback buffer size in lines.
     pub scrollback_lines: u32,
-    /// Cursor shape: "block", "ibeam", "underline".
-    pub cursor_shape: String,
+    /// Cursor shape.
+    pub cursor_shape: CursorShape,
     /// Enable hyperlink detection.
     pub hyperlinks: bool,
 }
@@ -117,7 +142,7 @@ impl Default for TerminalConfig {
             font_size: 14.0,
             font_family: None,
             scrollback_lines: 10_000,
-            cursor_shape: "block".to_string(),
+            cursor_shape: CursorShape::Block,
             hyperlinks: true,
         }
     }

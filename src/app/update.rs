@@ -126,6 +126,8 @@ impl ShellKeep {
             Message::StateSyncerReady(..) | Message::ServerStateLoaded(..) => {
                 self.handle_state_sync_message(message)
             }
+
+            Message::Noop => Task::none(),
         }
     }
 
@@ -695,7 +697,7 @@ impl ShellKeep {
                                     let _ = ssh::connection::exec_command(&handle, &cmd).await;
                                 }
                             },
-                            |_| Message::ContextMenuDismiss,
+                            |_| Message::Noop,
                         );
                     }
                 }
@@ -888,7 +890,7 @@ impl ShellKeep {
                         username: if !self.user_input.is_empty() {
                             self.user_input.clone()
                         } else {
-                            parsed_user.unwrap_or_else(whoami::username)
+                            parsed_user.unwrap_or_else(crate::cli::default_ssh_username)
                         },
                     },
                     identity_file: if self.identity_input.is_empty() {
@@ -1391,10 +1393,6 @@ impl ShellKeep {
         {
             let mgr = self.conn_manager.clone();
             let conn_key = conn.key.clone();
-            {
-                let mut m = mgr.blocking_lock();
-                m.remove(&conn_key);
-            }
 
             if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
                 let phase = Arc::new(std::sync::Mutex::new(String::new()));
@@ -1406,7 +1404,7 @@ impl ShellKeep {
                 tab.pending_channel = Some(channel_holder.clone());
 
                 let params = EstablishParams {
-                    conn_manager: mgr,
+                    conn_manager: mgr.clone(),
                     conn,
                     tmux_session: tab.tmux_session.clone(),
                     cols: 80,
@@ -1421,6 +1419,11 @@ impl ShellKeep {
 
                 return Task::perform(
                     async move {
+                        // Remove cached connection asynchronously (was blocking_lock)
+                        {
+                            let mut m = mgr.lock().await;
+                            m.remove(&conn_key);
+                        }
                         match establish_ssh_session(params).await {
                             Ok(channel) => {
                                 *channel_holder.lock().await = Some(channel);
@@ -1492,7 +1495,7 @@ impl ShellKeep {
             Message::NetworkChanged => {
                 #[cfg(target_os = "linux")]
                 {
-                    let current = crate::read_default_gateway();
+                    let current = shellkeep::network::read_default_gateway();
                     if current != self.last_gateway {
                         tracing::info!(
                             "network change detected (gateway {:?} -> {:?}), triggering immediate reconnect",
@@ -1793,7 +1796,7 @@ impl ShellKeep {
                     if let Some(text) = text {
                         Message::PasteToTerminal(tab_id, text.into_bytes())
                     } else {
-                        Message::ToastDismiss // no-op
+                        Message::Noop
                     }
                 })
             }

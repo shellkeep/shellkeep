@@ -193,20 +193,3 @@ fn main() -> iced::Result {
     app_builder.run()
 }
 
-// ---------------------------------------------------------------------------
-// FR-RECONNECT-08: read default gateway from /proc/net/route (Linux only)
-// ---------------------------------------------------------------------------
-
-#[cfg(target_os = "linux")]
-fn read_default_gateway() -> Option<String> {
-    let content = std::fs::read_to_string("/proc/net/route").ok()?;
-    // Each line: Iface Destination Gateway Flags RefCnt Use Metric Mask MTU Window IRTT
-    // Default route has destination 00000000
-    for line in content.lines().skip(1) {
-        let fields: Vec<&str> = line.split_whitespace().collect();
-        if fields.len() >= 3 && fields[1] == "00000000" {
-            return Some(fields[2].to_string());
-        }
-    }
-    None
-}

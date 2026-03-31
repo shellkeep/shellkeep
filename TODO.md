@@ -1,31 +1,41 @@
-# shellkeep v1 — Completion TODO
+# shellkeep — Refactoring TODO
 
-## SSH
-- [x] FR-STATE-05: SFTP posix-rename extension check + unlink+rename fallback
+Work through each item in order. Check off when done and committed.
 
-## Terminal / UI
-- [x] FR-UI-04/05: Latency measurement via keepalive RTT + tab indicator
-- [x] FR-UI-03: First-use client-id naming input field
-- [x] FR-TABS-03: Tab reordering via context menu (Move Left/Right)
-- [x] FR-TABS-11: Context menu copy/paste (clipboard integration)
-- [x] FR-TRAY-04: Tray icon appearance change when windows hidden
+## Quick wins (< 15 min each)
 
-## i18n
-- [x] NFR-I18N-02: Positional placeholders via tf() function
-- [x] NFR-I18N-03: Plural support via tn() function (ngettext equivalent)
+- [x] P-011: Add Message::Noop instead of repurposing unrelated messages
+- [x] P-019: Fix color_pallete typo -> color_palette
+- [x] P-017: Replace chrono_now() with chrono::Utc::now().to_rfc3339()
+- [x] P-015: Remove Tray::_active field from stub
+- [x] P-016: ProxyError — use thiserror instead of manual Display impl
 
-## Observability
-- [x] NFR-OBS-05: Async logging — tracing-subscriber uses dedicated writer thread
+## Medium tasks (15-60 min each)
 
-## Legacy Code
-- [x] Remove all C/Qt6 source files (35k lines)
-- [x] Remove legacy CI workflows (ci.yml, lint.yml, package.yml, release.yml, codeql.yml)
-- [x] Update setup-dev.sh and build-appimage.sh for Rust
+- [x] P-008: Move read_default_gateway() from main.rs to library crate
+- [x] P-012: Consolidate whoami::username() calls
+- [x] P-010: Add #[must_use] to key return types
+- [x] P-009: Replace blocking_lock() with async lock in update.rs
+- [x] P-007: Replace stringly-typed config values with enums
+- [x] P-018: i18n — eliminate hardcoded locale checks in format_relative_time()
 
-## Tests
-- [x] 97 unit tests passing
-- [x] 19 E2E tests passing on real droplet (3 russh + 7 tmux + 9 features)
-- [x] CI green on Linux/macOS/Windows
+## Larger tasks (1+ hour each)
+
+- [ ] P-006: Add structured error context to SshError variants
+- [ ] P-003: Deduplicate CLI argument parsing (3 copies -> 1)
+- [ ] P-013: Add module-level documentation to app/
+- [ ] P-020: Dependency audit (tokio features, regex caching, rand->fastrand)
+
+## Major refactors
+
+- [ ] P-001a: Extract WelcomeState sub-struct and use it
+- [ ] P-001b: Extract SearchState sub-struct and use it
+- [ ] P-001c: Extract DialogState sub-struct and use it
+- [ ] P-002: Complete ConnectionState/TabBackend migration (remove boolean duplication)
+- [ ] P-005: Extract connection establishment logic (deduplicate 4 copies)
+- [ ] P-004: Eliminate #[allow(dead_code)] suppressions (after P-001, P-002)
+- [ ] P-014: Add unit tests for app/update.rs (after P-001, P-002)
 
 ## Packaging
+
 - [ ] NFR-DIST-01/02: Validate AppImage + .deb build scripts work with Rust binary

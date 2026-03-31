@@ -8,6 +8,7 @@ use super::connection::{self, SshError, SshHandler};
 
 /// Information about who holds a lock.
 #[derive(Debug, Clone)]
+#[must_use]
 pub struct LockInfo {
     pub client_id: String,
     pub hostname: String,

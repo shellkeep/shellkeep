@@ -231,12 +231,7 @@ impl StateFile {
 }
 
 fn chrono_now() -> String {
-    // Simple ISO 8601 UTC timestamp without chrono dependency
-    use std::time::SystemTime;
-    let now = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or_default();
-    format!("{}Z", now.as_secs())
+    chrono::Utc::now().to_rfc3339()
 }
 
 /// FR-STATE-07: remove orphaned .tmp files from state directory.

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 shellkeep contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#[must_use]
 pub(crate) struct PidGuard {
     path: std::path::PathBuf,
 }

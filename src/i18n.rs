@@ -68,69 +68,36 @@ pub fn tf(key: &str, args: &[&str]) -> String {
 /// `singular` and `plural` are the English string keys.
 /// If locale has a translation, uses it; otherwise picks singular/plural based on `n`.
 pub fn tn(singular: &str, plural: &str, n: usize) -> String {
-    let locale = LOCALE.get().map(|s| s.as_str()).unwrap_or("en");
-    let is_pt = locale == "pt_BR";
-
     let key = if n == 1 { singular } else { plural };
-
-    // Look up translation
-    let base = if locale == "en" || locale.starts_with("en_") {
-        key.to_string()
-    } else {
-        TRANSLATIONS
-            .get()
-            .and_then(|all| all.get(locale))
-            .and_then(|map| map.get(key))
-            .copied()
-            .unwrap_or(key)
-            .to_string()
-    };
-
-    // Replace {n} placeholder with the count
-    let _ = is_pt; // suppress unused warning
-    base.replace("{n}", &n.to_string())
+    t(key).replace("{n}", &n.to_string())
 }
 
 // Plural string keys
 pub const N_ACTIVE_SESSIONS_1: &str = "{n} active session";
 pub const N_ACTIVE_SESSIONS_N: &str = "{n} active sessions";
+
+// Relative time keys
+pub const JUST_NOW: &str = "just now";
+pub const MINUTES_AGO: &str = "{n}m ago";
+pub const HOURS_AGO: &str = "{n}h ago";
+pub const DAYS_AGO: &str = "{n}d ago";
+
 /// NFR-I18N-09: format a relative time duration for display.
 /// Takes seconds ago, returns a localized human-readable string.
 pub fn format_relative_time(secs_ago: u64) -> String {
-    let locale = LOCALE.get().map(|s| s.as_str()).unwrap_or("en");
-    let is_pt = locale == "pt_BR";
-
     match secs_ago {
-        0..=59 => {
-            if is_pt {
-                "agora".to_string()
-            } else {
-                "just now".to_string()
-            }
-        }
+        0..=59 => t(JUST_NOW).to_string(),
         60..=3599 => {
             let m = secs_ago / 60;
-            if is_pt {
-                format!("{m}min atrás")
-            } else {
-                format!("{m}m ago")
-            }
+            t(MINUTES_AGO).replace("{n}", &m.to_string())
         }
         3600..=86399 => {
             let h = secs_ago / 3600;
-            if is_pt {
-                format!("{h}h atrás")
-            } else {
-                format!("{h}h ago")
-            }
+            t(HOURS_AGO).replace("{n}", &h.to_string())
         }
         _ => {
             let d = secs_ago / 86400;
-            if is_pt {
-                format!("{d}d atrás")
-            } else {
-                format!("{d}d ago")
-            }
+            t(DAYS_AGO).replace("{n}", &d.to_string())
         }
     }
 }
@@ -265,6 +232,12 @@ fn pt_br_translations() -> HashMap<&'static str, &'static str> {
 
     // Close dialog
     m.insert(CANCEL, "Cancelar");
+
+    // Relative time
+    m.insert(JUST_NOW, "agora");
+    m.insert(MINUTES_AGO, "{n}min atrás");
+    m.insert(HOURS_AGO, "{n}h atrás");
+    m.insert(DAYS_AGO, "{n}d atrás");
 
     // Plurals
     m.insert(N_ACTIVE_SESSIONS_1, "{n} sessão ativa");

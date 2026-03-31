@@ -133,8 +133,8 @@ impl Terminal {
         let mut action = Action::default();
 
         match cmd {
-            Command::ChangeTheme(color_pallete) => {
-                self.theme = Theme::new(ThemeSettings::new(color_pallete));
+            Command::ChangeTheme(color_palette) => {
+                self.theme = Theme::new(ThemeSettings::new(color_palette));
             }
             Command::ChangeFont(font_settings) => {
                 self.font = TermFont::new(font_settings);

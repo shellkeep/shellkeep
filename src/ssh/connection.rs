@@ -180,6 +180,7 @@ fn restricted_preferred() -> russh::Preferred {
 }
 
 /// Result of a successful SSH connection, including deferred host key prompt.
+#[must_use]
 pub struct ConnectResult {
     pub handle: russh::client::Handle<SshHandler>,
     /// If set, the UI should show a host key dialog before using this connection.

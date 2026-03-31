@@ -186,38 +186,18 @@ fn substitute_tokens(cmd: &str, host: &str, port: u16, username: Option<&str>) -
 }
 
 /// Errors specific to proxy connections. /* FR-PROXY-03 */
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum ProxyError {
     /// Failed to spawn the proxy command process.
+    #[error("proxy command failed to start: {1} (command: {0})")]
     Spawn(String, String),
     /// Proxy command exited before connection could be established.
+    #[error("proxy connection failed: could not reach {0}")]
     ProxyFailed(String),
     /// Proxy connected but the target host was unreachable.
+    #[error("proxy connected to {0}, but target {1} is unreachable")]
     TargetUnreachable(String, String),
 }
-
-impl std::fmt::Display for ProxyError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ProxyError::Spawn(cmd, err) => {
-                write!(f, "proxy command failed to start: {err} (command: {cmd})")
-            }
-            ProxyError::ProxyFailed(hop) => {
-                /* FR-PROXY-03 */
-                write!(f, "proxy connection failed: could not reach {hop}")
-            }
-            ProxyError::TargetUnreachable(proxy, target) => {
-                /* FR-PROXY-03 */
-                write!(
-                    f,
-                    "proxy connected to {proxy}, but target {target} is unreachable"
-                )
-            }
-        }
-    }
-}
-
-impl std::error::Error for ProxyError {}
 
 #[cfg(test)]
 mod tests {

@@ -50,6 +50,11 @@ pub(crate) fn parse_host_input(input: &str) -> (Option<String>, String, Option<S
     (user, remaining, port)
 }
 
+/// Default SSH username — the current OS user.
+pub(crate) fn default_ssh_username() -> String {
+    whoami::username()
+}
+
 // ---------------------------------------------------------------------------
 // CLI SSH arg filtering
 // ---------------------------------------------------------------------------

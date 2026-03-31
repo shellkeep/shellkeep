@@ -144,7 +144,7 @@ pub(crate) fn make_theme_settings(
     config: &shellkeep::config::Config,
 ) -> iced_term::settings::ThemeSettings {
     iced_term::settings::ThemeSettings {
-        color_pallete: Box::new(crate::theme::resolve_theme(&config.general.theme)),
+        color_palette: Box::new(crate::theme::resolve_theme(&config.general.theme)),
     }
 }
 
@@ -153,7 +153,7 @@ pub(crate) fn make_backend_settings(
     config: &shellkeep::config::Config,
 ) -> iced_term::settings::BackendSettings {
     iced_term::settings::BackendSettings {
-        cursor_shape: config.terminal.cursor_shape.clone(),
+        cursor_shape: config.terminal.cursor_shape.to_string(),
         ..iced_term::settings::BackendSettings::default()
     }
 }

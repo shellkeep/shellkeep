@@ -169,9 +169,7 @@ mod stub_tray {
     use super::TrayAction;
 
     /// Stub system tray — always returns `None` from `new()`.
-    pub struct Tray {
-        _active: bool,
-    }
+    pub struct Tray;
 
     impl Tray {
         pub fn new(enabled: bool) -> Option<Self> {

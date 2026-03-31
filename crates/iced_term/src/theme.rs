@@ -97,7 +97,7 @@ impl Default for Theme {
 impl Theme {
     pub fn new(settings: ThemeSettings) -> Self {
         Self {
-            palette: settings.color_pallete,
+            palette: settings.color_palette,
             ansi256_colors: build_ansi256_colors(),
         }
     }

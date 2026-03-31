@@ -65,11 +65,11 @@ impl Default for FontSettings {
 
 #[derive(Default, Debug, Clone)]
 pub struct ThemeSettings {
-    pub color_pallete: Box<ColorPalette>,
+    pub color_palette: Box<ColorPalette>,
 }
 
 impl ThemeSettings {
-    pub fn new(color_pallete: Box<ColorPalette>) -> Self {
-        Self { color_pallete }
+    pub fn new(color_palette: Box<ColorPalette>) -> Self {
+        Self { color_palette }
     }
 }

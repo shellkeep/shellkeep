@@ -196,7 +196,7 @@ pub(crate) struct ShellKeep {
 
 impl ShellKeep {
     pub(crate) fn new(initial_ssh_args: Option<Vec<String>>) -> (Self, Task<Message>) {
-        let username = whoami::username();
+        let username = crate::cli::default_ssh_username();
         let config = Config::load();
         let recent = RecentConnections::load();
         let default_port = config.ssh.default_port.to_string();
@@ -264,7 +264,7 @@ impl ShellKeep {
             lock_target_tab: None,
             pending_close_tabs: None,
             #[cfg(target_os = "linux")]
-            last_gateway: crate::read_default_gateway(),
+            last_gateway: shellkeep::network::read_default_gateway(),
         };
 
         // FR-CONFIG-04: start watching config file for hot reload
@@ -328,7 +328,7 @@ impl ShellKeep {
                         .unwrap_or(cli_port.parse().unwrap_or(22)),
                     username: cli_user_flag
                         .or(parsed_user)
-                        .unwrap_or_else(whoami::username),
+                        .unwrap_or_else(crate::cli::default_ssh_username),
                 },
                 identity_file: cli_identity,
             });
@@ -564,7 +564,7 @@ impl ShellKeep {
             backend: BackendSettings {
                 program: "ssh".to_string(),
                 args: full_args,
-                cursor_shape: self.config.terminal.cursor_shape.clone(),
+                cursor_shape: self.config.terminal.cursor_shape.to_string(),
                 ..Default::default()
             },
         };
@@ -657,7 +657,7 @@ impl ShellKeep {
                             }
                         }
                     },
-                    |_| Message::ContextMenuDismiss, // no-op callback
+                    |_| Message::Noop,
                 );
             }
         }
@@ -1086,7 +1086,7 @@ impl ShellKeep {
         subs.push(window::events().map(|(_id, event)| match event {
             window::Event::Moved(pos) => Message::WindowMoved(pos),
             window::Event::Resized(size) => Message::WindowResized(size),
-            _ => Message::FlushState, // ignored events mapped to no-op
+            _ => Message::Noop,
         }));
 
         Subscription::batch(subs)

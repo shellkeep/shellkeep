@@ -19,6 +19,7 @@ pub struct ConnKey {
 }
 
 /// Result from get_or_connect, including any deferred host key prompt.
+#[must_use]
 pub struct ManagedConnectResult {
     pub handle: Arc<Mutex<russh::client::Handle<SshHandler>>>,
     /// Set on first connection if the host key was unknown (TOFU).
