@@ -12,52 +12,63 @@ use iced::Color;
 use iced_term::ColorPalette;
 use serde::Deserialize;
 
-// Catppuccin Mocha UI colors
+// Catppuccin Mocha UI color palette — use these instead of inline hex in view code.
+// Not all are referenced yet; retained as the canonical palette for consistency.
+#[allow(dead_code)]
 pub const BASE: Color = Color::from_rgb(
     0x1e as f32 / 255.0,
     0x1e as f32 / 255.0,
     0x2e as f32 / 255.0,
 );
+#[allow(dead_code)]
 pub const MANTLE: Color = Color::from_rgb(
     0x18 as f32 / 255.0,
     0x18 as f32 / 255.0,
     0x25 as f32 / 255.0,
 );
+#[allow(dead_code)]
 pub const SURFACE0: Color = Color::from_rgb(
     0x31 as f32 / 255.0,
     0x32 as f32 / 255.0,
     0x44 as f32 / 255.0,
 );
+#[allow(dead_code)]
 pub const TEXT: Color = Color::from_rgb(
     0xcd as f32 / 255.0,
     0xd6 as f32 / 255.0,
     0xf4 as f32 / 255.0,
 );
+#[allow(dead_code)]
 pub const SUBTEXT0: Color = Color::from_rgb(
     0xa6 as f32 / 255.0,
     0xad as f32 / 255.0,
     0xc8 as f32 / 255.0,
 );
+#[allow(dead_code)]
 pub const OVERLAY0: Color = Color::from_rgb(
     0x6c as f32 / 255.0,
     0x70 as f32 / 255.0,
     0x86 as f32 / 255.0,
 );
+#[allow(dead_code)]
 pub const BLUE: Color = Color::from_rgb(
     0x89 as f32 / 255.0,
     0xb4 as f32 / 255.0,
     0xfa as f32 / 255.0,
 );
+#[allow(dead_code)]
 pub const GREEN: Color = Color::from_rgb(
     0xa6 as f32 / 255.0,
     0xe3 as f32 / 255.0,
     0xa1 as f32 / 255.0,
 );
+#[allow(dead_code)]
 pub const RED: Color = Color::from_rgb(
     0xf3 as f32 / 255.0,
     0x8b as f32 / 255.0,
     0xa8 as f32 / 255.0,
 );
+#[allow(dead_code)]
 pub const YELLOW: Color = Color::from_rgb(
     0xf9 as f32 / 255.0,
     0xe2 as f32 / 255.0,
