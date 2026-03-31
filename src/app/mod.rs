@@ -486,7 +486,10 @@ impl ShellKeep {
         );
         self.active_tab = update::active_tab_after_removal(self.active_tab, count_before, index);
         self.update_title();
-        self.save_state();
+        // Force immediate flush (bypass debounce) so the closed tab is removed
+        // from saved state before the app can exit or reconnect.
+        self.state_dirty = true;
+        self.flush_state();
 
         self.toast = Some((
             "Session closed and terminated on server.".into(),

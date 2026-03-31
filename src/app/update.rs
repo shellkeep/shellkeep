@@ -467,29 +467,32 @@ impl ShellKeep {
                 }
             }
 
-            // FR-SESSION-12: find orphaned sessions (on server but not in any tab)
+            // FR-SESSION-12: find orphaned sessions (on server but not in any tab).
+            // Only restore sessions that exist in saved state — sessions the user
+            // explicitly closed (close_tab kills tmux) should not be reopened.
             let existing_tmux: Vec<String> =
                 self.tabs.iter().map(|t| t.tmux_session.clone()).collect();
-            let orphaned: Vec<String> = server_sessions
-                .into_iter()
+            let orphaned: Vec<(&str, &str)> = server_sessions
+                .iter()
                 .filter(|s| !existing_tmux.contains(s))
+                .filter_map(|s| {
+                    // Only reopen if the session was in the saved state (user intended to keep it)
+                    saved_env_tabs
+                        .iter()
+                        .find(|t| t.tmux_session_name == *s)
+                        .map(|t| (t.title.as_str(), s.as_str()))
+                })
                 .collect();
 
             if !orphaned.is_empty() {
                 tracing::info!(
-                    "found {} orphaned session(s): {:?}",
+                    "restoring {} saved session(s): {:?}",
                     orphaned.len(),
                     orphaned
                 );
                 let mut tasks = Vec::new();
-                for (i, session_name) in orphaned.iter().enumerate() {
-                    // Try to match orphan to saved state by tmux session name
-                    let tab_label = saved_env_tabs
-                        .iter()
-                        .find(|t| t.tmux_session_name == *session_name)
-                        .map(|t| t.title.clone())
-                        .unwrap_or_else(|| format!("Session {}", i + 2));
-                    tasks.push(self.open_tab_russh(&tab_label, session_name));
+                for (label, session_name) in &orphaned {
+                    tasks.push(self.open_tab_russh(label, session_name));
                 }
                 return Task::batch(tasks);
             }
