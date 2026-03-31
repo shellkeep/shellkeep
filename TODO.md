@@ -38,4 +38,4 @@ Work through each item in order. Check off when done and committed.
 
 ## Packaging
 
-- [ ] NFR-DIST-01/02: Validate AppImage + .deb build scripts work with Rust binary
+- [x] NFR-DIST-01/02: Validate AppImage + .deb build scripts work with Rust binary

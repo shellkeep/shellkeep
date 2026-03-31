@@ -42,13 +42,14 @@ mkdir -p "$APPDIR/usr/share/icons/hicolor/256x256/apps"
 cp "$BINARY" "$APPDIR/usr/bin/shellkeep"
 cp "$PROJECT_DIR/data/shellkeep.desktop" "$APPDIR/usr/share/applications/"
 
-# Generate a simple icon if none exists
-if [ -f "$PROJECT_DIR/data/shellkeep.png" ]; then
+# Copy icon — check multiple possible locations
+if [ -f "$PROJECT_DIR/data/icons/shellkeep-256.png" ]; then
+    cp "$PROJECT_DIR/data/icons/shellkeep-256.png" "$APPDIR/usr/share/icons/hicolor/256x256/apps/shellkeep.png"
+elif [ -f "$PROJECT_DIR/data/shellkeep.png" ]; then
     cp "$PROJECT_DIR/data/shellkeep.png" "$APPDIR/usr/share/icons/hicolor/256x256/apps/"
 else
-    # Create a minimal 1x1 PNG placeholder
-    printf '\x89PNG\r\n\x1a\n' > "$APPDIR/usr/share/icons/hicolor/256x256/apps/shellkeep.png"
-    echo "Warning: No icon found, using placeholder."
+    echo "Error: No icon found at data/icons/shellkeep-256.png or data/shellkeep.png" >&2
+    exit 1
 fi
 
 # Fetch linuxdeploy if not available
