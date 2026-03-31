@@ -158,7 +158,7 @@ impl AppWindow {
             tab_context_menu: None,
             show_restore_dropdown: false,
             window_width: 500,
-            window_height: 500,
+            window_height: 700,
             window_x: None,
             window_y: None,
             last_geometry_save: None,
@@ -256,7 +256,8 @@ impl ShellKeep {
 
         // Phase 5: open the control window on startup
         let control_settings = window::Settings {
-            size: iced::Size::new(500.0, 500.0),
+            size: iced::Size::new(500.0, 700.0),
+            min_size: Some(iced::Size::new(400.0, 300.0)),
             ..initial_window_settings.clone()
         };
         let (first_window_id, open_task) = window::open(control_settings);
