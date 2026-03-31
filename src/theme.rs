@@ -6,8 +6,6 @@
 //! Built-in themes (catppuccin-mocha) plus FR-TERMINAL-11 JSON theme loading
 //! from `~/.config/shellkeep/themes/<name>.json`.
 
-#![allow(dead_code)]
-
 use std::path::PathBuf;
 
 use iced::Color;

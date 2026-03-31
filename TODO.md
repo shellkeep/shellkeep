@@ -33,7 +33,7 @@ Work through each item in order. Check off when done and committed.
 - [x] P-001c: Extract DialogState sub-struct and use it
 - [ ] P-002: Complete ConnectionState/TabBackend migration (remove boolean duplication)
 - [ ] P-005: Extract connection establishment logic (deduplicate 4 copies)
-- [ ] P-004: Eliminate #[allow(dead_code)] suppressions (after P-001, P-002)
+- [x] P-004: Eliminate #[allow(dead_code)] suppressions (message.rs, theme.rs; tab.rs deferred to P-002)
 - [ ] P-014: Add unit tests for app/update.rs (after P-001, P-002)
 
 ## Packaging
