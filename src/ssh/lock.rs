@@ -24,17 +24,17 @@ const LOCK_ORPHAN_MULTIPLIER: u64 = 2;
 /// Default keepalive timeout in seconds.
 const DEFAULT_KEEPALIVE_TIMEOUT: u64 = 30;
 
-fn lock_session_name(client_id: &str) -> String {
-    format!("shellkeep-lock-{client_id}")
+fn lock_session_name() -> String {
+    "shellkeep-lock".to_string()
 }
 
-/// Check if a lock exists for this client-id. /* FR-LOCK-02 */
+/// Check if a lock exists on this server. /* FR-LOCK-02 */
 /// Returns Some(LockInfo) if locked, None if not.
 pub async fn check_lock(
     handle: &russh::client::Handle<SshHandler>,
     client_id: &str,
 ) -> Result<Option<LockInfo>, SshError> {
-    let lock_name = lock_session_name(client_id);
+    let lock_name = lock_session_name();
 
     // tmux has-session exits 0 if session exists, 1 if not.
     // We wrap it in a shell check to get the exit status.
@@ -88,7 +88,7 @@ pub async fn acquire_lock(
     client_id: &str,
     keepalive_timeout: Option<u64>,
 ) -> Result<(), SshError> {
-    let lock_name = lock_session_name(client_id);
+    let lock_name = lock_session_name();
     let hostname = whoami::fallible::hostname().unwrap_or_else(|_| "unknown".to_string());
     let pid = std::process::id();
     let version = env!("CARGO_PKG_VERSION");
@@ -111,7 +111,7 @@ pub async fn acquire_lock(
                 existing.hostname,
                 existing.connected_at
             );
-            release_lock(handle, client_id).await?;
+            release_lock(handle).await?;
             // Fall through to create new lock
         } else {
             return Err(SshError::Channel(format!(
@@ -157,11 +157,8 @@ async fn set_lock_env(
 }
 
 /// Update heartbeat timestamp. /* FR-LOCK-04 */
-pub async fn heartbeat(
-    handle: &russh::client::Handle<SshHandler>,
-    client_id: &str,
-) -> Result<(), SshError> {
-    let lock_name = lock_session_name(client_id);
+pub async fn heartbeat(handle: &russh::client::Handle<SshHandler>) -> Result<(), SshError> {
+    let lock_name = lock_session_name();
     let now = chrono::Utc::now().to_rfc3339();
     let cmd = format!("tmux set-environment -t {lock_name} SHELLKEEP_LOCK_CONNECTED_AT '{now}'");
     connection::exec_command(handle, &cmd).await?;
@@ -169,11 +166,8 @@ pub async fn heartbeat(
 }
 
 /// Release the lock. /* FR-LOCK-05 */
-pub async fn release_lock(
-    handle: &russh::client::Handle<SshHandler>,
-    client_id: &str,
-) -> Result<(), SshError> {
-    let lock_name = lock_session_name(client_id);
+pub async fn release_lock(handle: &russh::client::Handle<SshHandler>) -> Result<(), SshError> {
+    let lock_name = lock_session_name();
     let cmd = format!("tmux kill-session -t {lock_name} 2>/dev/null || true");
     connection::exec_command(handle, &cmd).await?;
     Ok(())
@@ -201,8 +195,7 @@ mod tests {
 
     #[test]
     fn lock_session_name_format() {
-        assert_eq!(lock_session_name("my-laptop"), "shellkeep-lock-my-laptop");
-        assert_eq!(lock_session_name("abc123"), "shellkeep-lock-abc123");
+        assert_eq!(lock_session_name(), "shellkeep-lock");
     }
 
     #[test]

@@ -72,11 +72,7 @@ async fn test_lock_acquire_release() {
     let client_id = "e2e-lock-test";
 
     // Clean up any existing lock
-    let _ = exec(
-        &handle,
-        &format!("tmux kill-session -t shellkeep-lock-{client_id} 2>/dev/null"),
-    )
-    .await;
+    let _ = exec(&handle, "tmux kill-session -t shellkeep-lock 2>/dev/null").await;
 
     // Acquire lock
     shellkeep::ssh::lock::acquire_lock(&handle, client_id, Some(15))
@@ -86,7 +82,7 @@ async fn test_lock_acquire_release() {
     // Verify lock session exists
     let check = exec(
         &handle,
-        &format!("tmux has-session -t shellkeep-lock-{client_id} 2>/dev/null && echo EXISTS"),
+        "tmux has-session -t shellkeep-lock 2>/dev/null && echo EXISTS",
     )
     .await;
     assert!(check.contains("EXISTS"), "lock session not found");
@@ -94,7 +90,7 @@ async fn test_lock_acquire_release() {
     // Verify env vars
     let env = exec(
         &handle,
-        &format!("tmux show-environment -t shellkeep-lock-{client_id} 2>/dev/null"),
+        "tmux show-environment -t shellkeep-lock 2>/dev/null",
     )
     .await;
     assert!(
@@ -103,16 +99,14 @@ async fn test_lock_acquire_release() {
     );
 
     // Release lock
-    shellkeep::ssh::lock::release_lock(&handle, client_id)
+    shellkeep::ssh::lock::release_lock(&handle)
         .await
         .expect("failed to release lock");
 
     // Verify gone
     let check = exec(
         &handle,
-        &format!(
-            "tmux has-session -t shellkeep-lock-{client_id} 2>/dev/null && echo EXISTS || echo GONE"
-        ),
+        "tmux has-session -t shellkeep-lock 2>/dev/null && echo EXISTS || echo GONE",
     )
     .await;
     assert!(
@@ -127,25 +121,19 @@ async fn test_lock_heartbeat() {
     let handle = connect().await;
     let client_id = "e2e-heartbeat-test";
 
-    let _ = exec(
-        &handle,
-        &format!("tmux kill-session -t shellkeep-lock-{client_id} 2>/dev/null"),
-    )
-    .await;
+    let _ = exec(&handle, "tmux kill-session -t shellkeep-lock 2>/dev/null").await;
 
     shellkeep::ssh::lock::acquire_lock(&handle, client_id, Some(15))
         .await
         .expect("acquire failed");
 
     // Heartbeat should succeed
-    shellkeep::ssh::lock::heartbeat(&handle, client_id)
+    shellkeep::ssh::lock::heartbeat(&handle)
         .await
         .expect("heartbeat failed");
 
     // Cleanup
-    shellkeep::ssh::lock::release_lock(&handle, client_id)
-        .await
-        .ok();
+    shellkeep::ssh::lock::release_lock(&handle).await.ok();
 }
 
 // =========================================================================

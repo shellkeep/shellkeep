@@ -306,10 +306,10 @@ pub(crate) fn escape_regex(input: &str) -> String {
 
 impl ShellKeep {
     /// Open a new tab, assigning it the next unused tmux session name.
-    /// FR-SESSION-04, FR-SESSION-05, FR-ENV-02: generate tmux session name with client-id,
-    /// environment, and timestamp.
+    /// FR-SESSION-04, FR-SESSION-05, FR-ENV-02: generate tmux session name with
+    /// environment and timestamp.
     pub(crate) fn next_tmux_session(&self) -> String {
-        shellkeep::ssh::tmux::env_tmux_session_name(&self.client_id, &self.current_environment)
+        shellkeep::ssh::tmux::env_tmux_session_name(&self.current_environment)
     }
 
     /// Open a tab using russh SSH. Returns a Task that establishes the connection.

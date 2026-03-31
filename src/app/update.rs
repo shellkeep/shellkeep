@@ -740,7 +740,8 @@ impl ShellKeep {
                                 }
                             })
                             .collect();
-                        let new_tmux = format!("{}--shellkeep-{}", self.client_id, sanitized);
+                        let new_tmux =
+                            format!("{}--shellkeep-{}", self.current_environment, sanitized);
                         self.tabs[index].tmux_session = new_tmux.clone();
                         let mgr = self.conn_manager.clone();
                         // SAFETY: conn_params().is_some() checked in the enclosing if-let
@@ -1531,7 +1532,6 @@ impl ShellKeep {
             // FR-LOCK-04: periodic heartbeat to keep the lock alive
             Message::LockHeartbeatTick => {
                 let mgr = self.conn_manager.clone();
-                let cid = self.client_id.clone();
                 let conn = match &self.current_conn {
                     Some(c) => c.clone(),
                     None => return Task::none(),
@@ -1542,7 +1542,7 @@ impl ShellKeep {
                         let mgr = mgr.lock().await;
                         if let Some(handle_arc) = mgr.get_cached(&conn_key) {
                             let handle = handle_arc.lock().await;
-                            ssh::lock::heartbeat(&handle, &cid)
+                            ssh::lock::heartbeat(&handle)
                                 .await
                                 .map_err(|e| e.to_string())
                         } else {

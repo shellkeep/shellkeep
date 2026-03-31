@@ -231,7 +231,7 @@ pub(crate) async fn establish_ssh_session(
     // If force_lock, release the existing lock first (lock takeover)
     if params.force_lock {
         let h = handle_arc.lock().await;
-        ssh::lock::release_lock(&h, &params.client_id).await?;
+        ssh::lock::release_lock(&h).await?;
     }
 
     {

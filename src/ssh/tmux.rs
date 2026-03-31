@@ -7,19 +7,23 @@ use super::connection;
 
 /// Check if a session name belongs to shellkeep (but NOT the lock session).
 /// Matches old format ("shellkeep-N"), v1 format ("<client-id>--shellkeep-YYYYMMDD-HHMMSS"),
-/// and v2 environment format ("<client-id>--<env>--<session-name>").
-/// FR-LOCK-11: lock sessions ("shellkeep-lock-*") are never treated as terminal sessions.
+/// v2 environment format ("<client-id>--<env>--shellkeep-YYYYMMDD-HHMMSS"),
+/// and v3 shared format ("<env>--shellkeep-YYYYMMDD-HHMMSS").
+/// FR-LOCK-11: lock sessions ("shellkeep-lock*") are never treated as terminal sessions.
 fn is_shellkeep_session(name: &str) -> bool {
-    if name.starts_with("shellkeep-lock-") || name.contains("--shellkeep-lock-") {
+    if name == "shellkeep-lock" || name.starts_with("shellkeep-lock-") {
+        return false;
+    }
+    if name.contains("--shellkeep-lock") {
         return false;
     }
     name.starts_with("shellkeep-") || name.contains("--shellkeep-")
 }
 
-/// FR-ENV-02: filter sessions by client-id AND environment name.
-/// Returns sessions matching `<client-id>--<env-name>--` prefix.
-pub fn filter_sessions_by_env(sessions: &[String], client_id: &str, env_name: &str) -> Vec<String> {
-    let prefix = format!("{client_id}--{env_name}--");
+/// FR-ENV-02: filter sessions by environment name.
+/// Returns sessions matching `<env-name>--shellkeep-` prefix.
+pub fn filter_sessions_by_env(sessions: &[String], env_name: &str) -> Vec<String> {
+    let prefix = format!("{env_name}--shellkeep-");
     sessions
         .iter()
         .filter(|s| s.starts_with(&prefix))
@@ -27,11 +31,11 @@ pub fn filter_sessions_by_env(sessions: &[String], client_id: &str, env_name: &s
         .collect()
 }
 
-/// FR-ENV-02: generate a tmux session name scoped to client + environment.
-/// Format: `<client-id>--<env-name>--shellkeep-YYYYMMDD-HHMMSS`
-pub fn env_tmux_session_name(client_id: &str, env_name: &str) -> String {
+/// FR-ENV-02: generate a tmux session name scoped to environment.
+/// Format: `<env-name>--shellkeep-YYYYMMDD-HHMMSS`
+pub fn env_tmux_session_name(env_name: &str) -> String {
     let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
-    format!("{client_id}--{env_name}--shellkeep-{timestamp}")
+    format!("{env_name}--shellkeep-{timestamp}")
 }
 
 /// List existing shellkeep tmux sessions using a russh connection.
@@ -81,7 +85,7 @@ mod tests {
 
     #[test]
     fn session_prefix_filter() {
-        let lines = "shellkeep-0\nshellkeep-1\nother-session\nshellkeep-5\nmylaptop--shellkeep-20260329-120000\nmylaptop--Default--shellkeep-20260329-130000\n";
+        let lines = "shellkeep-0\nshellkeep-1\nother-session\nshellkeep-5\nmylaptop--shellkeep-20260329-120000\nDefault--shellkeep-20260329-130000\nmylaptop--Default--shellkeep-20260329-140000\n";
         let sessions: Vec<String> = lines
             .lines()
             .map(|l| l.trim().to_string())
@@ -94,7 +98,8 @@ mod tests {
                 "shellkeep-1",
                 "shellkeep-5",
                 "mylaptop--shellkeep-20260329-120000",
-                "mylaptop--Default--shellkeep-20260329-130000",
+                "Default--shellkeep-20260329-130000",
+                "mylaptop--Default--shellkeep-20260329-140000",
             ]
         );
     }
@@ -102,38 +107,44 @@ mod tests {
     #[test]
     fn filter_by_env() {
         let sessions = vec![
-            "laptop--Default--shellkeep-20260329-120000".to_string(),
-            "laptop--Default--shellkeep-20260329-120100".to_string(),
-            "laptop--ProjectA--shellkeep-20260329-130000".to_string(),
-            "other--Default--shellkeep-20260329-140000".to_string(),
+            "Default--shellkeep-20260329-120000".to_string(),
+            "Default--shellkeep-20260329-120100".to_string(),
+            "ProjectA--shellkeep-20260329-130000".to_string(),
             "shellkeep-0".to_string(),
         ];
-        let filtered = filter_sessions_by_env(&sessions, "laptop", "Default");
+        let filtered = filter_sessions_by_env(&sessions, "Default");
         assert_eq!(filtered.len(), 2);
-        assert!(filtered.iter().all(|s| s.starts_with("laptop--Default--")));
+        assert!(
+            filtered
+                .iter()
+                .all(|s| s.starts_with("Default--shellkeep-"))
+        );
 
-        let proj_a = filter_sessions_by_env(&sessions, "laptop", "ProjectA");
+        let proj_a = filter_sessions_by_env(&sessions, "ProjectA");
         assert_eq!(proj_a.len(), 1);
 
-        let empty = filter_sessions_by_env(&sessions, "laptop", "Nonexistent");
+        let empty = filter_sessions_by_env(&sessions, "Nonexistent");
         assert!(empty.is_empty());
     }
 
     #[test]
     fn env_session_name_format() {
-        let name = env_tmux_session_name("my-client", "Default");
-        assert!(name.starts_with("my-client--Default--shellkeep-"));
+        let name = env_tmux_session_name("Default");
+        assert!(name.starts_with("Default--shellkeep-"));
         // Should contain a timestamp-like pattern
-        assert!(name.len() > "my-client--Default--shellkeep-".len());
+        assert!(name.len() > "Default--shellkeep-".len());
     }
 
     #[test]
     fn lock_sessions_excluded() {
         // FR-LOCK-11: lock sessions must never appear as regular sessions
+        assert!(!is_shellkeep_session("shellkeep-lock"));
         assert!(!is_shellkeep_session("shellkeep-lock-my-client"));
         assert!(!is_shellkeep_session("my-client--shellkeep-lock-my-client"));
         // Regular sessions still match
         assert!(is_shellkeep_session("shellkeep-0"));
+        assert!(is_shellkeep_session("Default--shellkeep-20260330-120000"));
+        // Old v2 format with client-id still matches
         assert!(is_shellkeep_session(
             "my-client--Default--shellkeep-20260330-120000"
         ));
