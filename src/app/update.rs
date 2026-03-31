@@ -63,7 +63,10 @@ impl ShellKeep {
             | Message::TabMoveLeft(..)
             | Message::TabMoveRight(..)
             | Message::TabContextMenu(..)
-            | Message::ConnectRecent(..) => self.handle_tab_message(message),
+            | Message::ConnectRecent(..)
+            | Message::ShowRestoreDropdown
+            | Message::DismissRestoreDropdown
+            | Message::RestoreHiddenSession(..) => self.handle_tab_message(message),
 
             // --- Input / welcome screen messages ---
             Message::KeyEvent(..)
@@ -426,6 +429,11 @@ impl ShellKeep {
                 self.window_height = geo.height;
             }
 
+            // Load hidden sessions from device state
+            if let Some(ref device) = device_opt {
+                self.hidden_sessions = device.hidden_sessions.clone();
+            }
+
             // FR-ENV-05: restore last environment from saved state
             if let Some(ref saved) = saved_state
                 && let Some(ref env_name) = saved.last_environment
@@ -496,6 +504,15 @@ impl ShellKeep {
                     .iter()
                     .find(|t| t.tmux_session_name == *session)
                 {
+                    // Skip sessions that are in this device's hidden list
+                    if self.hidden_sessions.contains(&saved.session_uuid) {
+                        tracing::debug!(
+                            "skipping hidden session {} ({})",
+                            saved.session_uuid,
+                            session
+                        );
+                        continue;
+                    }
                     // In saved state — restore it
                     restorable.push((saved.title.as_str(), session.as_str()));
                 } else if session.contains("--shellkeep-") {
@@ -809,6 +826,7 @@ impl ShellKeep {
             Message::TabContextMenu(index, x, y) => {
                 self.tab_context_menu = Some((index, x, y));
                 self.context_menu = None;
+                self.show_restore_dropdown = false;
                 Task::none()
             }
 
@@ -823,6 +841,55 @@ impl ShellKeep {
                     if self.welcome.port_input != "22" || !self.welcome.identity_input.is_empty() {
                         self.welcome.show_advanced = true;
                     }
+                }
+                Task::none()
+            }
+
+            Message::ShowRestoreDropdown => {
+                self.show_restore_dropdown = !self.show_restore_dropdown;
+                Task::none()
+            }
+
+            Message::DismissRestoreDropdown => {
+                self.show_restore_dropdown = false;
+                Task::none()
+            }
+
+            Message::RestoreHiddenSession(session_uuid) => {
+                self.show_restore_dropdown = false;
+
+                // Find the hidden session in saved state to get its tmux name and title
+                let shared_path = SharedState::local_cache_path();
+                let saved_state = SharedState::load_local(&shared_path);
+                let saved_env_tabs = saved_state
+                    .as_ref()
+                    .map(|s| s.env_tabs(&self.current_environment))
+                    .unwrap_or_default();
+
+                if let Some(saved_tab) = saved_env_tabs
+                    .iter()
+                    .find(|t| t.session_uuid == session_uuid)
+                {
+                    // Remove from hidden list
+                    self.hidden_sessions.retain(|u| u != &session_uuid);
+
+                    // Open the tab, reattaching to the existing tmux session
+                    let label = saved_tab.title.clone();
+                    let tmux = saved_tab.tmux_session_name.clone();
+                    tracing::info!(
+                        "restoring hidden session {} ({}) as tab",
+                        session_uuid,
+                        tmux
+                    );
+                    self.save_state();
+                    return self.open_tab_russh(&label, &tmux);
+                } else {
+                    tracing::warn!(
+                        "hidden session {} not found in saved state, removing from list",
+                        session_uuid
+                    );
+                    self.hidden_sessions.retain(|u| u != &session_uuid);
+                    self.save_state();
                 }
                 Task::none()
             }
@@ -1802,6 +1869,7 @@ impl ShellKeep {
                 self.context_menu = None;
                 self.tab_context_menu = None;
                 self.renaming_tab = None;
+                self.show_restore_dropdown = false;
                 Task::none()
             }
 

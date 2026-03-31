@@ -322,6 +322,41 @@ impl ShellKeep {
                 }),
             ]
             .into()
+        } else if self.show_restore_dropdown {
+            let hidden_items = self.build_hidden_session_items();
+            let dropdown_content: Element<'_, Message> = if hidden_items.is_empty() {
+                container(
+                    text("No hidden sessions")
+                        .size(13)
+                        .color(Color::from_rgb8(0x6c, 0x70, 0x86)),
+                )
+                .padding([8, 16])
+                .into()
+            } else {
+                column(hidden_items).spacing(1).into()
+            };
+
+            let dropdown = container(dropdown_content)
+                .padding(4)
+                .style(styles::context_menu_container_style);
+
+            stack![
+                column![tab_bar, content, status_bar],
+                mouse_area(
+                    container(Space::new().width(Length::Fill).height(Length::Fill))
+                        .width(Length::Fill)
+                        .height(Length::Fill),
+                )
+                .on_press(Message::DismissRestoreDropdown),
+                // Position dropdown at top-right, below the tab bar
+                column![row![Space::new().width(Length::Fill), dropdown],].padding(iced::Padding {
+                    top: 28.0,
+                    right: 8.0,
+                    bottom: 0.0,
+                    left: 0.0,
+                }),
+            ]
+            .into()
         } else {
             column![tab_bar, content, status_bar].into()
         };

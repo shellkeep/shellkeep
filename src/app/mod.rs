@@ -143,6 +143,11 @@ pub(crate) struct ShellKeep {
     /// FR-ENV-06: one environment active per instance
     pub(crate) current_environment: String,
 
+    /// Hidden session UUIDs (per-device, not restored as tabs on connect)
+    pub(crate) hidden_sessions: Vec<String>,
+    /// Whether the restore-hidden-sessions dropdown is visible
+    pub(crate) show_restore_dropdown: bool,
+
     /// FR-RECONNECT-08: last known default gateway (Linux network monitoring)
     #[cfg(target_os = "linux")]
     pub(crate) last_gateway: Option<String>,
@@ -173,6 +178,8 @@ impl ShellKeep {
             current_conn: None,
             client_id: shellkeep::state::client_id::resolve(config.general.client_id.as_deref()),
             current_environment: "Default".to_string(),
+            hidden_sessions: Vec::new(),
+            show_restore_dropdown: false,
             conn_manager: Arc::new(Mutex::new(ConnectionManager::new())),
             sessions_listed: false,
             last_state_save: None,
@@ -546,12 +553,17 @@ impl ShellKeep {
     }
 
     /// Hide a tab — disconnect SSH but keep the tmux session alive on the server.
+    /// Adds the session UUID to hidden_sessions so it won't be auto-restored.
     pub(crate) fn hide_tab(&mut self, index: usize) {
         if index >= self.tabs.len() {
             return;
         }
         let count_before = self.tabs.len();
         let tab = self.tabs.remove(index);
+        // Track the hidden session UUID so it's not restored on reconnect
+        if !self.hidden_sessions.contains(&tab.session_uuid) {
+            self.hidden_sessions.push(tab.session_uuid.clone());
+        }
         tracing::info!("hid tab {}: {} (session kept on server)", tab.id, tab.label);
         self.active_tab = update::active_tab_after_removal(self.active_tab, count_before, index);
         self.update_title();
@@ -753,6 +765,7 @@ impl ShellKeep {
             },
         );
         device.last_active_window = Some("main".to_string());
+        device.hidden_sessions = self.hidden_sessions.clone();
 
         let shared_path = SharedState::local_cache_path();
         let device_path = DeviceState::local_cache_path(&self.client_id);

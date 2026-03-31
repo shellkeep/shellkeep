@@ -138,6 +138,12 @@ pub(crate) enum Message {
     LatencyTick,
     /// FR-UI-04/05: latency measurement result (tab_id, latency_ms or None on error)
     LatencyMeasured(TabId, Option<u32>),
+    /// Show/hide the restore hidden sessions dropdown
+    ShowRestoreDropdown,
+    /// Dismiss the restore dropdown
+    DismissRestoreDropdown,
+    /// Restore a previously hidden session by UUID
+    RestoreHiddenSession(String),
     /// Intentional no-op — use for callbacks that require a Message but need no action.
     Noop,
 }

@@ -5,8 +5,9 @@ use crate::app::Message;
 use crate::app::view::styles;
 use crate::{RENAME_INPUT_ID, ShellKeep};
 
-use iced::widget::{button, container, mouse_area, row, text, text_input};
+use iced::widget::{Space, button, container, mouse_area, row, text, text_input};
 use iced::{Color, Element, Length, Theme};
+use shellkeep::state::state_file::SharedState;
 
 impl ShellKeep {
     pub(crate) fn view_tab_bar(&self) -> Element<'_, Message> {
@@ -112,7 +113,22 @@ impl ShellKeep {
             .padding([6, 10])
             .style(styles::ghost_button_style);
 
-        let bar = row![row(tabs_row).spacing(1), new_tab_btn]
+        // Build restore-hidden-sessions dropdown button
+        let restore_btn: Element<'_, Message> = if !self.hidden_sessions.is_empty() {
+            button(
+                text("\u{25BC}")
+                    .size(11)
+                    .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
+            )
+            .on_press(Message::ShowRestoreDropdown)
+            .padding([6, 8])
+            .style(styles::ghost_button_style)
+            .into()
+        } else {
+            Space::new().width(0).into()
+        };
+
+        let bar = row![row(tabs_row).spacing(1), new_tab_btn, restore_btn]
             .width(Length::Fill)
             .align_y(iced::Alignment::Center);
 
@@ -120,5 +136,35 @@ impl ShellKeep {
             .width(Length::Fill)
             .style(styles::bar_background_style)
             .into()
+    }
+
+    /// Build the list of hidden session menu items from saved state.
+    pub(crate) fn build_hidden_session_items(&self) -> Vec<Element<'_, Message>> {
+        let shared_path = SharedState::local_cache_path();
+        let saved_state = SharedState::load_local(&shared_path);
+        let saved_env_tabs = saved_state
+            .as_ref()
+            .map(|s| s.env_tabs(&self.current_environment))
+            .unwrap_or_default();
+
+        let mut items: Vec<Element<'_, Message>> = Vec::new();
+        for uuid in &self.hidden_sessions {
+            let title = saved_env_tabs
+                .iter()
+                .find(|t| &t.session_uuid == uuid)
+                .map(|t| t.title.clone())
+                .unwrap_or_else(|| format!("Session {}", &uuid[..8.min(uuid.len())]));
+
+            let uuid_owned = uuid.clone();
+            items.push(
+                button(text(title).size(13))
+                    .on_press(Message::RestoreHiddenSession(uuid_owned))
+                    .padding([8, 16])
+                    .width(220)
+                    .style(styles::context_menu_style)
+                    .into(),
+            );
+        }
+        items
     }
 }
