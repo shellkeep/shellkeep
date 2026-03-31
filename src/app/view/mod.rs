@@ -30,6 +30,8 @@ use crate::ShellKeep;
 use crate::app::Message;
 use crate::app::tab::SPINNER_FRAMES;
 
+use crate::app::WindowKind;
+
 use iced::widget::{
     Space, button, center, column, container, mouse_area, row, stack, text, text_input,
 };
@@ -43,8 +45,26 @@ impl ShellKeep {
             None => return text("Unknown window").into(),
         };
 
+        // Phase 5: control window renders the welcome/server view
+        if win.kind == WindowKind::Control {
+            return self.view_control_window();
+        }
+
         if win.tabs.is_empty() {
-            return self.view_welcome();
+            // Session window with no tabs — show a placeholder
+            return center(
+                column![
+                    text("No sessions in this window")
+                        .size(16)
+                        .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
+                    text("Connect from the control window or press Ctrl+Shift+T")
+                        .size(12)
+                        .color(Color::from_rgb8(0x6c, 0x70, 0x86)),
+                ]
+                .spacing(8)
+                .align_x(iced::Alignment::Center),
+            )
+            .into();
         }
 
         if win.show_welcome {

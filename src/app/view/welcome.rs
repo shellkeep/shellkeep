@@ -5,7 +5,7 @@ use crate::ShellKeep;
 use crate::app::Message;
 use crate::app::view::styles;
 
-use iced::widget::{Space, button, center, column, row, scrollable, text, text_input};
+use iced::widget::{Space, button, center, column, container, row, scrollable, text, text_input};
 use iced::{Color, Element, Length};
 use shellkeep::i18n;
 
@@ -212,5 +212,85 @@ impl ShellKeep {
         .max_width(420);
 
         center(form).into()
+    }
+
+    /// Phase 5: render the control window — welcome/connect form + connected servers.
+    pub(crate) fn view_control_window(&self) -> Element<'_, Message> {
+        let mut items: Vec<Element<'_, Message>> = Vec::new();
+
+        // Show connected servers section if we have an active connection
+        if self.current_conn.is_some() {
+            let label_color = Color::from_rgb8(0xa6, 0xad, 0xc8);
+            let text_color = Color::from_rgb8(0xcd, 0xd6, 0xf4);
+
+            items.push(text("Connected servers").size(14).color(label_color).into());
+
+            // Gather info about the current connection
+            if let Some(ref conn) = self.current_conn {
+                let server_label =
+                    format!("{}@{}:{}", conn.key.username, conn.key.host, conn.key.port);
+                let session_count = self.all_tabs().filter(|t| !t.is_dead()).count();
+                let total_count = self.all_tabs().count();
+                let status_text = if session_count > 0 {
+                    format!(
+                        "{session_count} active session{}",
+                        if session_count == 1 { "" } else { "s" }
+                    )
+                } else if total_count > 0 {
+                    "disconnected".to_string()
+                } else {
+                    "connected, no sessions".to_string()
+                };
+
+                let server_row = button(
+                    row![
+                        text("\u{25CF}").size(10).color(if session_count > 0 {
+                            Color::from_rgb8(0xa6, 0xe3, 0xa1)
+                        } else {
+                            Color::from_rgb8(0xf9, 0xe2, 0xaf)
+                        }),
+                        column![
+                            text(server_label).size(14).color(text_color),
+                            text(status_text).size(11).color(label_color),
+                        ]
+                        .spacing(2),
+                    ]
+                    .spacing(8)
+                    .align_y(iced::Alignment::Center),
+                )
+                .on_press(Message::ShowControlWindow)
+                .padding([8, 12])
+                .width(Length::Fill)
+                .style(styles::recent_item_style);
+
+                items.push(server_row.into());
+            }
+
+            items.push(Space::new().height(16).into());
+        }
+
+        // Always show the connect form (for additional connections)
+        let connect_header = if self.current_conn.is_some() {
+            "Connect to another server"
+        } else {
+            "Connect to a server"
+        };
+        items.push(
+            text(connect_header)
+                .size(14)
+                .color(Color::from_rgb8(0xa6, 0xad, 0xc8))
+                .into(),
+        );
+
+        // Embed the welcome form
+        let welcome = self.view_welcome();
+
+        let control_content = column![
+            container(column(items).spacing(8).padding(16).max_width(420)).width(Length::Fill),
+            welcome,
+        ]
+        .spacing(0);
+
+        scrollable(control_content).into()
     }
 }

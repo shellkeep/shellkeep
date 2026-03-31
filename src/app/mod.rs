@@ -85,10 +85,21 @@ pub(crate) struct DialogState {
 // Per-window state — Phase 4: server > window > tab hierarchy
 // ---------------------------------------------------------------------------
 
+/// Phase 5: distinguish control windows from session windows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WindowKind {
+    /// The control/manager window: shows welcome screen, server list.
+    Control,
+    /// A terminal session window: shows tabs with terminal content.
+    Session,
+}
+
 /// Per-window state. Each window contains tabs for a single server connection.
 #[allow(dead_code)]
 pub(crate) struct AppWindow {
     pub(crate) id: window::Id,
+    /// Phase 5: whether this is a control or session window
+    pub(crate) kind: WindowKind,
     /// Stable UUID for state persistence across restarts
     pub(crate) server_window_id: String,
     pub(crate) tabs: Vec<tab::Tab>,
@@ -114,6 +125,7 @@ impl AppWindow {
     pub(crate) fn new(id: window::Id) -> Self {
         Self {
             id,
+            kind: WindowKind::Session,
             server_window_id: uuid::Uuid::new_v4().to_string(),
             tabs: Vec::new(),
             active_tab: 0,
@@ -125,6 +137,28 @@ impl AppWindow {
             show_restore_dropdown: false,
             window_width: 900,
             window_height: 600,
+            window_x: None,
+            window_y: None,
+            last_geometry_save: None,
+        }
+    }
+
+    /// Create a new control window.
+    pub(crate) fn new_control(id: window::Id) -> Self {
+        Self {
+            id,
+            kind: WindowKind::Control,
+            server_window_id: "control".to_string(),
+            tabs: Vec::new(),
+            active_tab: 0,
+            title: "shellkeep".to_string(),
+            show_welcome: true,
+            renaming_tab: None,
+            context_menu: None,
+            tab_context_menu: None,
+            show_restore_dropdown: false,
+            window_width: 500,
+            window_height: 500,
             window_x: None,
             window_y: None,
             last_geometry_save: None,
@@ -150,6 +184,8 @@ pub(crate) struct ShellKeep {
     pub(crate) windows: HashMap<window::Id, AppWindow>,
     /// Ordered list of window IDs for consistent iteration
     pub(crate) window_order: Vec<window::Id>,
+    /// Phase 5: the control window ID (always exists, may be hidden)
+    pub(crate) control_window_id: window::Id,
     /// The currently focused window
     pub(crate) focused_window: Option<window::Id>,
     pub(crate) next_id: u64,
@@ -218,17 +254,21 @@ impl ShellKeep {
         let recent = RecentConnections::load();
         let default_port = config.ssh.default_port.to_string();
 
-        // Open the first window via daemon API
-        let (first_window_id, open_task) = window::open(initial_window_settings);
-        let mut first_window = AppWindow::new(first_window_id);
-        first_window.server_window_id = "main".to_string();
+        // Phase 5: open the control window on startup
+        let control_settings = window::Settings {
+            size: iced::Size::new(500.0, 500.0),
+            ..initial_window_settings.clone()
+        };
+        let (first_window_id, open_task) = window::open(control_settings);
+        let control_window = AppWindow::new_control(first_window_id);
 
         let mut windows = HashMap::new();
-        windows.insert(first_window_id, first_window);
+        windows.insert(first_window_id, control_window);
 
         let mut app = ShellKeep {
             windows,
             window_order: vec![first_window_id],
+            control_window_id: first_window_id,
             focused_window: Some(first_window_id),
             next_id: 0,
             spinner_frame: 0,
@@ -322,17 +362,28 @@ impl ShellKeep {
                 identity_file: parsed.identity_file,
             });
 
+            // Phase 5: open a session window for the CLI connection
+            let (session_win_id, session_open_task) = window::open(initial_window_settings);
+            let mut session_win = AppWindow::new(session_win_id);
+            session_win.server_window_id = "main".to_string();
+            app.windows.insert(session_win_id, session_win);
+            app.window_order.push(session_win_id);
+            app.focused_window = Some(session_win_id);
+
             // FR-CONN-21: CLI launch via russh (async, non-blocking)
             // Opens one tab immediately; existing sessions discovered after connect
             let tmux_session = app.next_tmux_session();
             let tab_task = app.open_tab_russh(&label, &tmux_session);
-            return (app, Task::batch([open_task, tab_task]));
-        } else {
-            // Show welcome screen in the first window
-            if let Some(win) = app.windows.get_mut(&first_window_id) {
-                win.show_welcome = true;
-            }
+            return (
+                app,
+                Task::batch([
+                    open_task,
+                    session_open_task.map(|_| Message::Noop),
+                    tab_task,
+                ]),
+            );
         }
+        // Control window always shows welcome screen (already set in new_control)
 
         // NFR-OBS-11: check for previous crash dumps
         let crash_dir = shellkeep::crash::crash_dir();
@@ -1076,7 +1127,13 @@ impl ShellKeep {
     pub(crate) fn title(&self, window_id: window::Id) -> String {
         self.windows
             .get(&window_id)
-            .map(|w| w.title.clone())
+            .map(|w| {
+                if w.kind == WindowKind::Control {
+                    "shellkeep".to_string()
+                } else {
+                    w.title.clone()
+                }
+            })
             .unwrap_or_else(|| "shellkeep".to_string())
     }
 

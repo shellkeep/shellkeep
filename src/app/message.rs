@@ -148,6 +148,8 @@ pub(crate) enum Message {
     DismissRestoreDropdown,
     /// Restore a previously hidden session by UUID
     RestoreHiddenSession(String),
+    /// Phase 5: show the control window (from tray or menu)
+    ShowControlWindow,
     /// Intentional no-op — use for callbacks that require a Message but need no action.
     Noop,
 }

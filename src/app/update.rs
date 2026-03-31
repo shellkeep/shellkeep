@@ -132,7 +132,8 @@ impl ShellKeep {
             | Message::WindowMoved(..)
             | Message::WindowResized(..)
             | Message::NewWindow
-            | Message::WindowOpened(..) => self.handle_terminal_message(message),
+            | Message::WindowOpened(..)
+            | Message::ShowControlWindow => self.handle_terminal_message(message),
 
             // --- Search messages ---
             Message::SearchToggle
@@ -630,6 +631,26 @@ impl ShellKeep {
             }
 
             Message::NewTab => {
+                // Phase 5: if active window is control, find or create a session window
+                let is_control = self
+                    .active_window()
+                    .is_some_and(|w| w.kind == super::WindowKind::Control);
+                if is_control {
+                    // Find first session window and focus it
+                    if let Some((&id, _)) = self
+                        .windows
+                        .iter()
+                        .find(|(_, w)| w.kind == super::WindowKind::Session)
+                    {
+                        self.focused_window = Some(id);
+                    } else if self.current_conn.is_some() {
+                        // No session window exists — open one
+                        return self.update(Message::NewWindow);
+                    } else {
+                        return Task::none();
+                    }
+                }
+
                 let tab_count = self.active_window().map(|w| w.tabs.len()).unwrap_or(0);
                 if self.current_conn.is_some() {
                     let n = tab_count + 1;
@@ -1112,12 +1133,20 @@ impl ShellKeep {
                 });
                 self.recent.save();
 
-                // Use russh for new connections: open tab immediately, connect async
+                // Phase 5: open a new session window for the connection
+                let (session_win_id, session_open_task) = window::open(window::Settings {
+                    size: iced::Size::new(900.0, 600.0),
+                    ..window::Settings::default()
+                });
+                let mut session_win = super::AppWindow::new(session_win_id);
+                session_win.server_window_id = uuid::Uuid::new_v4().to_string();
+                self.windows.insert(session_win_id, session_win);
+                self.window_order.push(session_win_id);
+                self.focused_window = Some(session_win_id);
+
                 let tmux_session = self.next_tmux_session();
-                if let Some(win) = self.active_window_mut() {
-                    win.show_welcome = false;
-                }
-                self.open_tab_russh(&label, &tmux_session)
+                let tab_task = self.open_tab_russh(&label, &tmux_session);
+                Task::batch([session_open_task.map(|_| Message::Noop), tab_task])
             }
 
             _ => Task::none(),
@@ -1288,6 +1317,25 @@ impl ShellKeep {
         match message {
             // FR-TABS-17: window close requested by window manager
             Message::WindowCloseRequested(win_id) => {
+                // Phase 5: closing the control window just hides it (stays in tray)
+                let is_control = self
+                    .windows
+                    .get(&win_id)
+                    .is_some_and(|w| w.kind == super::WindowKind::Control);
+                if is_control {
+                    // If there are session windows open, just hide the control window
+                    let session_count = self
+                        .windows
+                        .values()
+                        .filter(|w| w.kind == super::WindowKind::Session)
+                        .count();
+                    if session_count > 0 || self.tray.is_some() {
+                        return window::close(win_id);
+                    }
+                    // No session windows and no tray — exit
+                    return Task::batch([window::close(win_id), iced::exit()]);
+                }
+
                 // Count active sessions in the window being closed
                 let active_count = self
                     .windows
@@ -1307,8 +1355,12 @@ impl ShellKeep {
                         self.focused_window = self.window_order.first().copied();
                     }
                     self.flush_state();
-                    // If this was the last window, exit
-                    if self.windows.is_empty() {
+                    // If only control window remains and no tray, exit
+                    let non_control = self
+                        .windows
+                        .values()
+                        .any(|w| w.kind == super::WindowKind::Session);
+                    if !non_control && self.tray.is_none() {
                         return Task::batch([window::close(win_id), iced::exit()]);
                     }
                     return window::close(win_id);
@@ -1328,7 +1380,12 @@ impl ShellKeep {
                     if self.focused_window == Some(id) {
                         self.focused_window = self.window_order.first().copied();
                     }
-                    if self.windows.is_empty() {
+                    // Phase 5: check if only the control window remains
+                    let has_session_windows = self
+                        .windows
+                        .values()
+                        .any(|w| w.kind == super::WindowKind::Session);
+                    if !has_session_windows && self.tray.is_none() {
                         return Task::batch([window::close(id), iced::exit()]);
                     }
                     return window::close(id);
@@ -1813,7 +1870,8 @@ impl ShellKeep {
                 if let Some(ref tray) = self.tray {
                     match tray.poll_event() {
                         Some(TrayAction::ShowWindow) => {
-                            tracing::debug!("tray: show window requested");
+                            tracing::debug!("tray: show control window requested");
+                            return self.update(Message::ShowControlWindow);
                         }
                         Some(TrayAction::HideWindow) => {
                             tracing::debug!("tray: hide window requested");
@@ -2103,6 +2161,28 @@ impl ShellKeep {
             Message::WindowOpened(win_id) => {
                 self.focused_window = Some(win_id);
                 Task::none()
+            }
+
+            // Phase 5: show (focus) the control window
+            Message::ShowControlWindow => {
+                let control_id = self.control_window_id;
+                if self.windows.contains_key(&control_id) {
+                    // Control window still open, just focus it
+                    self.focused_window = Some(control_id);
+                    window::gain_focus(control_id)
+                } else {
+                    // Control window was closed, re-open it
+                    let (new_id, open_task) = window::open(window::Settings {
+                        size: iced::Size::new(500.0, 500.0),
+                        ..window::Settings::default()
+                    });
+                    let control_win = super::AppWindow::new_control(new_id);
+                    self.windows.insert(new_id, control_win);
+                    self.window_order.push(new_id);
+                    self.control_window_id = new_id;
+                    self.focused_window = Some(new_id);
+                    open_task.map(|_| Message::Noop)
+                }
             }
 
             _ => Task::none(),
