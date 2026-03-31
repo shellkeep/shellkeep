@@ -5,9 +5,9 @@ name: Rust Build & Test
 
 on:
   push:
-    branches: [rust-rewrite]
+    branches: [main]
   pull_request:
-    branches: [rust-rewrite]
+    branches: [main]
 
 concurrency:
   group: rust-${{ github.ref }}
