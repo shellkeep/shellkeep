@@ -1,6 +1,24 @@
 // SPDX-FileCopyrightText: 2026 shellkeep contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+//! View layer — builds the iced widget tree from application state.
+//!
+//! The view is composed of stacked layers (bottom to top):
+//! 1. Tab bar + terminal content + status bar (the main layout)
+//! 2. Close-tab confirmation dialog overlay
+//! 3. Environment selection/management dialog overlay
+//! 4. Host key verification dialog overlay
+//! 5. Password prompt dialog overlay
+//! 6. Lock conflict dialog overlay
+//!
+//! Sub-modules handle specific view concerns:
+//! - `welcome` — first-use / connection screen
+//! - `tab_bar` — tab strip with context menus
+//! - `dead_tab` — disconnected session view with reconnect options
+//! - `status_bar` — bottom bar with connection info and latency
+//! - `dialogs` — environment CRUD dialogs
+//! - `styles` — iced style functions (buttons, containers, scrim)
+
 mod dead_tab;
 mod dialogs;
 mod status_bar;

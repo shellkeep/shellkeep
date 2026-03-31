@@ -1,6 +1,23 @@
 // SPDX-FileCopyrightText: 2026 shellkeep contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+//! Message dispatch and state update logic.
+//!
+//! This is the core of the iced application: every user action, SSH event,
+//! and timer tick arrives as a [`Message`] and is routed by [`ShellKeep::update`]
+//! to one of seven handler methods:
+//!
+//! - `handle_ssh_message` — SSH data, connect/disconnect, session discovery
+//! - `handle_tab_message` — tab open/close/move/rename, recent connections
+//! - `handle_input_message` — welcome screen form, keyboard shortcuts
+//! - `handle_dialog_message` — close, env, host-key, password, lock dialogs
+//! - `handle_timer_message` — reconnect backoff, spinner, heartbeat, latency
+//! - `handle_terminal_message` — terminal I/O, context menu, window geometry
+//! - `handle_search_message` — scrollback search, export, clipboard
+//!
+//! To add a new message: add the variant to [`Message`], add it to the
+//! appropriate arm in `update()`, then implement the handler.
+
 use super::ShellKeep;
 use super::message::Message;
 use super::session::{EstablishParams, establish_ssh_session};

@@ -265,15 +265,15 @@ pub async fn connect(
         let stream =
             proxy::ProxyStream::spawn(cmd, effective_host, effective_port, Some(effective_user))
                 .await
-                .map_err(|e| SshError::Connect(e.to_string()))?;
+                .map_err(|e| SshError::connect(e.to_string()))?;
         russh::client::connect_stream(Arc::new(config), stream, handler)
             .await
-            .map_err(|e| SshError::Connect(format!("proxy connection to {addr} failed: {e}")))?
+            .map_err(|e| SshError::connect_with(format!("proxy connection to {addr} failed"), e))?
     } else {
         tracing::info!("russh: connecting to {addr}");
         russh::client::connect(Arc::new(config), &addr, handler)
             .await
-            .map_err(|e| SshError::Connect(e.to_string()))?
+            .map_err(|e| SshError::connect_with(addr.to_string(), e))?
     };
 
     // Try authentication methods /* FR-CONN-07 */
