@@ -325,6 +325,7 @@ impl Tab {
     }
 
     /// Reset reconnect attempts to 0 and delay to 0 in Reconnecting state.
+    #[cfg(target_os = "linux")]
     pub(crate) fn reset_reconnect(&mut self) {
         if let ConnectionState::Reconnecting {
             ref mut attempt,
