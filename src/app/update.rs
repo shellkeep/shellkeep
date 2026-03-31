@@ -786,51 +786,16 @@ impl ShellKeep {
                 // Detect pasted SSH commands: "ssh -p 2247 user@host" or "ssh user@host -i key"
                 let trimmed = v.trim();
                 if trimmed.starts_with("ssh ") {
-                    let parts: Vec<&str> = trimmed.split_whitespace().collect();
-                    let mut host = String::new();
-                    let mut port = String::new();
-                    let mut user = String::new();
-                    let mut identity = String::new();
-                    let mut i = 1; // skip "ssh"
-                    while i < parts.len() {
-                        match parts[i] {
-                            "-p" if i + 1 < parts.len() => {
-                                port = parts[i + 1].to_string();
-                                i += 2;
-                            }
-                            "-i" if i + 1 < parts.len() => {
-                                identity = parts[i + 1].to_string();
-                                i += 2;
-                            }
-                            "-l" if i + 1 < parts.len() => {
-                                user = parts[i + 1].to_string();
-                                i += 2;
-                            }
-                            arg if !arg.starts_with('-') => {
-                                // user@host or just host
-                                if let Some((u, h)) = arg.split_once('@') {
-                                    if user.is_empty() {
-                                        user = u.to_string();
-                                    }
-                                    host = h.to_string();
-                                } else {
-                                    host = arg.to_string();
-                                }
-                                i += 1;
-                            }
-                            _ => {
-                                i += 1; // skip unknown flags
-                            }
-                        }
+                    let parts: Vec<&str> = trimmed.split_whitespace().skip(1).collect();
+                    let parsed = crate::cli::parse_ssh_args(&parts);
+                    self.host_input = parsed.host;
+                    if parsed.port != 22 {
+                        self.port_input = parsed.port.to_string();
                     }
-                    self.host_input = host;
-                    if !port.is_empty() {
-                        self.port_input = port;
-                    }
-                    if !user.is_empty() {
+                    if let Some(user) = parsed.username {
                         self.user_input = user;
                     }
-                    if !identity.is_empty() {
+                    if let Some(identity) = parsed.identity_file {
                         self.identity_input = identity;
                     }
                     // Auto-show advanced panel if non-default values were parsed

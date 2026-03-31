@@ -22,9 +22,9 @@ Work through each item in order. Check off when done and committed.
 ## Larger tasks (1+ hour each)
 
 - [ ] P-006: Add structured error context to SshError variants
-- [ ] P-003: Deduplicate CLI argument parsing (3 copies -> 1)
+- [x] P-003: Deduplicate CLI argument parsing (3 copies -> 1)
 - [ ] P-013: Add module-level documentation to app/
-- [ ] P-020: Dependency audit (tokio features, regex caching, rand->fastrand)
+- [x] P-020: Dependency audit (regex caching with LazyLock)
 
 ## Major refactors
 

@@ -279,58 +279,19 @@ impl ShellKeep {
         // FR-HISTORY-11: clean up old history files on startup
         history::cleanup_old_history(app.config.state.history_max_days);
         if let Some(ssh_args) = initial_ssh_args {
-            // Parse connection params from CLI args.
-            // First extract flags with values (-p PORT, -i FILE, -l USER)
-            // so we can correctly identify the host argument.
-            let mut cli_port = "22".to_string();
-            let mut cli_identity = None;
-            let mut cli_user_flag = None;
-            let mut flag_value_indices = std::collections::HashSet::new();
-            let mut i = 0;
-            while i < ssh_args.len() {
-                match ssh_args[i].as_str() {
-                    "-p" if i + 1 < ssh_args.len() => {
-                        cli_port = ssh_args[i + 1].clone();
-                        flag_value_indices.insert(i);
-                        flag_value_indices.insert(i + 1);
-                        i += 1;
-                    }
-                    "-i" if i + 1 < ssh_args.len() => {
-                        cli_identity = Some(ssh_args[i + 1].clone());
-                        flag_value_indices.insert(i);
-                        flag_value_indices.insert(i + 1);
-                        i += 1;
-                    }
-                    "-l" if i + 1 < ssh_args.len() => {
-                        cli_user_flag = Some(ssh_args[i + 1].clone());
-                        flag_value_indices.insert(i);
-                        flag_value_indices.insert(i + 1);
-                        i += 1;
-                    }
-                    _ => {}
-                }
-                i += 1;
-            }
-            // The host is the first non-flag argument
-            let host_arg = ssh_args
-                .iter()
-                .enumerate()
-                .find(|(idx, a)| !a.starts_with('-') && !flag_value_indices.contains(idx))
-                .map(|(_, a)| a.clone())
-                .unwrap_or_default();
-            let label = host_arg.clone();
-            let (parsed_user, parsed_host, parsed_port) = crate::cli::parse_host_input(&host_arg);
+            // Parse connection params from CLI args
+            let arg_refs: Vec<&str> = ssh_args.iter().map(|s| s.as_str()).collect();
+            let parsed = crate::cli::parse_ssh_args(&arg_refs);
+            let label = parsed.label.clone();
             app.current_conn = Some(ConnParams {
                 key: ConnKey {
-                    host: parsed_host,
-                    port: parsed_port
-                        .and_then(|p| p.parse().ok())
-                        .unwrap_or(cli_port.parse().unwrap_or(22)),
-                    username: cli_user_flag
-                        .or(parsed_user)
+                    host: parsed.host,
+                    port: parsed.port,
+                    username: parsed
+                        .username
                         .unwrap_or_else(crate::cli::default_ssh_username),
                 },
-                identity_file: cli_identity,
+                identity_file: parsed.identity_file,
             });
 
             // FR-CONN-21: CLI launch via russh (async, non-blocking)

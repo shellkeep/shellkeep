@@ -55,6 +55,75 @@ pub(crate) fn default_ssh_username() -> String {
     whoami::username()
 }
 
+/// Parsed SSH connection arguments.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ParsedSshArgs {
+    pub(crate) host: String,
+    pub(crate) port: u16,
+    pub(crate) username: Option<String>,
+    pub(crate) identity_file: Option<String>,
+    /// The raw host argument as given (before parse_host_input splitting).
+    pub(crate) label: String,
+}
+
+/// Parse SSH-style arguments (-p PORT, -i FILE, -l USER, [user@]host[:port]).
+///
+/// This is the single source of truth for parsing SSH CLI arguments, used by:
+/// - CLI launch (`ShellKeep::new`)
+/// - SSH command paste detection (`handle_input_message`)
+/// - Test helpers
+pub(crate) fn parse_ssh_args(args: &[&str]) -> ParsedSshArgs {
+    let mut cli_port: Option<u16> = None;
+    let mut cli_identity = None;
+    let mut cli_user_flag = None;
+    let mut flag_value_indices = std::collections::HashSet::new();
+    let mut i = 0;
+    while i < args.len() {
+        match args[i] {
+            "-p" if i + 1 < args.len() => {
+                cli_port = args[i + 1].parse().ok();
+                flag_value_indices.insert(i);
+                flag_value_indices.insert(i + 1);
+                i += 1;
+            }
+            "-i" if i + 1 < args.len() => {
+                cli_identity = Some(args[i + 1].to_string());
+                flag_value_indices.insert(i);
+                flag_value_indices.insert(i + 1);
+                i += 1;
+            }
+            "-l" if i + 1 < args.len() => {
+                cli_user_flag = Some(args[i + 1].to_string());
+                flag_value_indices.insert(i);
+                flag_value_indices.insert(i + 1);
+                i += 1;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    let host_arg = args
+        .iter()
+        .enumerate()
+        .find(|(idx, a)| !a.starts_with('-') && !flag_value_indices.contains(idx))
+        .map(|(_, a)| (*a).to_string())
+        .unwrap_or_default();
+    let label = host_arg.clone();
+    let (parsed_user, parsed_host, parsed_port) = parse_host_input(&host_arg);
+    let port = parsed_port
+        .and_then(|p| p.parse().ok())
+        .or(cli_port)
+        .unwrap_or(22);
+    let username = cli_user_flag.or(parsed_user);
+    ParsedSshArgs {
+        host: parsed_host,
+        port,
+        username,
+        identity_file: cli_identity,
+        label,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // CLI SSH arg filtering
 // ---------------------------------------------------------------------------
@@ -123,52 +192,13 @@ mod tests {
         assert_eq!(port, Some("2222".into()));
     }
 
-    /// Helper to simulate CLI arg parsing and extract ConnParams
+    /// Helper wrapping parse_ssh_args for test assertions.
     fn parse_cli_args(args: &[&str]) -> (String, u16, String, Option<String>) {
-        let ssh_args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-        let mut cli_port = "22".to_string();
-        let mut cli_identity = None;
-        let mut cli_user_flag = None;
-        let mut flag_value_indices = std::collections::HashSet::new();
-        let mut i = 0;
-        while i < ssh_args.len() {
-            match ssh_args[i].as_str() {
-                "-p" if i + 1 < ssh_args.len() => {
-                    cli_port = ssh_args[i + 1].clone();
-                    flag_value_indices.insert(i);
-                    flag_value_indices.insert(i + 1);
-                    i += 1;
-                }
-                "-i" if i + 1 < ssh_args.len() => {
-                    cli_identity = Some(ssh_args[i + 1].clone());
-                    flag_value_indices.insert(i);
-                    flag_value_indices.insert(i + 1);
-                    i += 1;
-                }
-                "-l" if i + 1 < ssh_args.len() => {
-                    cli_user_flag = Some(ssh_args[i + 1].clone());
-                    flag_value_indices.insert(i);
-                    flag_value_indices.insert(i + 1);
-                    i += 1;
-                }
-                _ => {}
-            }
-            i += 1;
-        }
-        let host_arg = ssh_args
-            .iter()
-            .enumerate()
-            .find(|(idx, a)| !a.starts_with('-') && !flag_value_indices.contains(idx))
-            .map(|(_, a)| a.clone())
-            .unwrap_or_default();
-        let (parsed_user, parsed_host, parsed_port) = parse_host_input(&host_arg);
-        let port = parsed_port
-            .and_then(|p| p.parse().ok())
-            .unwrap_or(cli_port.parse().unwrap_or(22));
-        let username = cli_user_flag
-            .or(parsed_user)
+        let parsed = parse_ssh_args(args);
+        let username = parsed
+            .username
             .unwrap_or_else(|| "default_user".to_string());
-        (parsed_host, port, username, cli_identity)
+        (parsed.host, parsed.port, username, parsed.identity_file)
     }
 
     #[test]

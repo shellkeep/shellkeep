@@ -9,10 +9,15 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::LazyLock;
 
 use serde::{Deserialize, Serialize};
 
 const SCHEMA_VERSION: u32 = 2;
+
+/// Cached regex for validating tmux session names.
+static TMUX_NAME_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"^[a-zA-Z0-9_][a-zA-Z0-9_.:\-]*$").unwrap());
 
 /// Top-level state file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -150,12 +155,9 @@ impl StateFile {
                 }
 
                 // Validate and deduplicate tabs in each environment
-                // SAFETY: this regex pattern is a compile-time constant and is known to be valid
-                #[allow(clippy::unwrap_used)]
-                let tmux_re = regex::Regex::new(r"^[a-zA-Z0-9_][a-zA-Z0-9_.:\-]*$").unwrap();
                 for env in state.environments.values_mut() {
                     for tab in &env.tabs {
-                        if !tmux_re.is_match(&tab.tmux_session_name) {
+                        if !TMUX_NAME_RE.is_match(&tab.tmux_session_name) {
                             tracing::warn!(
                                 "tab {} has invalid tmux_session_name: {:?}",
                                 tab.session_uuid,
@@ -179,7 +181,7 @@ impl StateFile {
                 // Also validate/dedup legacy tabs (shouldn't exist post-migration, but safety)
                 if !state.tabs.is_empty() {
                     for tab in &state.tabs {
-                        if !tmux_re.is_match(&tab.tmux_session_name) {
+                        if !TMUX_NAME_RE.is_match(&tab.tmux_session_name) {
                             tracing::warn!(
                                 "tab {} has invalid tmux_session_name: {:?}",
                                 tab.session_uuid,
