@@ -25,7 +25,7 @@ use shellkeep::ssh::manager::{ConnKey, ConnectionManager};
 use shellkeep::state::history;
 use shellkeep::state::recent::RecentConnections;
 use shellkeep::state::state_file::{
-    DeviceState, Environment, SharedState, TabState, WindowGeometry,
+    self, DeviceState, Environment, SharedState, TabState, WindowGeometry,
 };
 use shellkeep::tray::Tray;
 use shellkeep::{i18n, ssh};
@@ -261,6 +261,10 @@ pub(crate) struct ShellKeep {
     /// Auto-incrementing counter for default window names per server
     pub(crate) window_counter: u32,
 
+    /// Snapshot of saved state taken before the first tab is opened, so that
+    /// handle_existing_sessions can see sessions that save_state() overwrote.
+    pub(crate) pre_connect_state: Option<(Option<SharedState>, Option<DeviceState>)>,
+
     /// FR-RECONNECT-08: last known default gateway (Linux network monitoring)
     #[cfg(target_os = "linux")]
     pub(crate) last_gateway: Option<String>,
@@ -359,6 +363,7 @@ impl ShellKeep {
                 pending_close_tabs: None,
             },
             state_syncer: None,
+            pre_connect_state: None,
             #[cfg(target_os = "linux")]
             last_gateway: shellkeep::network::read_default_gateway(),
         };
@@ -406,7 +411,10 @@ impl ShellKeep {
             app.focused_window = Some(session_win_id);
 
             // FR-CONN-21: CLI launch via russh (async, non-blocking)
-            // Opens one tab immediately; existing sessions discovered after connect
+            // Opens one tab immediately; existing sessions discovered after connect.
+            // Snapshot saved state BEFORE open_tab_russh, which calls save_state()
+            // and overwrites the file — reconciliation needs the pre-overwrite state.
+            app.pre_connect_state = Some(state_file::load_split_state(&app.client_id));
             let tmux_session = app.next_tmux_session();
             let tab_task = app.open_tab_russh(&label, &tmux_session);
             return (

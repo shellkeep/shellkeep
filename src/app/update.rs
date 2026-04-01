@@ -429,8 +429,12 @@ impl ShellKeep {
             tracing::warn!("failed to list existing sessions: {e}");
         }
         if let Ok(server_sessions) = result {
-            // Load split state (shared + device), migrating from legacy if needed
-            let (shared_opt, device_opt) = state_file::load_split_state(&self.client_id);
+            // Use the pre-connect snapshot if available (taken before open_tab_russh
+            // overwrote the file), otherwise load from disk.
+            let (shared_opt, device_opt) = self
+                .pre_connect_state
+                .take()
+                .unwrap_or_else(|| state_file::load_split_state(&self.client_id));
             let saved_state = shared_opt;
 
             // FR-STATE-14: restore window geometry from device state
@@ -574,6 +578,61 @@ impl ShellKeep {
                     restorable.len(),
                     restorable
                 );
+
+                // Remove the auto-created initial tab whose tmux session is not in
+                // saved state — it was a placeholder that is now redundant.
+                let saved_tmux_names: Vec<&str> =
+                    saved_env_tabs.iter().map(|t| t.tmux_session_name.as_str()).collect();
+                let mut placeholder_tmux: Vec<String> = Vec::new();
+                for win in self.windows.values_mut() {
+                    let mut i = 0;
+                    while i < win.tabs.len() {
+                        if !saved_tmux_names.contains(&win.tabs[i].tmux_session.as_str())
+                            && !server_sessions.contains(&win.tabs[i].tmux_session)
+                        {
+                            // This tab was just auto-created and its tmux session
+                            // hasn't even been established on the server yet — remove it.
+                            let removed = win.tabs.remove(i);
+                            placeholder_tmux.push(removed.tmux_session.clone());
+                            tracing::info!(
+                                "removed placeholder tab {} ({})",
+                                removed.id,
+                                removed.tmux_session
+                            );
+                            if win.active_tab >= win.tabs.len() && win.active_tab > 0 {
+                                win.active_tab -= 1;
+                            }
+                        } else {
+                            i += 1;
+                        }
+                    }
+                }
+
+                // Kill tmux sessions of removed placeholder tabs (they may or may not
+                // have been created on the server by the time reconciliation runs).
+                if !placeholder_tmux.is_empty() {
+                    let mgr = self.conn_manager.clone();
+                    if let Some(ref conn) = self.current_conn {
+                        let conn_key = conn.key.clone();
+                        tasks.push(Task::perform(
+                            async move {
+                                let mgr_guard = mgr.lock().await;
+                                if let Some(handle_arc) = mgr_guard.get_cached(&conn_key) {
+                                    let handle = handle_arc.lock().await;
+                                    for name in &placeholder_tmux {
+                                        let cmd =
+                                            format!("tmux kill-session -t {name} 2>/dev/null");
+                                        let _ =
+                                            ssh::connection::exec_command(&handle, &cmd).await;
+                                        tracing::info!("killed placeholder tmux session: {name}");
+                                    }
+                                }
+                            },
+                            |_| Message::Noop,
+                        ));
+                    }
+                }
+
                 for (label, session_name) in &restorable {
                     tasks.push(self.open_tab_russh(label, session_name));
                 }
@@ -1276,6 +1335,10 @@ impl ShellKeep {
                 self.window_order.push(session_win_id);
                 self.focused_window = Some(session_win_id);
 
+                // Snapshot saved state BEFORE open_tab_russh, which calls save_state()
+                // and overwrites the file — reconciliation needs the pre-overwrite state.
+                self.pre_connect_state =
+                    Some(state_file::load_split_state(&self.client_id));
                 let tmux_session = self.next_tmux_session();
                 let tab_task = self.open_tab_russh(&label, &tmux_session);
                 Task::batch([session_open_task.map(|_| Message::Noop), tab_task])
