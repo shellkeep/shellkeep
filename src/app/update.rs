@@ -29,7 +29,7 @@ use shellkeep::config::Config;
 use shellkeep::ssh;
 use shellkeep::ssh::manager::ConnKey;
 use shellkeep::state::recent::RecentConnection;
-use shellkeep::state::state_file::{self, SharedState};
+use shellkeep::state::state_file::{DeviceState, SharedState};
 use shellkeep::tray::{Tray, TrayAction};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -429,12 +429,8 @@ impl ShellKeep {
             tracing::warn!("failed to list existing sessions: {e}");
         }
         if let Ok(server_sessions) = result {
-            // Use the pre-connect snapshot if available (taken before open_tab_russh
-            // overwrote the file), otherwise load from disk.
-            let (shared_opt, device_opt) = self
-                .pre_connect_state
-                .take()
-                .unwrap_or_else(|| state_file::load_split_state(&self.client_id));
+            let shared_opt = self.cached_shared_state.clone();
+            let device_opt = self.cached_device_state.clone();
             let saved_state = shared_opt;
 
             // FR-STATE-14: restore window geometry from device state
@@ -1034,8 +1030,7 @@ impl ShellKeep {
                 }
 
                 // Find the hidden session in saved state to get its tmux name and title
-                let shared_path = SharedState::local_cache_path();
-                let saved_state = SharedState::load_local(&shared_path);
+                let saved_state = self.cached_shared_state.clone();
                 let saved_env_tabs = saved_state
                     .as_ref()
                     .map(|s| s.env_tabs(&self.current_environment))
@@ -1335,9 +1330,6 @@ impl ShellKeep {
                 self.window_order.push(session_win_id);
                 self.focused_window = Some(session_win_id);
 
-                // Snapshot saved state BEFORE open_tab_russh, which calls save_state()
-                // and overwrites the file — reconciliation needs the pre-overwrite state.
-                self.pre_connect_state = Some(state_file::load_split_state(&self.client_id));
                 let tmux_session = self.next_tmux_session();
                 let tab_task = self.open_tab_russh(&label, &tmux_session);
                 Task::batch([session_open_task.map(|_| Message::Noop), tab_task])
@@ -2694,10 +2686,22 @@ impl ShellKeep {
                         tracing::info!("state syncer ready (transport: {transport})");
                         let syncer_clone = syncer.clone();
                         self.state_syncer = Some(syncer);
-                        // FR-STATE-02: read server state (takes precedence over local)
+                        // FR-STATE-02: read server state (shared + device)
                         Task::perform(
-                            async move { syncer_clone.read_state().await.map_err(|e| e.to_string()) },
-                            Message::ServerStateLoaded,
+                            async move {
+                                let shared = syncer_clone
+                                    .read_shared_state()
+                                    .await
+                                    .map_err(|e| e.to_string())?;
+                                let device = syncer_clone
+                                    .read_device_state()
+                                    .await
+                                    .map_err(|e| e.to_string())?;
+                                Ok((shared, device))
+                            },
+                            |result: Result<(Option<String>, Option<String>), String>| {
+                                Message::ServerStateLoaded(result)
+                            },
                         )
                     }
                     Err(e) => {
@@ -2707,33 +2711,38 @@ impl ShellKeep {
                 }
             }
 
-            // FR-STATE-02: server state loaded (shared state from server)
+            // FR-STATE-02: server state loaded (shared + device)
             Message::ServerStateLoaded(result) => {
                 match result {
-                    Ok(Some(json)) => {
-                        match serde_json::from_str::<SharedState>(&json) {
-                            Ok(server_state) => {
-                                tracing::info!(
-                                    "loaded server shared state: {} environments",
-                                    server_state.environments.len()
-                                );
-                                // Server state takes precedence — update local cache
-                                let path = SharedState::local_cache_path();
-                                if let Err(e) = server_state.save_local(&path) {
-                                    tracing::warn!("failed to cache server shared state: {e}");
+                    Ok((shared_json, device_json)) => {
+                        if let Some(json) = shared_json {
+                            match serde_json::from_str::<SharedState>(&json) {
+                                Ok(state) => {
+                                    tracing::info!(
+                                        "loaded server shared state: {} environments",
+                                        state.environments.len()
+                                    );
+                                    self.cached_shared_state = Some(state);
                                 }
+                                Err(e) => tracing::warn!("corrupt server shared state: {e}"),
                             }
-                            Err(e) => {
-                                tracing::warn!("corrupt server shared state: {e}");
+                        } else {
+                            tracing::debug!("no server shared state found");
+                        }
+                        if let Some(json) = device_json {
+                            match serde_json::from_str::<DeviceState>(&json) {
+                                Ok(state) => {
+                                    tracing::info!(
+                                        "loaded server device state for {}",
+                                        state.client_id
+                                    );
+                                    self.cached_device_state = Some(state);
+                                }
+                                Err(e) => tracing::warn!("corrupt server device state: {e}"),
                             }
                         }
                     }
-                    Ok(None) => {
-                        tracing::debug!("no server shared state found, using local");
-                    }
-                    Err(e) => {
-                        tracing::warn!("failed to read server shared state: {e}");
-                    }
+                    Err(e) => tracing::warn!("failed to read server state: {e}"),
                 }
                 Task::none()
             }

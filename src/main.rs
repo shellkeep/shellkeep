@@ -14,9 +14,7 @@ mod theme;
 pub(crate) use app::ShellKeep;
 
 use iced::{Point, Size, window};
-use shellkeep::config::Config;
 use shellkeep::i18n;
-use shellkeep::state::state_file::DeviceState;
 
 // Re-export for view layer
 pub(crate) use app::update::RENAME_INPUT_ID;
@@ -161,13 +159,8 @@ fn main() -> iced::Result {
         }
     };
 
-    // FR-STATE-14: load saved window geometry for startup (from device state)
-    let saved_window = {
-        let tmp_client_id =
-            shellkeep::state::client_id::resolve(Config::load().general.client_id.as_deref());
-        DeviceState::load_local(&DeviceState::local_cache_path(&tmp_client_id))
-            .and_then(|s| s.window_geometry.get("main").cloned())
-    };
+    // FR-STATE-14: window geometry will be restored from server state after connect
+    let saved_window: Option<shellkeep::state::state_file::WindowGeometry> = None;
 
     // Build initial window settings from saved geometry
     let mut window_settings = window::Settings::default();

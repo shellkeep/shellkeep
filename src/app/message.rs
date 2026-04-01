@@ -114,8 +114,8 @@ pub(crate) enum Message {
     SwitchEnvironment(String),
     /// FR-CONN-20: remote state syncer initialized
     StateSyncerReady(Result<Arc<ssh::sftp::StateSyncer>, String>),
-    /// FR-STATE-02: server state loaded (takes precedence over local)
-    ServerStateLoaded(Result<Option<String>, String>),
+    /// FR-STATE-02: server state loaded (shared + device from server)
+    ServerStateLoaded(Result<(Option<String>, Option<String>), String>),
     /// FR-CONN-03: host key TOFU — accept and save
     HostKeyAcceptSave,
     /// FR-CONN-03: host key TOFU — connect once without saving

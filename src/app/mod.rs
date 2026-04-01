@@ -25,7 +25,7 @@ use shellkeep::ssh::manager::{ConnKey, ConnectionManager};
 use shellkeep::state::history;
 use shellkeep::state::recent::RecentConnections;
 use shellkeep::state::state_file::{
-    self, DeviceState, Environment, SharedState, TabState, WindowGeometry,
+    DeviceState, Environment, SharedState, TabState, WindowGeometry,
 };
 use shellkeep::tray::Tray;
 use shellkeep::{i18n, ssh};
@@ -261,9 +261,10 @@ pub(crate) struct ShellKeep {
     /// Auto-incrementing counter for default window names per server
     pub(crate) window_counter: u32,
 
-    /// Snapshot of saved state taken before the first tab is opened, so that
-    /// handle_existing_sessions can see sessions that save_state() overwrote.
-    pub(crate) pre_connect_state: Option<(Option<SharedState>, Option<DeviceState>)>,
+    /// In-memory shared state (loaded from server on connect, written to server on flush)
+    pub(crate) cached_shared_state: Option<SharedState>,
+    /// In-memory device state (loaded from server on connect, written to server on flush)
+    pub(crate) cached_device_state: Option<DeviceState>,
 
     /// FR-RECONNECT-08: last known default gateway (Linux network monitoring)
     #[cfg(target_os = "linux")]
@@ -363,7 +364,8 @@ impl ShellKeep {
                 pending_close_tabs: None,
             },
             state_syncer: None,
-            pre_connect_state: None,
+            cached_shared_state: None,
+            cached_device_state: None,
             #[cfg(target_os = "linux")]
             last_gateway: shellkeep::network::read_default_gateway(),
         };
@@ -373,9 +375,6 @@ impl ShellKeep {
 
         // FR-TRAY-01: initialize system tray icon
         app.tray = Tray::new(app.config.tray.enabled);
-
-        // FR-STATE-07: clean up orphaned .tmp files from interrupted saves
-        shellkeep::state::state_file::cleanup_tmp_files(&app.client_id);
 
         // FR-HISTORY-11: clean up old history files on startup
         history::cleanup_old_history(app.config.state.history_max_days);
@@ -412,9 +411,6 @@ impl ShellKeep {
 
             // FR-CONN-21: CLI launch via russh (async, non-blocking)
             // Opens one tab immediately; existing sessions discovered after connect.
-            // Snapshot saved state BEFORE open_tab_russh, which calls save_state()
-            // and overwrites the file — reconciliation needs the pre-overwrite state.
-            app.pre_connect_state = Some(state_file::load_split_state(&app.client_id));
             let tmux_session = app.next_tmux_session();
             let tab_task = app.open_tab_russh(&label, &tmux_session);
             return (
@@ -1027,7 +1023,7 @@ impl ShellKeep {
         );
         shared.last_environment = Some(self.current_environment.clone());
         // Preserve other environments from the previously loaded shared state
-        if let Some(prev) = SharedState::load_local(&SharedState::local_cache_path()) {
+        if let Some(ref prev) = self.cached_shared_state {
             for (name, env) in &prev.environments {
                 if name != &self.current_environment {
                     shared.environments.insert(name.clone(), env.clone());
@@ -1053,8 +1049,9 @@ impl ShellKeep {
         }
         device.hidden_sessions = self.hidden_sessions.clone();
 
-        let shared_path = SharedState::local_cache_path();
-        let device_path = DeviceState::local_cache_path(&self.client_id);
+        // Update in-memory cache
+        self.cached_shared_state = Some(shared.clone());
+        self.cached_device_state = Some(device.clone());
 
         // FR-TRAY-02: update tray tooltip with session count
         let any_show_welcome = self.windows.values().any(|w| w.show_welcome);
@@ -1065,42 +1062,32 @@ impl ShellKeep {
             tray.set_hidden_active(active_count > 0 && !any_show_welcome);
         }
 
-        // Write state to local disk synchronously so it survives process kill.
-        // Server sync remains async (non-critical for local restore).
-        let shared_json = match serde_json::to_string_pretty(&shared) {
-            Ok(j) => j,
-            Err(e) => {
-                tracing::warn!("failed to serialize shared state: {e}");
-                return;
-            }
-        };
-        let device_json = match serde_json::to_string_pretty(&device) {
-            Ok(j) => j,
-            Err(e) => {
-                tracing::warn!("failed to serialize device state: {e}");
-                return;
-            }
-        };
-
-        // FR-CONN-20: sync both files to server if syncer is available
+        // FR-CONN-20: sync state to server if syncer is available
         if let Some(ref syncer) = self.state_syncer {
             let syncer = syncer.clone();
-            let shared_remote = shared_json.clone();
-            let device_remote = device_json.clone();
+            let shared_json = match serde_json::to_string_pretty(&shared) {
+                Ok(j) => j,
+                Err(e) => {
+                    tracing::warn!("failed to serialize shared state: {e}");
+                    return;
+                }
+            };
+            let device_json = match serde_json::to_string_pretty(&device) {
+                Ok(j) => j,
+                Err(e) => {
+                    tracing::warn!("failed to serialize device state: {e}");
+                    return;
+                }
+            };
             tokio::task::spawn(async move {
-                if let Err(e) = syncer.write_shared_state(&shared_remote).await {
+                if let Err(e) = syncer.write_shared_state(&shared_json).await {
                     tracing::warn!("server shared state sync failed: {e}");
                 }
-                if let Err(e) = syncer.write_device_state(&device_remote).await {
+                if let Err(e) = syncer.write_device_state(&device_json).await {
                     tracing::warn!("server device state sync failed: {e}");
                 }
             });
         }
-
-        // Write both files locally — synchronous to survive SIGTERM/killall.
-        // This blocks briefly (~1ms for JSON write) but ensures durability.
-        write_state_file(&shared_path, &shared_json, "shared");
-        write_state_file(&device_path, &device_json, "device");
     }
 
     pub(crate) fn update_title(&mut self) {
@@ -1323,20 +1310,5 @@ impl ShellKeep {
 
     pub(crate) fn theme(&self, _window_id: window::Id) -> Theme {
         Theme::CatppuccinMocha
-    }
-}
-
-/// Write a state file atomically (tmp + rename). Synchronous.
-fn write_state_file(path: &std::path::Path, json: &str, label: &str) {
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let tmp = path.with_extension("tmp");
-    if let Err(e) = std::fs::write(&tmp, json) {
-        tracing::warn!("failed to write {label} state tmp: {e}");
-    } else if let Err(e) = std::fs::rename(&tmp, path) {
-        tracing::warn!("failed to rename {label} state file: {e}");
-    } else {
-        tracing::debug!("{label} state saved to {}", path.display());
     }
 }

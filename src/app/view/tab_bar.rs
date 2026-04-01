@@ -8,7 +8,6 @@ use crate::{RENAME_INPUT_ID, ShellKeep};
 
 use iced::widget::{Space, button, container, mouse_area, row, text, text_input};
 use iced::{Color, Element, Length, Theme};
-use shellkeep::state::state_file::SharedState;
 
 impl ShellKeep {
     pub(crate) fn view_tab_bar<'a>(&'a self, win: &'a AppWindow) -> Element<'a, Message> {
@@ -141,8 +140,7 @@ impl ShellKeep {
 
     /// Build the list of hidden session menu items from saved state.
     pub(crate) fn build_hidden_session_items(&self) -> Vec<Element<'_, Message>> {
-        let shared_path = SharedState::local_cache_path();
-        let saved_state = SharedState::load_local(&shared_path);
+        let saved_state = self.cached_shared_state.as_ref().cloned();
         let saved_env_tabs = saved_state
             .as_ref()
             .map(|s| s.env_tabs(&self.current_environment))
