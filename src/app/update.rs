@@ -589,11 +589,9 @@ impl ShellKeep {
                 for win in self.windows.values_mut() {
                     let mut i = 0;
                     while i < win.tabs.len() {
-                        if !saved_tmux_names.contains(&win.tabs[i].tmux_session.as_str())
-                            && !server_sessions.contains(&win.tabs[i].tmux_session)
-                        {
-                            // This tab was just auto-created and its tmux session
-                            // hasn't even been established on the server yet — remove it.
+                        if !saved_tmux_names.contains(&win.tabs[i].tmux_session.as_str()) {
+                            // This tab's tmux session is not in saved state — it was
+                            // auto-created as a placeholder and is now redundant.
                             let removed = win.tabs.remove(i);
                             placeholder_tmux.push(removed.tmux_session.clone());
                             tracing::info!(
