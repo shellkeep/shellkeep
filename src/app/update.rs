@@ -581,8 +581,10 @@ impl ShellKeep {
 
                 // Remove the auto-created initial tab whose tmux session is not in
                 // saved state — it was a placeholder that is now redundant.
-                let saved_tmux_names: Vec<&str> =
-                    saved_env_tabs.iter().map(|t| t.tmux_session_name.as_str()).collect();
+                let saved_tmux_names: Vec<&str> = saved_env_tabs
+                    .iter()
+                    .map(|t| t.tmux_session_name.as_str())
+                    .collect();
                 let mut placeholder_tmux: Vec<String> = Vec::new();
                 for win in self.windows.values_mut() {
                     let mut i = 0;
@@ -622,8 +624,7 @@ impl ShellKeep {
                                     for name in &placeholder_tmux {
                                         let cmd =
                                             format!("tmux kill-session -t {name} 2>/dev/null");
-                                        let _ =
-                                            ssh::connection::exec_command(&handle, &cmd).await;
+                                        let _ = ssh::connection::exec_command(&handle, &cmd).await;
                                         tracing::info!("killed placeholder tmux session: {name}");
                                     }
                                 }
@@ -1337,8 +1338,7 @@ impl ShellKeep {
 
                 // Snapshot saved state BEFORE open_tab_russh, which calls save_state()
                 // and overwrites the file — reconciliation needs the pre-overwrite state.
-                self.pre_connect_state =
-                    Some(state_file::load_split_state(&self.client_id));
+                self.pre_connect_state = Some(state_file::load_split_state(&self.client_id));
                 let tmux_session = self.next_tmux_session();
                 let tab_task = self.open_tab_russh(&label, &tmux_session);
                 Task::batch([session_open_task.map(|_| Message::Noop), tab_task])
