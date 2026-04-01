@@ -14,6 +14,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use russh_sftp::client::SftpSession;
+use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 
 use super::connection::SshHandler;
@@ -62,7 +63,12 @@ pub async fn write_file_atomic(
     data: &[u8],
 ) -> Result<(), SshError> {
     let tmp_path = format!("{path}.tmp");
-    sftp.write(&tmp_path, data)
+    // Use create() not write() — write() only opens existing files,
+    // create() uses CREATE|TRUNCATE|WRITE flags.
+    sftp.create(&tmp_path)
+        .await
+        .map_err(|e| SshError::Sftp(format!("sftp create {tmp_path}: {e}")))?
+        .write_all(data)
         .await
         .map_err(|e| SshError::Sftp(format!("sftp write {tmp_path}: {e}")))?;
     // Try rename (posix-rename@openssh.com does atomic overwrite)

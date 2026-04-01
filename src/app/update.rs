@@ -2744,6 +2744,10 @@ impl ShellKeep {
                     }
                     Err(e) => tracing::warn!("failed to read server state: {e}"),
                 }
+                // Flush current state to server — any tabs created before the
+                // syncer was ready now get persisted for the first time.
+                self.state_dirty = true;
+                self.flush_state();
                 Task::none()
             }
 
