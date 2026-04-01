@@ -236,3 +236,16 @@ pub(crate) fn recent_item_style(_theme: &Theme, _status: button::Status) -> butt
         ..Default::default()
     }
 }
+
+/// Server card container in the control window.
+pub(crate) fn server_card_style(_theme: &Theme) -> container::Style {
+    container::Style {
+        background: Some(iced::Background::Color(Color::from_rgb8(0x31, 0x32, 0x44))),
+        border: iced::Border {
+            radius: 8.0.into(),
+            width: 1.0,
+            color: Color::from_rgb8(0x45, 0x47, 0x59),
+        },
+        ..Default::default()
+    }
+}

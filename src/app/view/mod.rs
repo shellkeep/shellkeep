@@ -400,6 +400,49 @@ impl ShellKeep {
             column![tab_bar, content, status_bar].into()
         };
 
+        // Item 5: window rename overlay
+        let main_view: Element<'_, Message> = if self.renaming_window.is_some() {
+            let rename_dialog = container(
+                column![
+                    text("Rename window")
+                        .size(16)
+                        .color(Color::from_rgb8(0xcd, 0xd6, 0xf4)),
+                    text_input("Window name", &self.window_rename_input)
+                        .on_input(Message::WindowRenameInputChanged)
+                        .on_submit(Message::FinishWindowRename)
+                        .size(14)
+                        .padding(8)
+                        .width(300),
+                    row![
+                        button(text("Rename").size(13))
+                            .on_press(Message::FinishWindowRename)
+                            .padding([8, 16])
+                            .style(styles::primary_button_style),
+                        button(text("Cancel").size(13))
+                            .on_press(Message::CancelWindowRename)
+                            .padding([8, 16])
+                            .style(styles::secondary_button_style),
+                    ]
+                    .spacing(8),
+                ]
+                .spacing(8)
+                .padding(24),
+            )
+            .style(styles::dialog_container_style);
+
+            let scrim = mouse_area(
+                container(Space::new().width(Length::Fill).height(Length::Fill))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .style(styles::scrim_style),
+            )
+            .on_press(Message::CancelWindowRename);
+
+            stack![main_view, scrim, center(rename_dialog)].into()
+        } else {
+            main_view
+        };
+
         // FR-TABS-17: close confirmation dialog overlay
         // FR-SESSION-10a: close-tab confirmation dialog
         let main_view: Element<'_, Message> = if self.dialogs.pending_close_tabs.is_some() {

@@ -66,7 +66,16 @@ impl ShellKeep {
             | Message::ConnectRecent(..)
             | Message::ShowRestoreDropdown
             | Message::DismissRestoreDropdown
-            | Message::RestoreHiddenSession(..) => self.handle_tab_message(message),
+            | Message::RestoreHiddenSession(..)
+            | Message::DisconnectServer
+            | Message::CloseServer
+            | Message::ConfirmCloseServer
+            | Message::CancelCloseServer
+            | Message::ToggleConnectForm
+            | Message::RenameWindow
+            | Message::WindowRenameInputChanged(..)
+            | Message::FinishWindowRename
+            | Message::CancelWindowRename => self.handle_tab_message(message),
 
             // --- Input / welcome screen messages ---
             Message::KeyEvent(..)
@@ -1001,6 +1010,125 @@ impl ShellKeep {
                 Task::none()
             }
 
+            // Item 2: disconnect server (keep tmux sessions alive)
+            Message::DisconnectServer => {
+                // Hide all tabs in all session windows
+                let mut session_win_ids: Vec<window::Id> = Vec::new();
+                for (&win_id, win) in &self.windows {
+                    if win.kind == super::WindowKind::Session {
+                        session_win_ids.push(win_id);
+                    }
+                }
+                for win_id in session_win_ids {
+                    if let Some(win) = self.windows.get(&win_id) {
+                        let tab_count = win.tabs.len();
+                        for i in (0..tab_count).rev() {
+                            let uuid = win.tabs[i].session_uuid.clone();
+                            if !self.hidden_sessions.contains(&uuid) {
+                                self.hidden_sessions.push(uuid);
+                            }
+                        }
+                    }
+                    if let Some(win) = self.windows.get_mut(&win_id) {
+                        win.tabs.clear();
+                        win.active_tab = 0;
+                        win.update_title();
+                    }
+                }
+                self.current_conn = None;
+                self.sessions_listed = false;
+                self.state_syncer = None;
+                self.save_state();
+                self.toast = Some((
+                    "Disconnected. Sessions kept on server.".into(),
+                    std::time::Instant::now(),
+                ));
+                Task::none()
+            }
+
+            // Item 2: close all sessions (destructive) — show confirmation
+            Message::CloseServer => {
+                self.confirm_close_server = true;
+                Task::none()
+            }
+
+            Message::ConfirmCloseServer => {
+                self.confirm_close_server = false;
+                // Close all tabs in all session windows (kills tmux sessions)
+                let mut tasks = Vec::new();
+                let session_win_ids: Vec<window::Id> = self
+                    .windows
+                    .iter()
+                    .filter(|(_, w)| w.kind == super::WindowKind::Session)
+                    .map(|(&id, _)| id)
+                    .collect();
+                for win_id in session_win_ids {
+                    if let Some(win) = self.windows.get(&win_id) {
+                        let tab_count = win.tabs.len();
+                        for i in (0..tab_count).rev() {
+                            tasks.push(self.close_tab_in_window(win_id, i));
+                        }
+                    }
+                }
+                self.current_conn = None;
+                self.sessions_listed = false;
+                self.state_syncer = None;
+                self.save_state();
+                Task::batch(tasks)
+            }
+
+            Message::CancelCloseServer => {
+                self.confirm_close_server = false;
+                Task::none()
+            }
+
+            // Item 7: toggle connect form visibility in control window
+            Message::ToggleConnectForm => {
+                self.show_connect_form = !self.show_connect_form;
+                Task::none()
+            }
+
+            // Item 5: rename window
+            Message::RenameWindow => {
+                // Dismiss the dropdown first
+                if let Some(win) = self.active_window_mut() {
+                    win.show_restore_dropdown = false;
+                }
+                if let Some(win) = self.active_window() {
+                    let current_name = win.name.clone();
+                    let win_id = win.id;
+                    self.renaming_window = Some(win_id);
+                    self.window_rename_input = current_name;
+                }
+                Task::none()
+            }
+
+            Message::WindowRenameInputChanged(v) => {
+                self.window_rename_input = v;
+                Task::none()
+            }
+
+            Message::FinishWindowRename => {
+                if let Some(win_id) = self.renaming_window.take() {
+                    let new_name = self.window_rename_input.trim().to_string();
+                    if let Some(win) = self.windows.get_mut(&win_id) {
+                        if !new_name.is_empty() {
+                            win.name = new_name;
+                        }
+                        win.update_title();
+                    }
+                    self.window_rename_input.clear();
+                    self.save_state();
+                }
+                Task::none()
+            }
+
+            Message::CancelWindowRename => {
+                self.renaming_window = None;
+                self.window_rename_input.clear();
+                Task::none()
+            }
+
             _ => Task::none(),
         }
     }
@@ -1141,6 +1269,9 @@ impl ShellKeep {
                 });
                 let mut session_win = super::AppWindow::new(session_win_id);
                 session_win.server_window_id = uuid::Uuid::new_v4().to_string();
+                // Item 8: default window name "user@host - Window N"
+                self.window_counter += 1;
+                session_win.name = format!("{} - Window {}", label, self.window_counter);
                 self.windows.insert(session_win_id, session_win);
                 self.window_order.push(session_win_id);
                 self.focused_window = Some(session_win_id);
@@ -1156,23 +1287,31 @@ impl ShellKeep {
 
     fn handle_key_event(&mut self, event: keyboard::Event) -> Task<Message> {
         if let keyboard::Event::KeyPressed { key, modifiers, .. } = event {
+            // Item 1: determine if the focused window is a session window
+            let focused_is_session = self
+                .active_window()
+                .is_some_and(|w| w.kind == super::WindowKind::Session);
             let win_tab_count = self.active_window().map(|w| w.tabs.len()).unwrap_or(0);
-            // Ctrl+Shift+T — new tab (same server)
-            if modifiers.control()
+
+            // Ctrl+Shift+T — new tab (same server) — session windows only
+            if focused_is_session
+                && modifiers.control()
                 && modifiers.shift()
                 && key == keyboard::Key::Character("t".into())
             {
                 return self.update(Message::NewTab);
             }
-            // Ctrl+Shift+N — new window for the current server
-            if modifiers.control()
+            // Ctrl+Shift+N — new window for the current server — session windows only
+            if focused_is_session
+                && modifiers.control()
                 && modifiers.shift()
                 && key == keyboard::Key::Character("n".into())
             {
                 return self.update(Message::NewWindow);
             }
-            // Ctrl+Shift+W — close current tab (goes through confirmation)
-            if modifiers.control()
+            // Ctrl+Shift+W — close current tab — session windows only
+            if focused_is_session
+                && modifiers.control()
                 && modifiers.shift()
                 && key == keyboard::Key::Character("w".into())
                 && win_tab_count > 0
@@ -1180,8 +1319,9 @@ impl ShellKeep {
                 let active = self.active_window().map(|w| w.active_tab).unwrap_or(0);
                 return self.update(Message::CloseTab(active));
             }
-            // Ctrl+Tab — next tab
-            if modifiers.control()
+            // Ctrl+Tab — next tab — session windows only
+            if focused_is_session
+                && modifiers.control()
                 && !modifiers.shift()
                 && key == keyboard::Key::Named(keyboard::key::Named::Tab)
                 && win_tab_count > 0
@@ -1191,8 +1331,9 @@ impl ShellKeep {
                 win.show_welcome = false;
                 win.update_title();
             }
-            // Ctrl+Shift+Tab — previous tab
-            if modifiers.control()
+            // Ctrl+Shift+Tab — previous tab — session windows only
+            if focused_is_session
+                && modifiers.control()
                 && modifiers.shift()
                 && key == keyboard::Key::Named(keyboard::key::Named::Tab)
                 && win_tab_count > 0
@@ -1206,8 +1347,11 @@ impl ShellKeep {
                 win.show_welcome = false;
                 win.update_title();
             }
-            // F2 — rename current tab
-            if key == keyboard::Key::Named(keyboard::key::Named::F2) && win_tab_count > 0 {
+            // F2 — rename current tab — session windows only
+            if focused_is_session
+                && key == keyboard::Key::Named(keyboard::key::Named::F2)
+                && win_tab_count > 0
+            {
                 let renaming = self.active_window().and_then(|w| w.renaming_tab);
                 if renaming.is_none() {
                     let label = self
@@ -1223,41 +1367,51 @@ impl ShellKeep {
                     return iced_runtime::widget::operation::focus(RENAME_INPUT_ID);
                 }
             }
-            // Ctrl+Shift+= or Ctrl+= — zoom in
-            if modifiers.control()
+            // Ctrl+Shift+= or Ctrl+= — zoom in — session windows only
+            if focused_is_session
+                && modifiers.control()
                 && (key == keyboard::Key::Character("=".into())
                     || key == keyboard::Key::Character("+".into()))
             {
                 self.current_font_size = (self.current_font_size + 1.0).min(36.0);
                 self.apply_font_to_all_tabs();
             }
-            // Ctrl+- — zoom out
-            if modifiers.control() && key == keyboard::Key::Character("-".into()) {
+            // Ctrl+- — zoom out — session windows only
+            if focused_is_session
+                && modifiers.control()
+                && key == keyboard::Key::Character("-".into())
+            {
                 self.current_font_size = (self.current_font_size - 1.0).max(8.0);
                 self.apply_font_to_all_tabs();
             }
-            // Ctrl+0 — zoom reset
-            if modifiers.control() && key == keyboard::Key::Character("0".into()) {
+            // Ctrl+0 — zoom reset — session windows only
+            if focused_is_session
+                && modifiers.control()
+                && key == keyboard::Key::Character("0".into())
+            {
                 self.current_font_size = self.config.terminal.font_size;
                 self.apply_font_to_all_tabs();
             }
-            // Ctrl+Shift+F — toggle scrollback search (FR-TABS-09)
-            if modifiers.control()
+            // Ctrl+Shift+F — toggle scrollback search — session windows only
+            if focused_is_session
+                && modifiers.control()
                 && modifiers.shift()
                 && key == keyboard::Key::Character("f".into())
             {
                 return self.update(Message::SearchToggle);
             }
-            // Ctrl+Shift+S — export scrollback to file (FR-TERMINAL-18)
-            if modifiers.control()
+            // Ctrl+Shift+S — export scrollback — session windows only
+            if focused_is_session
+                && modifiers.control()
                 && modifiers.shift()
                 && key == keyboard::Key::Character("s".into())
                 && win_tab_count > 0
             {
                 return self.update(Message::ExportScrollback);
             }
-            // Ctrl+Shift+A — copy entire scrollback to clipboard (FR-TABS-12)
-            if modifiers.control()
+            // Ctrl+Shift+A — copy scrollback — session windows only
+            if focused_is_session
+                && modifiers.control()
                 && modifiers.shift()
                 && key == keyboard::Key::Character("a".into())
                 && win_tab_count > 0
@@ -2167,6 +2321,16 @@ impl ShellKeep {
                 });
                 let mut new_win = super::AppWindow::new(new_id);
                 new_win.server_window_id = uuid::Uuid::new_v4().to_string();
+                // Item 8: default window name
+                self.window_counter += 1;
+                if let Some(ref conn) = self.current_conn {
+                    new_win.name = format!(
+                        "{}@{} - Window {}",
+                        conn.key.username, conn.key.host, self.window_counter
+                    );
+                } else {
+                    new_win.name = format!("shellkeep - Window {}", self.window_counter);
+                }
                 self.windows.insert(new_id, new_win);
                 self.window_order.push(new_id);
                 self.focused_window = Some(new_id);

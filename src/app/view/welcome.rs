@@ -185,12 +185,6 @@ impl ShellKeep {
                 .into()
         };
 
-        let shortcuts_hint = text(
-            "Ctrl+Shift+T new tab  |  Ctrl+Shift+F search  |  Ctrl+Shift+W close  |  F2 rename",
-        )
-        .size(10)
-        .color(Color::from_rgb8(0x58, 0x5b, 0x70));
-
         let form = column![
             logo,
             title,
@@ -204,8 +198,6 @@ impl ShellKeep {
             error_text,
             Space::new().height(12),
             recent_section,
-            Space::new().height(20),
-            shortcuts_hint,
         ]
         .spacing(12)
         .align_x(iced::Alignment::Center)
@@ -218,20 +210,35 @@ impl ShellKeep {
     pub(crate) fn view_control_window(&self) -> Element<'_, Message> {
         let mut items: Vec<Element<'_, Message>> = Vec::new();
 
+        // Item 7: small logo and slogan at the top
+        let logo_row = row![
+            text("\u{1F41A}").size(24),
+            column![
+                text("shellkeep")
+                    .size(16)
+                    .color(Color::from_rgb8(0x89, 0xb4, 0xfa)),
+                text("SSH sessions that survive everything")
+                    .size(10)
+                    .color(Color::from_rgb8(0x6c, 0x70, 0x86)),
+            ]
+            .spacing(2),
+        ]
+        .spacing(8)
+        .align_y(iced::Alignment::Center);
+        items.push(logo_row.into());
+        items.push(Space::new().height(8).into());
+
         // Show connected servers section if we have an active connection
         if self.current_conn.is_some() {
             let label_color = Color::from_rgb8(0xa6, 0xad, 0xc8);
             let text_color = Color::from_rgb8(0xcd, 0xd6, 0xf4);
 
-            items.push(text("Connected servers").size(14).color(label_color).into());
+            items.push(text("Connected servers").size(16).color(text_color).into());
 
             // Gather info about the current connection
             if let Some(ref conn) = self.current_conn {
                 let server_label =
                     format!("{}@{}:{}", conn.key.username, conn.key.host, conn.key.port);
-                // Bug 6 fix: count only tabs in session windows that have a
-                // terminal and are not dead, so the count updates immediately
-                // when tabs are closed.
                 let session_count = self
                     .windows
                     .values()
@@ -256,55 +263,139 @@ impl ShellKeep {
                     "connected, no sessions".to_string()
                 };
 
-                let server_row = button(
-                    row![
-                        text("\u{25CF}").size(10).color(if session_count > 0 {
-                            Color::from_rgb8(0xa6, 0xe3, 0xa1)
-                        } else {
-                            Color::from_rgb8(0xf9, 0xe2, 0xaf)
-                        }),
-                        column![
-                            text(server_label).size(14).color(text_color),
-                            text(status_text).size(11).color(label_color),
-                        ]
-                        .spacing(2),
-                    ]
-                    .spacing(8)
-                    .align_y(iced::Alignment::Center),
-                )
-                .on_press(Message::ShowControlWindow)
-                .padding([8, 12])
-                .width(Length::Fill)
-                .style(styles::recent_item_style);
+                // Item 6: state sync status
+                let sync_status = if self.state_syncer.is_some() {
+                    "State synced \u{2713}"
+                } else if self.current_conn.is_some() {
+                    "Local only \u{26A0}"
+                } else {
+                    ""
+                };
 
-                items.push(server_row.into());
+                let server_card = container(
+                    column![
+                        row![
+                            text("\u{25CF}").size(10).color(if session_count > 0 {
+                                Color::from_rgb8(0xa6, 0xe3, 0xa1)
+                            } else {
+                                Color::from_rgb8(0xf9, 0xe2, 0xaf)
+                            }),
+                            column![
+                                text(server_label).size(14).color(text_color),
+                                text(status_text).size(11).color(label_color),
+                                text(sync_status)
+                                    .size(10)
+                                    .color(if self.state_syncer.is_some() {
+                                        Color::from_rgb8(0xa6, 0xe3, 0xa1)
+                                    } else {
+                                        Color::from_rgb8(0xf9, 0xe2, 0xaf)
+                                    }),
+                            ]
+                            .spacing(2),
+                        ]
+                        .spacing(8)
+                        .align_y(iced::Alignment::Center),
+                        Space::new().height(8),
+                        // Item 2: disconnect and close buttons
+                        row![
+                            button(
+                                text("Disconnect")
+                                    .size(12)
+                                    .color(Color::from_rgb8(0xcd, 0xd6, 0xf4))
+                            )
+                            .on_press(Message::DisconnectServer)
+                            .padding([6, 12])
+                            .style(styles::secondary_button_style),
+                            button(
+                                text("Close all")
+                                    .size(12)
+                                    .color(Color::from_rgb8(0xf3, 0x8b, 0xa8))
+                            )
+                            .on_press(Message::CloseServer)
+                            .padding([6, 12])
+                            .style(styles::danger_button_style),
+                        ]
+                        .spacing(8),
+                    ]
+                    .spacing(4)
+                    .padding(12),
+                )
+                .width(Length::Fill)
+                .style(styles::server_card_style);
+
+                items.push(server_card.into());
             }
 
             items.push(Space::new().height(16).into());
+
+            // Item 7: collapsible connect form when already connected
+            let toggle_label = if self.show_connect_form {
+                "Hide connect form"
+            } else {
+                "Connect to another server..."
+            };
+            items.push(
+                button(
+                    text(toggle_label)
+                        .size(12)
+                        .color(Color::from_rgb8(0x6c, 0x70, 0x86)),
+                )
+                .on_press(Message::ToggleConnectForm)
+                .padding([4, 8])
+                .style(styles::ghost_button_style)
+                .into(),
+            );
+
+            if self.show_connect_form {
+                items.push(self.view_welcome());
+            }
+        } else {
+            // No connection — show full welcome form
+            items.push(self.view_welcome());
         }
 
-        // Always show the connect form (for additional connections)
-        let connect_header = if self.current_conn.is_some() {
-            "Connect to another server"
-        } else {
-            "Connect to a server"
-        };
-        items.push(
-            text(connect_header)
-                .size(14)
-                .color(Color::from_rgb8(0xa6, 0xad, 0xc8))
-                .into(),
-        );
-
-        // Embed the welcome form
-        let welcome = self.view_welcome();
-
-        let control_content = column![
+        // Item 2: close-server confirmation overlay
+        let control_content: Element<'_, Message> = scrollable(
             container(column(items).spacing(8).padding(16).max_width(420)).width(Length::Fill),
-            welcome,
-        ]
-        .spacing(0);
+        )
+        .into();
 
-        scrollable(control_content).into()
+        if self.confirm_close_server {
+            let dialog = container(
+                column![
+                    text("Close all sessions?")
+                        .size(18)
+                        .color(Color::from_rgb8(0xcd, 0xd6, 0xf4)),
+                    text("This will terminate ALL tmux sessions on the server.\nThis cannot be undone.")
+                        .size(13)
+                        .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
+                    Space::new().height(12),
+                    row![
+                        button(text("Cancel").size(14))
+                            .on_press(Message::CancelCloseServer)
+                            .padding([10, 24])
+                            .style(styles::secondary_button_style),
+                        Space::new().width(Length::Fill),
+                        button(
+                            text("Terminate all")
+                                .size(14)
+                                .color(Color::from_rgb8(0x1e, 0x1e, 0x2e))
+                        )
+                        .on_press(Message::ConfirmCloseServer)
+                        .padding([10, 24])
+                        .style(styles::danger_button_style),
+                    ]
+                    .width(Length::Fill),
+                ]
+                .spacing(8)
+                .padding(24)
+                .width(380),
+            )
+            .style(styles::dialog_container_style);
+            use iced::widget::{center, stack};
+            stack![control_content, center(dialog)].into()
+        } else {
+            control_content
+        }
     }
 }

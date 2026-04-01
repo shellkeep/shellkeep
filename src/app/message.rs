@@ -152,6 +152,24 @@ pub(crate) enum Message {
     WindowFocused(window::Id),
     /// Phase 5: show the control window (from tray or menu)
     ShowControlWindow,
+    /// Disconnect SSH from a server but keep tmux sessions alive
+    DisconnectServer,
+    /// Close all sessions and disconnect from server (destructive)
+    CloseServer,
+    /// Confirm destructive CloseServer action
+    ConfirmCloseServer,
+    /// Cancel destructive CloseServer action
+    CancelCloseServer,
+    /// Toggle visibility of the "connect to another server" form
+    ToggleConnectForm,
+    /// Rename the current session window
+    RenameWindow,
+    /// Window rename input changed
+    WindowRenameInputChanged(String),
+    /// Finish renaming the window
+    FinishWindowRename,
+    /// Cancel renaming the window
+    CancelWindowRename,
     /// Intentional no-op — use for callbacks that require a Message but need no action.
     Noop,
 }

@@ -149,6 +149,24 @@ impl ShellKeep {
             .unwrap_or_default();
 
         let mut items: Vec<Element<'_, Message>> = Vec::new();
+
+        // Item 5: rename window option at the top of the dropdown
+        items.push(
+            button(text("Rename window...").size(13))
+                .on_press(Message::RenameWindow)
+                .padding([8, 16])
+                .width(220)
+                .style(styles::context_menu_style)
+                .into(),
+        );
+        // Separator
+        items.push(
+            container(Space::new().height(1))
+                .width(Length::Fill)
+                .style(styles::separator_style)
+                .into(),
+        );
+
         for uuid in &self.hidden_sessions {
             let title = saved_env_tabs
                 .iter()

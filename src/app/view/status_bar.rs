@@ -42,6 +42,13 @@ impl ShellKeep {
             .size(11)
             .color(Color::from_rgb8(0x89, 0xb4, 0xfa));
 
+        // Item 3: shortcut hints in session window status bar
+        let shortcuts_hint = text(
+            "Ctrl+Shift+T new tab | Ctrl+Shift+F search | Ctrl+Shift+W close | Ctrl+Shift+F2 rename",
+        )
+        .size(9)
+        .color(Color::from_rgb8(0x45, 0x47, 0x59));
+
         container(
             row![
                 text(active_label)
@@ -49,6 +56,8 @@ impl ShellKeep {
                     .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
                 Space::new().width(16),
                 env_indicator,
+                Space::new().width(16),
+                shortcuts_hint,
                 Space::new().width(Length::Fill),
                 text(status_text)
                     .size(11)

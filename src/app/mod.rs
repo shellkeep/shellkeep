@@ -105,6 +105,8 @@ pub(crate) struct AppWindow {
     pub(crate) tabs: Vec<tab::Tab>,
     pub(crate) active_tab: usize,
     pub(crate) title: String,
+    /// User-visible window name (e.g. "user@host - Window 1")
+    pub(crate) name: String,
     /// Whether the welcome screen is shown in this window
     pub(crate) show_welcome: bool,
     pub(crate) renaming_tab: Option<usize>,
@@ -130,6 +132,7 @@ impl AppWindow {
             tabs: Vec::new(),
             active_tab: 0,
             title: "shellkeep".to_string(),
+            name: String::new(),
             show_welcome: false,
             renaming_tab: None,
             context_menu: None,
@@ -152,6 +155,7 @@ impl AppWindow {
             tabs: Vec::new(),
             active_tab: 0,
             title: "shellkeep".to_string(),
+            name: "shellkeep".to_string(),
             show_welcome: true,
             renaming_tab: None,
             context_menu: None,
@@ -166,7 +170,14 @@ impl AppWindow {
     }
 
     pub(crate) fn update_title(&mut self) {
-        if let Some(tab) = self.tabs.get(self.active_tab) {
+        if !self.name.is_empty() {
+            if let Some(tab) = self.tabs.get(self.active_tab) {
+                let status = if tab.is_dead() { " (disconnected)" } else { "" };
+                self.title = format!("{} — {}{}", self.name, tab.label, status);
+            } else {
+                self.title = self.name.clone();
+            }
+        } else if let Some(tab) = self.tabs.get(self.active_tab) {
             let status = if tab.is_dead() { " (disconnected)" } else { "" };
             self.title = format!("shellkeep — {}{}", tab.label, status);
         } else {
@@ -235,6 +246,21 @@ pub(crate) struct ShellKeep {
     /// Hidden session UUIDs (per-device, not restored as tabs on connect)
     pub(crate) hidden_sessions: Vec<String>,
 
+    /// Whether the connect form is shown in the control window
+    pub(crate) show_connect_form: bool,
+
+    /// Whether we're currently confirming a destructive CloseServer action
+    pub(crate) confirm_close_server: bool,
+
+    /// Window rename state: which window is being renamed
+    pub(crate) renaming_window: Option<window::Id>,
+
+    /// Window rename input value
+    pub(crate) window_rename_input: String,
+
+    /// Auto-incrementing counter for default window names per server
+    pub(crate) window_counter: u32,
+
     /// FR-RECONNECT-08: last known default gateway (Linux network monitoring)
     #[cfg(target_os = "linux")]
     pub(crate) last_gateway: Option<String>,
@@ -280,6 +306,11 @@ impl ShellKeep {
             client_id: shellkeep::state::client_id::resolve(config.general.client_id.as_deref()),
             current_environment: "Default".to_string(),
             hidden_sessions: Vec::new(),
+            show_connect_form: false,
+            confirm_close_server: false,
+            renaming_window: None,
+            window_rename_input: String::new(),
+            window_counter: 0,
             conn_manager: Arc::new(Mutex::new(ConnectionManager::new())),
             sessions_listed: false,
             last_state_save: None,
@@ -367,6 +398,9 @@ impl ShellKeep {
             let (session_win_id, session_open_task) = window::open(initial_window_settings);
             let mut session_win = AppWindow::new(session_win_id);
             session_win.server_window_id = "main".to_string();
+            // Item 8: default window name for CLI-launched windows
+            app.window_counter += 1;
+            session_win.name = format!("{} - Window {}", label, app.window_counter);
             app.windows.insert(session_win_id, session_win);
             app.window_order.push(session_win_id);
             app.focused_window = Some(session_win_id);
