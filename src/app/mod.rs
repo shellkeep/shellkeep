@@ -1057,7 +1057,8 @@ impl ShellKeep {
             tray.set_hidden_active(active_count > 0 && !any_show_welcome);
         }
 
-        // FR-STATE-06: write state to disk asynchronously to avoid blocking the UI
+        // Write state to local disk synchronously so it survives process kill.
+        // Server sync remains async (non-critical for local restore).
         let shared_json = match serde_json::to_string_pretty(&shared) {
             Ok(j) => j,
             Err(e) => {
@@ -1088,34 +1089,10 @@ impl ShellKeep {
             });
         }
 
-        // Write both files locally
-        tokio::task::spawn_blocking(move || {
-            // Write shared state
-            if let Some(parent) = shared_path.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            let tmp = shared_path.with_extension("tmp");
-            if let Err(e) = std::fs::write(&tmp, &shared_json) {
-                tracing::warn!("failed to write shared state tmp: {e}");
-            } else if let Err(e) = std::fs::rename(&tmp, &shared_path) {
-                tracing::warn!("failed to rename shared state file: {e}");
-            } else {
-                tracing::debug!("shared state saved to {}", shared_path.display());
-            }
-
-            // Write device state
-            if let Some(parent) = device_path.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            let tmp = device_path.with_extension("tmp");
-            if let Err(e) = std::fs::write(&tmp, &device_json) {
-                tracing::warn!("failed to write device state tmp: {e}");
-            } else if let Err(e) = std::fs::rename(&tmp, &device_path) {
-                tracing::warn!("failed to rename device state file: {e}");
-            } else {
-                tracing::debug!("device state saved to {}", device_path.display());
-            }
-        });
+        // Write both files locally — synchronous to survive SIGTERM/killall.
+        // This blocks briefly (~1ms for JSON write) but ensures durability.
+        write_state_file(&shared_path, &shared_json, "shared");
+        write_state_file(&device_path, &device_json, "device");
     }
 
     pub(crate) fn update_title(&mut self) {
@@ -1338,5 +1315,20 @@ impl ShellKeep {
 
     pub(crate) fn theme(&self, _window_id: window::Id) -> Theme {
         Theme::CatppuccinMocha
+    }
+}
+
+/// Write a state file atomically (tmp + rename). Synchronous.
+fn write_state_file(path: &std::path::Path, json: &str, label: &str) {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let tmp = path.with_extension("tmp");
+    if let Err(e) = std::fs::write(&tmp, json) {
+        tracing::warn!("failed to write {label} state tmp: {e}");
+    } else if let Err(e) = std::fs::rename(&tmp, path) {
+        tracing::warn!("failed to rename {label} state file: {e}");
+    } else {
+        tracing::debug!("{label} state saved to {}", path.display());
     }
 }
