@@ -534,10 +534,11 @@ impl ShellKeep {
                     }
                     // In saved state — restore it
                     restorable.push((saved.title.as_str(), session.as_str()));
-                } else if session.contains("--shellkeep-") {
-                    // Shellkeep session NOT in saved state — orphan from a failed kill.
-                    // Only clean up sessions with our naming convention to avoid
-                    // touching user's manually-created tmux sessions.
+                } else if session.starts_with(&format!("{}--shellkeep-", self.current_environment))
+                {
+                    // Shellkeep session in OUR environment but NOT in saved state —
+                    // orphan from a failed kill. Only clean up sessions in the current
+                    // environment to avoid touching other environments' sessions.
                     stale.push(session.clone());
                 }
             }
