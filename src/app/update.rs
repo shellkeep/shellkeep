@@ -1545,10 +1545,10 @@ impl ShellKeep {
                         .values()
                         .filter(|w| w.kind == super::WindowKind::Session)
                         .count();
-                    if session_count > 0 || self.tray.is_some() {
+                    if session_count > 0 {
                         return window::close(win_id);
                     }
-                    // No session windows and no tray — exit
+                    // No session windows — exit the app
                     return Task::batch([window::close(win_id), iced::exit()]);
                 }
 
@@ -1571,12 +1571,12 @@ impl ShellKeep {
                         self.focused_window = self.window_order.first().copied();
                     }
                     self.flush_state();
-                    // If only control window remains and no tray, exit
-                    let non_control = self
+                    // If only control window remains, exit the app
+                    let has_session_windows = self
                         .windows
                         .values()
                         .any(|w| w.kind == super::WindowKind::Session);
-                    if !non_control && self.tray.is_none() {
+                    if !has_session_windows {
                         return Task::batch([window::close(win_id), iced::exit()]);
                     }
                     return window::close(win_id);
@@ -1601,7 +1601,7 @@ impl ShellKeep {
                         .windows
                         .values()
                         .any(|w| w.kind == super::WindowKind::Session);
-                    if !has_session_windows && self.tray.is_none() {
+                    if !has_session_windows {
                         return Task::batch([window::close(id), iced::exit()]);
                     }
                     return window::close(id);
