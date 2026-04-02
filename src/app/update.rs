@@ -1130,7 +1130,11 @@ impl ShellKeep {
                 }
                 self.current_conn = None;
                 self.sessions_listed = false;
+                self.server_state_loaded = false;
                 self.state_syncer = None;
+                self.connecting_server = None;
+                self.cached_shared_state = None;
+                self.cached_device_state = None;
                 self.save_state();
                 self.toast = Some((
                     "Disconnected. Sessions kept on server.".into(),
@@ -1165,7 +1169,11 @@ impl ShellKeep {
                 }
                 self.current_conn = None;
                 self.sessions_listed = false;
+                self.server_state_loaded = false;
                 self.state_syncer = None;
+                self.connecting_server = None;
+                self.cached_shared_state = None;
+                self.cached_device_state = None;
                 self.save_state();
                 Task::batch(tasks)
             }
