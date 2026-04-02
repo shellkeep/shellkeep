@@ -2782,11 +2782,8 @@ impl ShellKeep {
                     Err(e) => {
                         tracing::warn!("failed to read server state: {e}");
                         // Set empty state so reconciliation can still proceed
-                        self.cached_shared_state = Some(
-                            self.cached_shared_state
-                                .take()
-                                .unwrap_or_default(),
-                        );
+                        self.cached_shared_state =
+                            Some(self.cached_shared_state.take().unwrap_or_default());
                     }
                 }
                 self.server_state_loaded = true;
