@@ -11,7 +11,7 @@
 //! - per-device state at `~/.terminal-state/clients/<client-id>.json`
 
 use std::sync::Arc;
-use std::time::Duration;
+
 
 use russh_sftp::client::SftpSession;
 use tokio::io::AsyncWriteExt;
@@ -25,9 +25,6 @@ const REMOTE_STATE_DIR: &str = ".terminal-state";
 
 /// Subdirectory for per-device state files.
 const REMOTE_CLIENTS_DIR: &str = "clients";
-
-/// Minimum interval between server state writes (debounce). /* FR-STATE-06 */
-// Debounce removed — app-level flush_state() already debounces at 2s.
 
 /// Open an SFTP session on an existing SSH connection.
 pub async fn open_sftp(

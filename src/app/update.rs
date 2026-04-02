@@ -2785,7 +2785,7 @@ impl ShellKeep {
                         self.cached_shared_state = Some(
                             self.cached_shared_state
                                 .take()
-                                .unwrap_or_else(SharedState::new),
+                                .unwrap_or_default(),
                         );
                     }
                 }
