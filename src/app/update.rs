@@ -2488,6 +2488,14 @@ impl ShellKeep {
                 });
                 let mut new_win = super::AppWindow::new(new_id);
                 new_win.server_window_id = uuid::Uuid::new_v4().to_string();
+                new_win.server_uuid = self.current_conn.as_ref().and_then(|c| {
+                    self.saved_servers
+                        .servers
+                        .iter()
+                        .find(|s| s.host == c.key.host)
+                        .map(|s| s.uuid.clone())
+                });
+                new_win.workspace_env = Some(self.current_environment.clone());
                 // Item 8: default window name
                 self.window_counter += 1;
                 if let Some(ref conn) = self.current_conn {
@@ -2957,51 +2965,65 @@ impl ShellKeep {
                     self.sessions_listed = true;
                     self.connecting_server = None;
 
-                    // Run reconciliation with the discovered sessions
-                    let reconcile_task = self.reconcile_sessions(result.sessions);
+                    let label = self
+                        .current_conn
+                        .as_ref()
+                        .map(|c| format!("{}@{}", c.key.username, c.key.host))
+                        .unwrap_or_else(|| "shellkeep".to_string());
 
-                    // Open session window if reconciliation didn't create one
+                    // Open session window BEFORE reconciliation so tabs land in it
                     let has_session_windows = self
                         .windows
                         .values()
                         .any(|w| w.kind == super::WindowKind::Session);
-                    if !has_session_windows {
-                        let label = self
-                            .current_conn
-                            .as_ref()
-                            .map(|c| format!("{}@{}", c.key.username, c.key.host))
-                            .unwrap_or_else(|| "shellkeep".to_string());
-                        let (session_win_id, session_open_task) = window::open(window::Settings {
+                    let session_open_task = if !has_session_windows {
+                        let (session_win_id, task) = window::open(window::Settings {
                             size: iced::Size::new(900.0, 600.0),
                             ..window::Settings::default()
                         });
                         let mut session_win = super::AppWindow::new(session_win_id);
                         session_win.server_window_id = uuid::Uuid::new_v4().to_string();
+                        // Link window to server + workspace
+                        session_win.server_uuid = self.current_conn.as_ref().and_then(|c| {
+                            self.saved_servers
+                                .servers
+                                .iter()
+                                .find(|s| s.host == c.key.host)
+                                .map(|s| s.uuid.clone())
+                        });
+                        session_win.workspace_env = Some(self.current_environment.clone());
                         self.window_counter += 1;
                         session_win.name = format!("{} - Window {}", label, self.window_counter);
                         self.windows.insert(session_win_id, session_win);
                         self.window_order.push(session_win_id);
                         self.focused_window = Some(session_win_id);
+                        Some(task.map(|_| Message::Noop))
+                    } else {
+                        None
+                    };
 
-                        // If no tabs were restored by reconciliation, create a fresh one
-                        if self.all_tabs().next().is_none() {
-                            let tmux_session = self.next_tmux_session();
-                            let tab_task = self.open_tab_russh(&label, &tmux_session);
-                            return Task::batch([
-                                session_open_task.map(|_| Message::Noop),
-                                tab_task,
-                                reconcile_task,
-                            ]);
-                        }
-                        return Task::batch([
-                            session_open_task.map(|_| Message::Noop),
-                            reconcile_task,
-                        ]);
-                    }
+                    // Run reconciliation — tabs will be added to the session window
+                    let reconcile_task = self.reconcile_sessions(result.sessions);
+
+                    // If reconciliation didn't restore any tabs, create a fresh one
+                    let fresh_tab_task = if self.all_tabs().next().is_none() {
+                        let tmux_session = self.next_tmux_session();
+                        Some(self.open_tab_russh(&label, &tmux_session))
+                    } else {
+                        None
+                    };
 
                     self.state_dirty = true;
                     self.flush_state();
-                    reconcile_task
+
+                    let mut tasks = vec![reconcile_task];
+                    if let Some(t) = session_open_task {
+                        tasks.push(t);
+                    }
+                    if let Some(t) = fresh_tab_task {
+                        tasks.push(t);
+                    }
+                    Task::batch(tasks)
                 }
             },
 
