@@ -1357,77 +1357,7 @@ impl ShellKeep {
                 });
                 self.recent.save();
 
-                // Launch control-plane connection task — no window opened yet.
-                // The ServerConnected handler will open session windows after
-                // server state is loaded and reconciliation is complete.
-                let mgr = self.conn_manager.clone();
-                // SAFETY: just set above
-                #[allow(clippy::unwrap_used)]
-                let conn = self.current_conn.clone().unwrap();
-                let conn_key = conn.key.clone();
-                let client_id = self.client_id.clone();
-                let workspace = self.current_environment.clone();
-                let keepalive = self.config.ssh.keepalive_interval;
-                let phase = Arc::new(std::sync::Mutex::new(i18n::t(i18n::CONNECTING).to_string()));
-
-                Task::perform(
-                    async move {
-                        // 1. Connect to server (SSH + tmux check + lock)
-                        super::session::connect_server(super::session::ConnectServerParams {
-                            conn_manager: mgr.clone(),
-                            conn: conn.clone(),
-                            keepalive_secs: keepalive,
-                            client_id: client_id.clone(),
-                            workspace,
-                            force_lock: false,
-                            phase,
-                            password: None,
-                        })
-                        .await
-                        .map_err(|e| e.to_string())?;
-
-                        // 2. List existing tmux sessions
-                        let sessions = {
-                            let m = mgr.lock().await;
-                            if let Some(handle_arc) = m.get_cached(&conn_key) {
-                                let handle = handle_arc.lock().await;
-                                ssh::tmux::list_sessions_russh(&handle).await
-                            } else {
-                                Vec::new()
-                            }
-                        };
-
-                        // 3. Create StateSyncer + load state
-                        let conn_result = {
-                            let mut m = mgr.lock().await;
-                            m.get_or_connect(&conn_key, conn.identity_file.as_deref(), None, 15)
-                                .await
-                                .map_err(|e| e.to_string())?
-                        };
-                        let syncer = ssh::sftp::StateSyncer::new(conn_result.handle, &client_id)
-                            .await
-                            .map_err(|e| e.to_string())?;
-                        let syncer = Arc::new(syncer);
-
-                        // 4. Read server state
-                        let shared_state = syncer
-                            .read_shared_state()
-                            .await
-                            .map_err(|e| e.to_string())?;
-                        let device_state = syncer
-                            .read_device_state()
-                            .await
-                            .map_err(|e| e.to_string())?;
-
-                        Ok(Box::new(super::session::ServerConnectResult {
-                            sessions,
-                            syncer,
-                            shared_state,
-                            device_state,
-                        }))
-                    },
-                    Message::ServerConnected,
-                )
+                self.launch_server_connect(false, None)
             }
 
             _ => Task::none(),
@@ -2011,10 +1941,22 @@ impl ShellKeep {
 
     fn handle_lock_takeover(&mut self) -> Task<Message> {
         self.dialogs.show_lock_dialog = false;
-        // Bug 1 fix: after lock takeover, reset sessions_listed so that
-        // handle_ssh_connected will re-discover all tmux sessions on the server,
-        // not just the single tab that triggered the lock conflict.
         self.sessions_listed = false;
+
+        // If the lock conflict came from the control-plane flow (no target tab),
+        // re-trigger the full server connect with force_lock.
+        if self.dialogs.lock_target_tab.is_none() {
+            self.connecting_server = self.current_conn.as_ref().and_then(|c| {
+                self.saved_servers
+                    .servers
+                    .iter()
+                    .find(|s| s.host == c.key.host)
+                    .map(|s| s.uuid.clone())
+            });
+            return self.launch_server_connect(true, None);
+        }
+
+        // Legacy path: lock conflict from a specific tab (reconnection)
         if let Some(tab_id) = self.dialogs.lock_target_tab.take()
             && let Some(conn) = self.current_conn.clone()
             && let Some(tab) = self.find_tab_mut(tab_id)
@@ -2039,6 +1981,80 @@ impl ShellKeep {
             );
         }
         Task::none()
+    }
+
+    /// Launch the control-plane server connection task.
+    /// Connects SSH, acquires lock, lists sessions, loads state.
+    /// Result arrives as `Message::ServerConnected`.
+    fn launch_server_connect(&self, force_lock: bool, password: Option<String>) -> Task<Message> {
+        let Some(conn) = self.current_conn.clone() else {
+            return Task::none();
+        };
+        let mgr = self.conn_manager.clone();
+        let conn_key = conn.key.clone();
+        let client_id = self.client_id.clone();
+        let workspace = self.current_environment.clone();
+        let keepalive = self.config.ssh.keepalive_interval;
+        let phase = Arc::new(std::sync::Mutex::new(i18n::t(i18n::CONNECTING).to_string()));
+
+        Task::perform(
+            async move {
+                // 1. Connect to server (SSH + tmux check + lock)
+                super::session::connect_server(super::session::ConnectServerParams {
+                    conn_manager: mgr.clone(),
+                    conn: conn.clone(),
+                    keepalive_secs: keepalive,
+                    client_id: client_id.clone(),
+                    workspace,
+                    force_lock,
+                    phase,
+                    password,
+                })
+                .await
+                .map_err(|e| e.to_string())?;
+
+                // 2. List existing tmux sessions
+                let sessions = {
+                    let m = mgr.lock().await;
+                    if let Some(handle_arc) = m.get_cached(&conn_key) {
+                        let handle = handle_arc.lock().await;
+                        ssh::tmux::list_sessions_russh(&handle).await
+                    } else {
+                        Vec::new()
+                    }
+                };
+
+                // 3. Create StateSyncer + load state
+                let conn_result = {
+                    let mut m = mgr.lock().await;
+                    m.get_or_connect(&conn_key, conn.identity_file.as_deref(), None, 15)
+                        .await
+                        .map_err(|e| e.to_string())?
+                };
+                let syncer = ssh::sftp::StateSyncer::new(conn_result.handle, &client_id)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let syncer = Arc::new(syncer);
+
+                // 4. Read server state
+                let shared_state = syncer
+                    .read_shared_state()
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let device_state = syncer
+                    .read_device_state()
+                    .await
+                    .map_err(|e| e.to_string())?;
+
+                Ok(Box::new(super::session::ServerConnectResult {
+                    sessions,
+                    syncer,
+                    shared_state,
+                    device_state,
+                }))
+            },
+            Message::ServerConnected,
+        )
     }
 
     // -----------------------------------------------------------------------
@@ -2877,7 +2893,26 @@ impl ShellKeep {
                 Err(e) => {
                     tracing::error!("server connection failed: {e}");
                     self.connecting_server = None;
-                    self.error = Some(format!("Connection failed: {e}"));
+                    let el = e.to_lowercase();
+                    if el.contains("session locked by") || el.contains("lock held by") {
+                        // FR-LOCK-05: show lock conflict dialog
+                        tracing::info!("server locked, showing conflict dialog");
+                        self.dialogs.show_lock_dialog = true;
+                        self.dialogs.lock_info_text = e;
+                        self.dialogs.lock_target_tab = None;
+                    } else if (el.contains("auth failed")
+                        || el.contains("no authentication method succeeded"))
+                        && !self.dialogs.show_password_dialog
+                    {
+                        // FR-CONN-09: show password prompt on auth failure
+                        tracing::info!("auth failed, prompting for password");
+                        self.dialogs.show_password_dialog = true;
+                        self.dialogs.password_input.clear();
+                        self.dialogs.password_target_tab = None;
+                        self.dialogs.password_conn_params = self.current_conn.clone();
+                    } else {
+                        self.error = Some(format!("Connection failed: {e}"));
+                    }
                     Task::none()
                 }
                 Ok(result) => {
