@@ -37,15 +37,16 @@ impl ShellKeep {
             .align_x(iced::Alignment::Center)
             .into()
         } else {
-            let version = format!(
-                "v{} — SSH sessions that survive everything",
-                env!("CARGO_PKG_VERSION")
-            );
-            text(version)
+            text("SSH sessions that survive everything")
                 .size(14)
                 .color(Color::from_rgb8(0xa6, 0xad, 0xc8))
                 .into()
         };
+
+        let version_text: Element<'_, Message> = text(format!("v{}", env!("CARGO_PKG_VERSION")))
+            .size(11)
+            .color(Color::from_rgb8(0x6c, 0x70, 0x86))
+            .into();
 
         let host_field = text_input(i18n::t(i18n::HOST_PLACEHOLDER), &self.welcome.host_input)
             .on_input(Message::HostInputChanged)
@@ -203,6 +204,8 @@ impl ShellKeep {
             error_text,
             Space::new().height(12),
             recent_section,
+            Space::new().height(8),
+            version_text,
         ]
         .spacing(12)
         .align_x(iced::Alignment::Center)
@@ -215,23 +218,25 @@ impl ShellKeep {
     pub(crate) fn view_control_window(&self) -> Element<'_, Message> {
         let mut items: Vec<Element<'_, Message>> = Vec::new();
 
-        // Item 7: small logo and slogan at the top
-        let logo_row = row![
-            text("\u{1F41A}").size(24),
-            column![
-                text("shellkeep")
-                    .size(16)
-                    .color(Color::from_rgb8(0x89, 0xb4, 0xfa)),
-                text("SSH sessions that survive everything")
-                    .size(10)
-                    .color(Color::from_rgb8(0x6c, 0x70, 0x86)),
+        // Small logo header — only show when connected (otherwise the welcome form has the big logo)
+        if self.current_conn.is_some() {
+            let logo_row = row![
+                text("\u{1F41A}").size(24),
+                column![
+                    text("shellkeep")
+                        .size(16)
+                        .color(Color::from_rgb8(0x89, 0xb4, 0xfa)),
+                    text("SSH sessions that survive everything")
+                        .size(10)
+                        .color(Color::from_rgb8(0x6c, 0x70, 0x86)),
+                ]
+                .spacing(2),
             ]
-            .spacing(2),
-        ]
-        .spacing(8)
-        .align_y(iced::Alignment::Center);
-        items.push(logo_row.into());
-        items.push(Space::new().height(8).into());
+            .spacing(8)
+            .align_y(iced::Alignment::Center);
+            items.push(logo_row.into());
+            items.push(Space::new().height(8).into());
+        }
 
         // Show connected servers section if we have an active connection
         if self.current_conn.is_some() {
