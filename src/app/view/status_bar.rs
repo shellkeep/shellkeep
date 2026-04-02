@@ -46,7 +46,7 @@ impl ShellKeep {
         };
 
         // FR-ENV-01: environment indicator (hidden when only "default" env)
-        let show_env = self.current_environment != "default";
+        let show_env = !self.current_environment.eq_ignore_ascii_case("default");
 
         let shortcuts_btn = button(text("\u{2328}").size(12))
             .on_press(Message::ShowShortcutsDialog)

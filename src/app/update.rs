@@ -490,6 +490,21 @@ impl ShellKeep {
                 .as_ref()
                 .map(|s| s.env_tabs(&self.current_environment))
                 .unwrap_or_default();
+
+            // Prune hidden_sessions: remove UUIDs that no longer exist in server state
+            if !saved_env_tabs.is_empty() {
+                let known_uuids: Vec<&str> = saved_env_tabs
+                    .iter()
+                    .map(|t| t.session_uuid.as_str())
+                    .collect();
+                let before = self.hidden_sessions.len();
+                self.hidden_sessions
+                    .retain(|u| known_uuids.contains(&u.as_str()));
+                let pruned = before - self.hidden_sessions.len();
+                if pruned > 0 {
+                    tracing::info!("pruned {pruned} stale hidden session UUIDs");
+                }
+            }
             if !saved_env_tabs.is_empty() {
                 for tab in self.all_tabs_mut() {
                     // Find saved tab entry by UUID
