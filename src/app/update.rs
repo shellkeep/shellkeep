@@ -75,7 +75,8 @@ impl ShellKeep {
             | Message::RenameWindow
             | Message::WindowRenameInputChanged(..)
             | Message::FinishWindowRename
-            | Message::CancelWindowRename => self.handle_tab_message(message),
+            | Message::CancelWindowRename
+            | Message::CancelConnect(..) => self.handle_tab_message(message),
 
             // --- Input / welcome screen messages ---
             Message::KeyEvent(..)
@@ -117,7 +118,9 @@ impl ShellKeep {
             | Message::PasswordSubmit
             | Message::PasswordCancel
             | Message::LockTakeOver
-            | Message::LockCancel => self.handle_dialog_message(message),
+            | Message::LockCancel
+            | Message::ShowShortcutsDialog
+            | Message::DismissShortcutsDialog => self.handle_dialog_message(message),
 
             // --- Timer / periodic messages ---
             Message::AutoReconnectTick
@@ -143,7 +146,8 @@ impl ShellKeep {
             | Message::WindowFocused(..)
             | Message::NewWindow
             | Message::WindowOpened(..)
-            | Message::ShowControlWindow => self.handle_terminal_message(message),
+            | Message::ShowControlWindow
+            | Message::CopyToClipboard(..) => self.handle_terminal_message(message),
 
             // --- Search messages ---
             Message::SearchToggle
@@ -223,7 +227,7 @@ impl ShellKeep {
                             );
                         if was_reconnectable && attempt < max_attempts {
                             let new_attempt = attempt + 1;
-                            tab.terminal = None;
+                            // P12: preserve terminal widget during reconnect so it shows behind overlay
                             let phase = Arc::new(std::sync::Mutex::new(String::new()));
                             tab.mark_reconnecting(new_attempt, 0, phase, None);
                             tracing::info!("SSH tab {tab_id} disconnected: {reason}, will retry");
@@ -819,8 +823,19 @@ impl ShellKeep {
 
             Message::HideTab(index) => {
                 self.hide_tab(index);
+                // P9: dismiss close dialog if it was open
+                self.dialogs.pending_close_tabs = None;
                 if let Some(win) = self.active_window_mut() {
                     win.tab_context_menu = None;
+                }
+                Task::none()
+            }
+
+            // P11: cancel an in-progress SSH connection
+            Message::CancelConnect(tab_id) => {
+                if let Some(tab) = self.find_tab_mut(tab_id) {
+                    tab.terminal = None;
+                    tab.mark_disconnected(Some("Connection cancelled".to_string()));
                 }
                 Task::none()
             }
@@ -1512,9 +1527,11 @@ impl ShellKeep {
                     return self.update(Message::CancelCloseTabs);
                 }
             }
-            // Escape — dismiss search, context menu, cancel rename, or cancel welcome
+            // Escape — dismiss search, context menu, cancel rename, shortcuts dialog, or cancel welcome
             if key == keyboard::Key::Named(keyboard::key::Named::Escape) {
-                if self.search.active {
+                if self.dialogs.show_shortcuts_dialog {
+                    return self.update(Message::DismissShortcutsDialog);
+                } else if self.search.active {
                     return self.update(Message::SearchClose);
                 } else if let Some(win) = self.active_window_mut() {
                     if win.context_menu.is_some() {
@@ -1887,6 +1904,16 @@ impl ShellKeep {
                 {
                     tab.mark_disconnected(Some("Lock takeover cancelled".to_string()));
                 }
+                Task::none()
+            }
+
+            // P18-20: keyboard shortcuts dialog
+            Message::ShowShortcutsDialog => {
+                self.dialogs.show_shortcuts_dialog = true;
+                Task::none()
+            }
+            Message::DismissShortcutsDialog => {
+                self.dialogs.show_shortcuts_dialog = false;
                 Task::none()
             }
 
@@ -2464,8 +2491,9 @@ impl ShellKeep {
                     window::gain_focus(control_id)
                 } else {
                     // Control window was closed, re-open it
+                    // P1: compact control window size
                     let (new_id, open_task) = window::open(window::Settings {
-                        size: iced::Size::new(500.0, 500.0),
+                        size: iced::Size::new(360.0, 420.0),
                         ..window::Settings::default()
                     });
                     let control_win = super::AppWindow::new_control(new_id);
@@ -2475,6 +2503,15 @@ impl ShellKeep {
                     self.focused_window = Some(new_id);
                     open_task.map(|_| Message::Noop)
                 }
+            }
+
+            // P23: copy arbitrary string to clipboard
+            Message::CopyToClipboard(s) => {
+                self.toast = Some((
+                    "Copied to clipboard".to_string(),
+                    std::time::Instant::now(),
+                ));
+                iced::clipboard::write(s)
             }
 
             _ => Task::none(),

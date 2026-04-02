@@ -130,7 +130,7 @@ pub const RECONNECTING: &str = "Reconnecting...";
 // Session status
 pub const SESSION_DISCONNECTED: &str = "Session disconnected";
 pub const CONNECTION_LOST: &str = "Connection lost";
-pub const SESSION_KEPT: &str = "Session kept on server — you can restore it later";
+pub const SESSION_KEPT: &str = "Session hidden — click \u{25BC} in the tab bar to restore";
 pub const TERMINAL_NOT_AVAILABLE: &str = "Terminal not available";
 pub const NO_ACTIVE_TAB: &str = "No active tab";
 
@@ -138,7 +138,7 @@ pub const NO_ACTIVE_TAB: &str = "No active tab";
 pub const DEAD_SESSION_RECONNECTABLE: &str =
     "Session disconnected — it may still be running on the server.";
 pub const DEAD_SESSION_TERMINATED: &str =
-    "This session was terminated on the server. Output history is preserved below.";
+    "Disconnected — session may still be running on the server.";
 pub const TRY_AGAIN: &str = "Try again";
 pub const RECONNECT: &str = "Reconnect";
 pub const CREATE_NEW_SESSION: &str = "Create new session";

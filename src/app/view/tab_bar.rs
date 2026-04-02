@@ -6,12 +6,14 @@ use crate::app::Message;
 use crate::app::view::styles;
 use crate::{RENAME_INPUT_ID, ShellKeep};
 
-use iced::widget::{Space, button, container, mouse_area, row, text, text_input};
+use iced::widget::{Space, button, container, mouse_area, row, scrollable, text, text_input};
 use iced::{Color, Element, Length, Theme};
 
 impl ShellKeep {
     pub(crate) fn view_tab_bar<'a>(&'a self, win: &'a AppWindow) -> Element<'a, Message> {
         let mut tabs_row: Vec<Element<'_, Message>> = Vec::new();
+        // P7: track accumulated x position for context menu positioning
+        let mut tab_x_offset: f32 = 0.0;
 
         for (i, tab) in win.tabs.iter().enumerate() {
             let is_active = i == win.active_tab && !win.show_welcome;
@@ -47,15 +49,15 @@ impl ShellKeep {
                 };
 
                 // FR-UI-04: connection status indicator
-                // red = dead/disconnected, yellow = reconnecting or high latency (>300ms),
+                // red = dead/disconnected, blue = reconnecting, orange = high latency (>300ms),
                 // green = connected and healthy
                 let (indicator, label_color) = if tab.is_dead() {
                     ("●", Color::from_rgb8(0xf3, 0x8b, 0xa8))
                 } else if tab.is_auto_reconnect() || (tab.is_russh() && !tab.has_channel()) {
-                    ("●", Color::from_rgb8(0xf9, 0xe2, 0xaf))
+                    ("●", Color::from_rgb8(0x89, 0xb4, 0xfa))
                 } else if tab.last_latency_ms.is_some_and(|ms| ms > 300) {
-                    // FR-UI-04: yellow for high latency (>300ms)
-                    ("●", Color::from_rgb8(0xf9, 0xe2, 0xaf))
+                    // FR-UI-04: orange for high latency (>300ms)
+                    ("●", Color::from_rgb8(0xfa, 0xb3, 0x87))
                 } else {
                     ("●", Color::from_rgb8(0xa6, 0xe3, 0xa1))
                 };
@@ -80,7 +82,7 @@ impl ShellKeep {
                     tab_items.push(
                         text(format!("{ms}ms"))
                             .size(9)
-                            .color(Color::from_rgb8(0xf9, 0xe2, 0xaf))
+                            .color(Color::from_rgb8(0xfa, 0xb3, 0x87))
                             .into(),
                     );
                 }
@@ -100,8 +102,16 @@ impl ShellKeep {
                         ..Default::default()
                     });
 
+                // P7: estimate tab width from label length
+                // indicator(~14px) + label(~7px/char) + latency?(~30px) + close(~26px) + padding(24px) + spacing(~24px)
+                let display_len = tab.label.len().min(25);
+                let latency_extra: f32 = if tab.last_latency_ms.is_some_and(|ms| ms > 300) { 36.0 } else { 0.0 };
+                let est_width = 14.0 + (display_len as f32 * 7.0) + latency_extra + 26.0 + 24.0 + 18.0;
+                let ctx_x = tab_x_offset;
+                tab_x_offset += est_width + 1.0; // +1 for row spacing
+
                 mouse_area(tab_button)
-                    .on_right_press(Message::TabContextMenu(i, 0.0, 30.0))
+                    .on_right_press(Message::TabContextMenu(i, ctx_x, 30.0))
                     .into()
             };
 
@@ -113,22 +123,34 @@ impl ShellKeep {
             .padding([6, 10])
             .style(styles::ghost_button_style);
 
-        // Build restore-hidden-sessions dropdown button
-        let restore_btn: Element<'_, Message> = if !self.hidden_sessions.is_empty() {
-            button(
-                text("\u{25BC}")
-                    .size(11)
-                    .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
-            )
-            .on_press(Message::ShowRestoreDropdown)
-            .padding([6, 8])
-            .style(styles::ghost_button_style)
-            .into()
+        // P8: always show restore button, with badge count when hidden sessions exist
+        let hidden_count = self.hidden_sessions.len();
+        let restore_label = if hidden_count > 0 {
+            format!("\u{25BC} {hidden_count}")
         } else {
-            Space::new().width(0).into()
+            "\u{25BC}".to_string()
         };
+        let restore_color = if hidden_count > 0 {
+            Color::from_rgb8(0xcd, 0xd6, 0xf4)
+        } else {
+            Color::from_rgb8(0x6c, 0x70, 0x86)
+        };
+        let restore_btn: Element<'_, Message> = button(
+            text(restore_label).size(11).color(restore_color),
+        )
+        .on_press(Message::ShowRestoreDropdown)
+        .padding([6, 8])
+        .style(styles::ghost_button_style)
+        .into();
 
-        let bar = row![row(tabs_row).spacing(1), new_tab_btn, restore_btn]
+        // P10: wrap tabs in horizontal scrollable for overflow handling
+        let scrollable_tabs = scrollable(row(tabs_row).spacing(1))
+            .direction(scrollable::Direction::Horizontal(
+                scrollable::Scrollbar::new().width(0).scroller_width(0),
+            ))
+            .width(Length::Fill);
+
+        let bar = row![scrollable_tabs, new_tab_btn, restore_btn]
             .width(Length::Fill)
             .align_y(iced::Alignment::Center);
 

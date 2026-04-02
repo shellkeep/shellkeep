@@ -79,6 +79,7 @@ pub(crate) struct DialogState {
     pub(crate) lock_info_text: String,
     pub(crate) lock_target_tab: Option<TabId>,
     pub(crate) pending_close_tabs: Option<Vec<usize>>,
+    pub(crate) show_shortcuts_dialog: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -291,9 +292,10 @@ impl ShellKeep {
         let default_port = config.ssh.default_port.to_string();
 
         // Phase 5: open the control window on startup
+        // P1: compact control window (popup-like, no minimum size constraint)
         let control_settings = window::Settings {
-            size: iced::Size::new(500.0, 700.0),
-            min_size: Some(iced::Size::new(400.0, 300.0)),
+            size: iced::Size::new(360.0, 420.0),
+            min_size: Some(iced::Size::new(320.0, 300.0)),
             ..initial_window_settings.clone()
         };
         let (first_window_id, open_task) = window::open(control_settings);
@@ -369,6 +371,7 @@ impl ShellKeep {
                 lock_info_text: String::new(),
                 lock_target_tab: None,
                 pending_close_tabs: None,
+                show_shortcuts_dialog: false,
             },
             state_syncer: None,
             cached_shared_state: None,
@@ -1060,13 +1063,20 @@ impl ShellKeep {
         self.cached_shared_state = Some(shared.clone());
         self.cached_device_state = Some(device.clone());
 
-        // FR-TRAY-02: update tray tooltip with session count
+        // P24-25: update tray with detailed session status
         let any_show_welcome = self.windows.values().any(|w| w.show_welcome);
         if let Some(ref tray) = self.tray {
-            let active_count = self.all_tabs().filter(|t| !t.is_dead()).count();
-            tray.set_session_count(active_count);
-            // FR-TRAY-04: change icon when active sessions exist but window may be hidden
-            tray.set_hidden_active(active_count > 0 && !any_show_welcome);
+            let active_count = self.all_tabs().filter(|t| !t.is_dead() && !t.is_auto_reconnect()).count();
+            let reconnecting_count = self.all_tabs().filter(|t| t.is_auto_reconnect()).count();
+            let dead_count = self.all_tabs().filter(|t| t.is_dead()).count();
+            let hidden_count = self.hidden_sessions.len();
+            tray.set_detailed_status(active_count, reconnecting_count, hidden_count, dead_count);
+            // P24-25: red icon when any session is dead
+            if dead_count > 0 {
+                tray.set_has_dead(true);
+            } else {
+                tray.set_hidden_active(active_count > 0 && !any_show_welcome);
+            }
         }
 
         // FR-CONN-20: sync state to server if syncer is available

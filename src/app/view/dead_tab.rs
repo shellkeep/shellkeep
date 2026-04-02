@@ -84,25 +84,19 @@ impl ShellKeep {
             .into(),
         );
 
-        // FR-UI-07: create new session button
-        if self.current_conn.is_some() {
-            items.push(
-                button(
-                    text(i18n::t(i18n::CREATE_NEW_SESSION))
-                        .size(13)
-                        .color(Color::from_rgb8(0xcd, 0xd6, 0xf4)),
-                )
-                .on_press(Message::CreateNewSession(index))
-                .padding([8, 20])
-                .style(styles::new_session_button_style)
-                .into(),
-            );
-        }
-
         // Close tab button
         items.push(
             button(text(i18n::t(i18n::CLOSE_TAB)).size(12))
                 .on_press(Message::CloseTab(index))
+                .padding([6, 16])
+                .style(styles::ghost_button_style)
+                .into(),
+        );
+
+        // Hide (keep on server) button
+        items.push(
+            button(text("Hide (keep on server)").size(12))
+                .on_press(Message::HideTab(index))
                 .padding([6, 16])
                 .style(styles::ghost_button_style)
                 .into(),

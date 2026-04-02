@@ -21,12 +21,7 @@ impl ShellKeep {
             self.recent.connections.is_empty() && !shellkeep::config::config_file_exists();
 
         let subtitle: Element<'_, Message> = if is_first_use {
-            // FR-UI-03: first-use with client-id naming input
-            let client_id_field = text_input(&self.client_id, &self.welcome.client_id_input)
-                .on_input(Message::ClientIdInputChanged)
-                .size(13)
-                .padding(8)
-                .width(250);
+            // P3: simplified first-use — device name auto-generated from hostname
             column![
                 text(i18n::t(i18n::WELCOME_TEXT))
                     .size(16)
@@ -37,10 +32,6 @@ impl ShellKeep {
                 text(i18n::t(i18n::WELCOME_PROMPT))
                     .size(13)
                     .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
-                text("Name this device (e.g. \"Work Laptop\"):")
-                    .size(12)
-                    .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
-                client_id_field,
             ]
             .spacing(6)
             .align_x(iced::Alignment::Center)
@@ -84,14 +75,28 @@ impl ShellKeep {
         .size(14)
         .padding(10);
 
-        let connect_btn = button(
-            text(i18n::t(i18n::CONNECT))
-                .size(14)
-                .color(Color::from_rgb8(0x1e, 0x1e, 0x2e)),
-        )
-        .on_press(Message::Connect)
-        .padding([10, 24])
-        .style(styles::primary_button_style);
+        // P4: disable connect button while a connection is in progress
+        let is_connecting = self
+            .all_tabs()
+            .any(|t| t.is_russh() && !t.has_channel() && !t.is_dead());
+        let connect_btn = if is_connecting {
+            button(
+                text("Connecting...")
+                    .size(14)
+                    .color(Color::from_rgb8(0x6c, 0x70, 0x86)),
+            )
+            .padding([10, 24])
+            .style(styles::secondary_button_style)
+        } else {
+            button(
+                text(i18n::t(i18n::CONNECT))
+                    .size(14)
+                    .color(Color::from_rgb8(0x1e, 0x1e, 0x2e)),
+            )
+            .on_press(Message::Connect)
+            .padding([10, 24])
+            .style(styles::primary_button_style)
+        };
 
         // FR-UI-01: simple host input is always visible
         let host_row = column![text(i18n::t(i18n::HOST_LABEL)).size(12), host_field].spacing(4);

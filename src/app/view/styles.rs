@@ -197,20 +197,6 @@ pub(crate) fn reconnect_button_style(_theme: &Theme, _status: button::Status) ->
     }
 }
 
-/// "Create new session" button on dead tab: secondary with visible border.
-pub(crate) fn new_session_button_style(_theme: &Theme, _status: button::Status) -> button::Style {
-    button::Style {
-        background: Some(iced::Background::Color(Color::from_rgb8(0x31, 0x32, 0x44))),
-        text_color: Color::from_rgb8(0xcd, 0xd6, 0xf4),
-        border: iced::Border {
-            radius: 6.0.into(),
-            width: 1.0,
-            color: Color::from_rgb8(0x45, 0x47, 0x5a),
-        },
-        ..Default::default()
-    }
-}
-
 /// History view container on dead tab.
 pub(crate) fn history_container_style(_theme: &Theme) -> container::Style {
     container::Style {

@@ -5,7 +5,7 @@ use crate::ShellKeep;
 use crate::app::Message;
 use crate::app::view::styles;
 
-use iced::widget::{Space, container, row, text};
+use iced::widget::{Space, button, container, row, text};
 use iced::{Color, Element, Length};
 
 use crate::app::AppWindow;
@@ -22,11 +22,17 @@ impl ShellKeep {
             String::new()
         };
 
+        let hidden_count = self.hidden_sessions.len();
+        let hidden_suffix = if hidden_count > 0 {
+            format!(" + {hidden_count} hidden")
+        } else {
+            String::new()
+        };
         let status_text = if dead_count > 0 {
-            format!("{total} tabs ({active_count} active, {dead_count} disconnected){zoom_info}")
+            format!("{total} tabs ({active_count} active, {dead_count} disconnected){hidden_suffix}{zoom_info}")
         } else {
             format!(
-                "{total} tab{}{zoom_info}",
+                "{total} tab{}{hidden_suffix}{zoom_info}",
                 if total == 1 { "" } else { "s" }
             )
         };
@@ -37,34 +43,46 @@ impl ShellKeep {
             String::new()
         };
 
-        // FR-ENV-01: environment indicator
-        let env_indicator = text(format!("env: {}", self.current_environment))
-            .size(11)
-            .color(Color::from_rgb8(0x89, 0xb4, 0xfa));
+        // FR-ENV-01: environment indicator (hidden when only "default" env)
+        let show_env = self.current_environment != "default";
 
-        // Item 3: shortcut hints in session window status bar
-        let shortcuts_hint = text(
-            "Ctrl+Shift+T new tab | Ctrl+Shift+F search | Ctrl+Shift+W close | Ctrl+Shift+F2 rename",
-        )
-        .size(9)
-        .color(Color::from_rgb8(0x45, 0x47, 0x59));
+        let shortcuts_btn = button(text("\u{2328}").size(12))
+            .on_press(Message::ShowShortcutsDialog)
+            .padding([0, 6])
+            .style(styles::ghost_button_style);
+
+        let mut bar_items: Vec<Element<'_, Message>> = vec![
+            text(active_label)
+                .size(11)
+                .color(Color::from_rgb8(0xa6, 0xad, 0xc8))
+                .into(),
+        ];
+
+        if show_env {
+            bar_items.push(Space::new().width(16).into());
+            bar_items.push(
+                text(format!("env: {}", self.current_environment))
+                    .size(11)
+                    .color(Color::from_rgb8(0x89, 0xb4, 0xfa))
+                    .into(),
+            );
+        }
+
+        bar_items.push(Space::new().width(Length::Fill).into());
+        bar_items.push(
+            text(status_text)
+                .size(11)
+                .color(Color::from_rgb8(0x6c, 0x70, 0x86))
+                .into(),
+        );
+        bar_items.push(Space::new().width(8).into());
+        bar_items.push(shortcuts_btn.into());
 
         container(
-            row![
-                text(active_label)
-                    .size(11)
-                    .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
-                Space::new().width(16),
-                env_indicator,
-                Space::new().width(16),
-                shortcuts_hint,
-                Space::new().width(Length::Fill),
-                text(status_text)
-                    .size(11)
-                    .color(Color::from_rgb8(0x6c, 0x70, 0x86)),
-            ]
-            .padding([2, 8])
-            .width(Length::Fill),
+            row(bar_items)
+                .padding([2, 8])
+                .width(Length::Fill)
+                .align_y(iced::Alignment::Center),
         )
         .width(Length::Fill)
         .style(styles::bar_background_style)

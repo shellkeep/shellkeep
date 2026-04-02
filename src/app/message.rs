@@ -170,6 +170,14 @@ pub(crate) enum Message {
     FinishWindowRename,
     /// Cancel renaming the window
     CancelWindowRename,
+    /// P11: cancel an in-progress SSH connection
+    CancelConnect(TabId),
+    /// P23: copy a string to clipboard (e.g. ssh-keygen -R command)
+    CopyToClipboard(String),
+    /// P18-20: show keyboard shortcuts dialog
+    ShowShortcutsDialog,
+    /// P18-20: dismiss keyboard shortcuts dialog
+    DismissShortcutsDialog,
     /// Intentional no-op — use for callbacks that require a Message but need no action.
     Noop,
 }

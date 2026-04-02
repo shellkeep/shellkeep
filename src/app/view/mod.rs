@@ -82,11 +82,65 @@ impl ShellKeep {
                 // INV-CONN-2: before auth completes, the SSH I/O subscription only starts
                 // when ssh_channel_holder is set (after SshConnected). Input is buffered
                 // in ssh_writer_tx but not sent until the channel is ready.
-                // Show "Connecting..." overlay if russh tab without channel yet
-                if tab.is_russh() && !tab.has_channel() {
+                if tab.is_auto_reconnect() {
+                    // P12: show terminal (dimmed) behind reconnect overlay
+                    let spinner = SPINNER_FRAMES[self.spinner_frame % SPINNER_FRAMES.len()];
+                    let attempt_text = format!(
+                        "{} {}/{}",
+                        i18n::t(i18n::RECONNECTING),
+                        tab.reconnect_attempts(),
+                        self.config.ssh.reconnect_max_attempts
+                    );
+                    let delay = tab.reconnect_delay_ms();
+                    let countdown_text = if delay > 0 {
+                        let elapsed = tab
+                            .reconnect_started()
+                            .map(|t| t.elapsed().as_millis() as u64)
+                            .unwrap_or(0);
+                        let remaining_ms = delay.saturating_sub(elapsed);
+                        let remaining_secs = remaining_ms.div_ceil(1000);
+                        if remaining_secs > 0 {
+                            format!("Next retry in {}s", remaining_secs)
+                        } else {
+                            "Retrying now...".to_string()
+                        }
+                    } else {
+                        i18n::t(i18n::CONNECTING).to_string()
+                    };
+                    stack![
+                        container(
+                            iced_term::TerminalView::show(terminal).map(Message::TerminalEvent)
+                        )
+                        .width(Length::Fill)
+                        .height(Length::Fill),
+                        container(Space::new().width(Length::Fill).height(Length::Fill))
+                            .width(Length::Fill)
+                            .height(Length::Fill)
+                            .style(styles::scrim_style),
+                        center(
+                            column![
+                                text(format!("{spinner}")).size(48),
+                                text(i18n::t(i18n::CONNECTION_LOST))
+                                    .size(20)
+                                    .color(Color::from_rgb8(0xf9, 0xe2, 0xaf)),
+                                text(attempt_text)
+                                    .size(14)
+                                    .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
+                                text(countdown_text)
+                                    .size(12)
+                                    .color(Color::from_rgb8(0x6c, 0x70, 0x86)),
+                            ]
+                            .spacing(12)
+                            .align_x(iced::Alignment::Center),
+                        ),
+                    ]
+                    .into()
+                } else if tab.is_russh() && !tab.has_channel() {
+                    // Show "Connecting..." overlay with cancel button
                     let phase_text = tab
                         .connection_phase_text()
                         .unwrap_or_else(|| i18n::t(i18n::CONNECTING).to_string());
+                    let tab_id = tab.id;
                     stack![
                         container(
                             iced_term::TerminalView::show(terminal).map(Message::TerminalEvent)
@@ -94,9 +148,17 @@ impl ShellKeep {
                         .width(Length::Fill)
                         .height(Length::Fill),
                         center(
-                            text(phase_text)
-                                .size(16)
-                                .color(Color::from_rgb8(0xf9, 0xe2, 0xaf))
+                            column![
+                                text(phase_text)
+                                    .size(16)
+                                    .color(Color::from_rgb8(0xf9, 0xe2, 0xaf)),
+                                button(text("Cancel").size(13))
+                                    .on_press(Message::CancelConnect(tab_id))
+                                    .padding([8, 16])
+                                    .style(styles::secondary_button_style),
+                            ]
+                            .spacing(12)
+                            .align_x(iced::Alignment::Center)
                         ),
                     ]
                     .into()
@@ -107,7 +169,7 @@ impl ShellKeep {
                         .into()
                 }
             } else if tab.is_auto_reconnect() {
-                // FR-RECONNECT-02: spinner overlay with attempt count and countdown
+                // FR-RECONNECT-02: fallback spinner when no terminal widget is preserved
                 let spinner = SPINNER_FRAMES[self.spinner_frame % SPINNER_FRAMES.len()];
                 let attempt_text = format!(
                     "{} {}/{}",
@@ -208,7 +270,7 @@ impl ShellKeep {
         let status_bar = self.view_status_bar(win);
 
         // Wrap with tab context menu if active
-        let main_view: Element<'_, Message> = if let Some((tab_idx, _x, _y)) = win.tab_context_menu
+        let main_view: Element<'_, Message> = if let Some((tab_idx, ctx_x, _y)) = win.tab_context_menu
         {
             let mut menu_items: Vec<Element<'_, Message>> = Vec::new();
 
@@ -312,7 +374,7 @@ impl ShellKeep {
                     top: 28.0,
                     right: 0.0,
                     bottom: 0.0,
-                    left: (tab_idx as f32) * 120.0,
+                    left: ctx_x,
                 }),
             ]
             .into()
@@ -371,10 +433,17 @@ impl ShellKeep {
                 .padding(4)
                 .style(styles::context_menu_container_style);
 
-            // Bug 5 fix: position the dropdown near the restore button
-            // rather than at the far right edge of the window. Estimate
-            // position from tab count (each tab ~120px) + buttons (~60px).
-            let dropdown_left = (win.tabs.len() as f32) * 120.0 + 40.0;
+            // P7: estimate position from actual tab label widths + new tab button
+            let dropdown_left: f32 = win
+                .tabs
+                .iter()
+                .map(|t| {
+                    let len = t.label.len().min(25) as f32;
+                    let latency = if t.last_latency_ms.is_some_and(|ms| ms > 300) { 36.0 } else { 0.0 };
+                    14.0 + (len * 7.0) + latency + 26.0 + 24.0 + 18.0 + 1.0
+                })
+                .sum::<f32>()
+                + 40.0; // new tab button width
             stack![
                 column![tab_bar, content, status_bar],
                 mouse_area(
@@ -414,14 +483,14 @@ impl ShellKeep {
                         .padding(8)
                         .width(300),
                     row![
-                        button(text("Rename").size(13))
-                            .on_press(Message::FinishWindowRename)
-                            .padding([8, 16])
-                            .style(styles::primary_button_style),
                         button(text("Cancel").size(13))
                             .on_press(Message::CancelWindowRename)
                             .padding([8, 16])
                             .style(styles::secondary_button_style),
+                        button(text("Rename").size(13))
+                            .on_press(Message::FinishWindowRename)
+                            .padding([8, 16])
+                            .style(styles::primary_button_style),
                     ]
                     .spacing(8),
                 ]
@@ -459,33 +528,56 @@ impl ShellKeep {
                     "This will terminate {count} sessions on the server.\nThis cannot be undone."
                 )
             };
+            // P9: "Hide instead" button for single-tab close
+            let hide_btn: Option<Element<'_, Message>> = if count == 1 {
+                let idx = self.dialogs.pending_close_tabs.as_ref().unwrap()[0];
+                Some(
+                    button(text("Hide instead").size(14))
+                        .on_press(Message::HideTab(idx))
+                        .padding([10, 24])
+                        .style(styles::secondary_button_style)
+                        .into(),
+                )
+            } else {
+                None
+            };
+            let mut btn_row_items: Vec<Element<'_, Message>> = vec![
+                button(text("Cancel").size(14))
+                    .on_press(Message::CancelCloseTabs)
+                    .padding([10, 24])
+                    .style(styles::secondary_button_style)
+                    .into(),
+            ];
+            if let Some(hide) = hide_btn {
+                btn_row_items.push(hide);
+            }
+            btn_row_items.push(Space::new().width(Length::Fill).into());
+            btn_row_items.push(
+                button(
+                    text("Terminate")
+                        .size(14)
+                        .color(Color::from_rgb8(0x1e, 0x1e, 0x2e)),
+                )
+                .on_press(Message::ConfirmCloseTabs)
+                .padding([10, 24])
+                .style(styles::danger_button_style)
+                .into(),
+            );
             let dialog = container(
                 column![
                     text("Terminate session?")
                         .size(18)
                         .color(Color::from_rgb8(0xcd, 0xd6, 0xf4)),
+                    text("This will end the tmux session on the server.")
+                        .size(13)
+                        .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
                     text(msg).size(13).color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
                     Space::new().height(12),
-                    row![
-                        button(text("Cancel").size(14))
-                            .on_press(Message::CancelCloseTabs)
-                            .padding([10, 24])
-                            .style(styles::secondary_button_style),
-                        Space::new().width(Length::Fill),
-                        button(
-                            text("Terminate")
-                                .size(14)
-                                .color(Color::from_rgb8(0x1e, 0x1e, 0x2e))
-                        )
-                        .on_press(Message::ConfirmCloseTabs)
-                        .padding([10, 24])
-                        .style(styles::danger_button_style),
-                    ]
-                    .width(Length::Fill),
+                    row(btn_row_items).width(Length::Fill).spacing(8),
                 ]
                 .spacing(8)
                 .padding(24)
-                .width(380),
+                .width(420),
             )
             .style(styles::dialog_container_style);
             center(dialog).into()
@@ -548,11 +640,11 @@ impl ShellKeep {
             main_view
         };
 
-        // FR-ENV-03: environment selection dialog overlay
-        let main_view: Element<'_, Message> = if self.dialogs.show_env_dialog {
+        // P21: unified environment dialog — new env is inline, rename/delete are sub-dialogs
+        let main_view: Element<'_, Message> = if self.dialogs.show_env_dialog
+            || self.dialogs.show_new_env_dialog
+        {
             stack![main_view, self.view_env_dialog()].into()
-        } else if self.dialogs.show_new_env_dialog {
-            stack![main_view, self.view_new_env_dialog()].into()
         } else if self.dialogs.show_rename_env_dialog {
             stack![main_view, self.view_rename_env_dialog()].into()
         } else if self.dialogs.show_delete_env_dialog {
@@ -584,18 +676,18 @@ impl ShellKeep {
                                     .color(label_color),
                                 Space::new().height(12),
                                 row![
-                                    button(text("Accept and save").size(13))
-                                        .on_press(Message::HostKeyAcceptSave)
+                                    button(text("Cancel").size(13))
+                                        .on_press(Message::HostKeyReject)
                                         .padding([8, 16])
-                                        .style(styles::primary_button_style),
+                                        .style(styles::secondary_button_style),
                                     button(text("Connect once").size(13))
                                         .on_press(Message::HostKeyConnectOnce)
                                         .padding([8, 16])
                                         .style(styles::secondary_button_style),
-                                    button(text("Cancel").size(13))
-                                        .on_press(Message::HostKeyReject)
+                                    button(text("Accept and save").size(13))
+                                        .on_press(Message::HostKeyAcceptSave)
                                         .padding([8, 16])
-                                        .style(styles::danger_button_style),
+                                        .style(styles::primary_button_style),
                                 ]
                                 .spacing(8),
                             ]
@@ -612,6 +704,10 @@ impl ShellKeep {
                             .as_deref()
                             .map(|fp| format!("Old: {fp}"))
                             .unwrap_or_default();
+                        // P23: ssh-keygen removal command
+                        let removal_cmd =
+                            format!("ssh-keygen -R [{}]:{}", prompt.host, prompt.port);
+                        let cmd_for_copy = removal_cmd.clone();
                         container(
                             column![
                                 text("WARNING: HOST KEY HAS CHANGED")
@@ -625,14 +721,26 @@ impl ShellKeep {
                                 text("This may indicate a man-in-the-middle attack.")
                                     .size(13)
                                     .color(Color::from_rgb8(0xf3, 0x8b, 0xa8)),
-                                text("Update your known_hosts file manually if this is expected.")
+                                Space::new().height(4),
+                                text("To accept the new key, run:")
                                     .size(13)
                                     .color(label_color),
+                                text(removal_cmd)
+                                    .size(12)
+                                    .color(text_color)
+                                    .font(iced::Font::MONOSPACE),
                                 Space::new().height(12),
-                                button(text("Disconnect").size(13))
-                                    .on_press(Message::HostKeyChangedDismiss)
-                                    .padding([8, 16])
-                                    .style(styles::danger_button_style),
+                                row![
+                                    button(text("Copy command").size(13))
+                                        .on_press(Message::CopyToClipboard(cmd_for_copy))
+                                        .padding([8, 16])
+                                        .style(styles::secondary_button_style),
+                                    button(text("Disconnect").size(13))
+                                        .on_press(Message::HostKeyChangedDismiss)
+                                        .padding([8, 16])
+                                        .style(styles::danger_button_style),
+                                ]
+                                .spacing(8),
                             ]
                             .spacing(4)
                             .padding(24),
@@ -757,6 +865,68 @@ impl ShellKeep {
                     .style(styles::scrim_style),
             )
             .on_press(Message::LockCancel);
+
+            stack![main_view, scrim, center(dialog)].into()
+        } else {
+            main_view
+        };
+
+        // P18-20: keyboard shortcuts dialog overlay
+        let main_view: Element<'_, Message> = if self.dialogs.show_shortcuts_dialog {
+            let text_color = Color::from_rgb8(0xcd, 0xd6, 0xf4);
+            let label_color = Color::from_rgb8(0xa6, 0xad, 0xc8);
+
+            let shortcuts = [
+                ("Ctrl+Shift+T", "New tab"),
+                ("Ctrl+Shift+W", "Close tab"),
+                ("Ctrl+Shift+F", "Search"),
+                ("Ctrl+Shift+F2", "Rename tab"),
+                ("Ctrl+Shift+\u{2190}/\u{2192}", "Switch tab"),
+                ("Ctrl+Shift++/-", "Zoom in/out"),
+                ("F2", "Rename (context menu)"),
+                ("Esc", "Close dialog / dismiss"),
+            ];
+
+            let mut shortcut_rows: Vec<Element<'_, Message>> = Vec::new();
+            for (key, desc) in &shortcuts {
+                shortcut_rows.push(
+                    row![
+                        container(text(*key).size(12).color(text_color)).width(180),
+                        text(*desc).size(12).color(label_color),
+                    ]
+                    .spacing(8)
+                    .into(),
+                );
+            }
+
+            let dialog = container(
+                column![
+                    text("Keyboard Shortcuts")
+                        .size(18)
+                        .color(text_color),
+                    Space::new().height(12),
+                    column(shortcut_rows).spacing(6),
+                    Space::new().height(12),
+                    row![
+                        Space::new().width(Length::Fill),
+                        button(text("Close").size(13))
+                            .on_press(Message::DismissShortcutsDialog)
+                            .padding([8, 16])
+                            .style(styles::secondary_button_style),
+                    ],
+                ]
+                .spacing(4)
+                .padding(24),
+            )
+            .style(styles::dialog_container_style);
+
+            let scrim = mouse_area(
+                container(Space::new().width(Length::Fill).height(Length::Fill))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .style(styles::scrim_style),
+            )
+            .on_press(Message::DismissShortcutsDialog);
 
             stack![main_view, scrim, center(dialog)].into()
         } else {

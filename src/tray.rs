@@ -88,11 +88,10 @@ mod real_tray {
             }
         }
 
-        /// FR-TRAY-02: update the tooltip to reflect the number of active sessions.
+        /// P24-25: update tooltip with detailed session counts.
         pub fn set_session_count(&self, count: usize) {
             use crate::i18n;
             let tooltip = if count > 0 {
-                // NFR-I18N-03: use ngettext-style plural
                 let sessions =
                     i18n::tn(i18n::N_ACTIVE_SESSIONS_1, i18n::N_ACTIVE_SESSIONS_N, count);
                 format!("shellkeep — {sessions}")
@@ -102,8 +101,37 @@ mod real_tray {
             let _ = self._icon.set_tooltip(Some(&tooltip));
         }
 
-        /// FR-TRAY-04: change icon appearance when sessions active but windows hidden.
-        /// Orange icon = active sessions with hidden windows; blue = normal.
+        /// P24-25: richer tooltip with active, reconnecting, and hidden counts.
+        pub fn set_detailed_status(
+            &self,
+            active: usize,
+            reconnecting: usize,
+            hidden: usize,
+            dead: usize,
+        ) {
+            let mut parts = Vec::new();
+            if active > 0 {
+                parts.push(format!("{active} active"));
+            }
+            if reconnecting > 0 {
+                parts.push(format!("{reconnecting} reconnecting"));
+            }
+            if hidden > 0 {
+                parts.push(format!("{hidden} hidden"));
+            }
+            if dead > 0 {
+                parts.push(format!("{dead} dead"));
+            }
+            let tooltip = if parts.is_empty() {
+                "shellkeep".to_string()
+            } else {
+                format!("shellkeep — {}", parts.join(", "))
+            };
+            let _ = self._icon.set_tooltip(Some(&tooltip));
+        }
+
+        /// P24-25: change icon color based on session health.
+        /// Red = any dead sessions, orange = hidden active, blue = normal.
         pub fn set_hidden_active(&self, hidden_active: bool) {
             let icon = if hidden_active {
                 create_icon_color(0xfa, 0xb3, 0x87) // catppuccin peach/orange
@@ -112,6 +140,16 @@ mod real_tray {
             };
             if let Ok(icon) = icon {
                 let _ = self._icon.set_icon(Some(icon));
+            }
+        }
+
+        /// P24-25: red icon state when any session is dead.
+        pub fn set_has_dead(&self, has_dead: bool) {
+            if has_dead {
+                let icon = create_icon_color(0xf3, 0x8b, 0xa8); // catppuccin red
+                if let Ok(icon) = icon {
+                    let _ = self._icon.set_icon(Some(icon));
+                }
             }
         }
 
@@ -183,7 +221,18 @@ mod stub_tray {
 
         pub fn set_session_count(&self, _count: usize) {}
 
+        pub fn set_detailed_status(
+            &self,
+            _active: usize,
+            _reconnecting: usize,
+            _hidden: usize,
+            _dead: usize,
+        ) {
+        }
+
         pub fn set_hidden_active(&self, _hidden_active: bool) {}
+
+        pub fn set_has_dead(&self, _has_dead: bool) {}
 
         pub fn poll_event(&self) -> Option<TrayAction> {
             None
