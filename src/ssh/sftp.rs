@@ -11,7 +11,7 @@
 //! - per-device state at `~/.terminal-state/clients/<client-id>.json`
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use russh_sftp::client::SftpSession;
 use tokio::io::AsyncWriteExt;
@@ -27,7 +27,7 @@ const REMOTE_STATE_DIR: &str = ".terminal-state";
 const REMOTE_CLIENTS_DIR: &str = "clients";
 
 /// Minimum interval between server state writes (debounce). /* FR-STATE-06 */
-const SYNC_DEBOUNCE: Duration = Duration::from_millis(500);
+// Debounce removed — app-level flush_state() already debounces at 2s.
 
 /// Open an SFTP session on an existing SSH connection.
 pub async fn open_sftp(
@@ -175,7 +175,6 @@ pub struct StateSyncer {
     handle: HandleArc,
     transport: Transport,
     paths: RemoteStatePaths,
-    last_write: Mutex<Option<Instant>>,
 }
 
 // Manual Debug because SftpSession doesn't impl Debug.
@@ -202,7 +201,6 @@ impl StateSyncer {
                     handle,
                     transport: Transport::Sftp(sftp),
                     paths,
-                    last_write: Mutex::new(None),
                 })
             }
             Err(e) => {
@@ -215,7 +213,6 @@ impl StateSyncer {
                     handle,
                     transport: Transport::Shell,
                     paths,
-                    last_write: Mutex::new(None),
                 })
             }
         }
@@ -287,15 +284,6 @@ impl StateSyncer {
     }
 
     async fn write_remote_file(&self, path: &str, content: &str) -> Result<(), SshError> {
-        {
-            let mut last = self.last_write.lock().await;
-            if let Some(t) = *last
-                && t.elapsed() < SYNC_DEBOUNCE
-            {
-                return Ok(()); // debounced
-            }
-            *last = Some(Instant::now());
-        }
 
         match &self.transport {
             Transport::Sftp(sftp) => write_file_atomic(sftp, path, content.as_bytes()).await,
@@ -321,8 +309,4 @@ mod tests {
         assert_eq!(REMOTE_CLIENTS_DIR, "clients");
     }
 
-    #[test]
-    fn debounce_duration() {
-        assert_eq!(SYNC_DEBOUNCE, Duration::from_millis(500));
-    }
 }
