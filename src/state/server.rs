@@ -45,10 +45,10 @@ pub struct SavedServer {
 impl SavedServer {
     /// Display label: `name` if set, otherwise `user@host` (port omitted if 22).
     pub fn display_label(&self) -> String {
-        if let Some(name) = &self.name {
-            if !name.is_empty() {
-                return name.clone();
-            }
+        if let Some(name) = &self.name
+            && !name.is_empty()
+        {
+            return name.clone();
         }
         if self.port == "22" {
             format!("{}@{}", self.user, self.host)
@@ -70,10 +70,10 @@ impl SavedServers {
     #[allow(deprecated)] // accesses legacy RecentConnections for migration
     pub fn load() -> Self {
         let path = Self::file_path();
-        if let Ok(data) = fs::read_to_string(&path) {
-            if let Ok(servers) = serde_json::from_str(&data) {
-                return servers;
-            }
+        if let Ok(data) = fs::read_to_string(&path)
+            && let Ok(servers) = serde_json::from_str(&data)
+        {
+            return servers;
         }
         // Try migration from recent.json
         let recent = RecentConnections::load();
