@@ -301,6 +301,12 @@ pub(crate) struct ShellKeep {
     /// Whether the connect form is shown in the control window
     pub(crate) show_connect_form: bool,
 
+    /// UUID of server currently being connected to (for UI state)
+    pub(crate) connecting_server: Option<String>,
+
+    /// Whether the hidden sessions dropdown is expanded in the control window
+    pub(crate) show_hidden_sessions_dropdown: bool,
+
     /// Whether we're currently confirming a destructive CloseServer action
     pub(crate) confirm_close_server: bool,
 
@@ -342,7 +348,7 @@ impl ShellKeep {
         // Phase 5: open the control window on startup
         // P1: compact control window (popup-like, no minimum size constraint)
         let control_settings = window::Settings {
-            size: iced::Size::new(360.0, 420.0),
+            size: iced::Size::new(360.0, 580.0),
             min_size: Some(iced::Size::new(320.0, 300.0)),
             ..initial_window_settings.clone()
         };
@@ -370,6 +376,8 @@ impl ShellKeep {
             state_syncers: HashMap::new(),
             saved_servers,
             show_connect_form: false,
+            connecting_server: None,
+            show_hidden_sessions_dropdown: false,
             confirm_close_server: false,
             renaming_window: None,
             window_rename_input: String::new(),

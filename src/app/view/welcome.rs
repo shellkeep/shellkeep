@@ -280,8 +280,13 @@ impl ShellKeep {
                     .current_conn
                     .as_ref()
                     .is_some_and(|c| c.key.host == server.host && c.key.username == server.user);
+            let is_connecting = self.connecting_server.as_deref() == Some(server.uuid.as_str());
 
-            let status_icon = if is_connected {
+            let status_icon = if is_connecting && !is_connected {
+                text("\u{25CF}")
+                    .size(10)
+                    .color(Color::from_rgb8(0xf9, 0xe2, 0xaf))
+            } else if is_connected {
                 text("\u{25CF}")
                     .size(10)
                     .color(Color::from_rgb8(0xa6, 0xe3, 0xa1))
@@ -304,7 +309,15 @@ impl ShellKeep {
                     .into(),
             );
 
-            if is_connected {
+            if is_connecting && !is_connected {
+                // Show connecting state — no buttons
+                card_items.push(
+                    text("Connecting...")
+                        .size(11)
+                        .color(Color::from_rgb8(0xf9, 0xe2, 0xaf))
+                        .into(),
+                );
+            } else if is_connected {
                 // Show workspace sub-cards for each environment
                 let envs = self.server_environments(&uuid);
                 for env in &envs {
@@ -370,6 +383,108 @@ impl ShellKeep {
                         if active_sessions == 1 { "" } else { "s" }
                     );
                     card_items.push(text(status).size(11).color(label_color).into());
+                }
+
+                // Window and hidden session counts
+                let visible_windows = self
+                    .windows
+                    .values()
+                    .filter(|w| w.kind == crate::app::WindowKind::Session)
+                    .count();
+                let hidden_count = self.hidden_sessions.len();
+                let mut status_parts = Vec::new();
+                if visible_windows > 0 {
+                    status_parts.push(format!(
+                        "{visible_windows} window{}",
+                        if visible_windows == 1 { "" } else { "s" }
+                    ));
+                }
+                if hidden_count > 0 {
+                    status_parts.push(format!("{hidden_count} hidden"));
+                }
+                if !status_parts.is_empty() {
+                    card_items.push(
+                        text(status_parts.join(", "))
+                            .size(11)
+                            .color(label_color)
+                            .into(),
+                    );
+                }
+
+                // Hidden sessions dropdown
+                if hidden_count > 0 {
+                    let toggle_text = if self.show_hidden_sessions_dropdown {
+                        format!(
+                            "\u{25be} {hidden_count} hidden session{}",
+                            if hidden_count == 1 { "" } else { "s" }
+                        )
+                    } else {
+                        format!(
+                            "\u{25b8} {hidden_count} hidden session{}",
+                            if hidden_count == 1 { "" } else { "s" }
+                        )
+                    };
+                    card_items.push(
+                        button(
+                            text(toggle_text)
+                                .size(11)
+                                .color(Color::from_rgb8(0x89, 0xb4, 0xfa)),
+                        )
+                        .on_press(Message::ToggleHiddenSessionsDropdown)
+                        .padding([2, 4])
+                        .style(styles::ghost_button_style)
+                        .into(),
+                    );
+
+                    if self.show_hidden_sessions_dropdown {
+                        for hidden_uuid in &self.hidden_sessions {
+                            let session_label = self
+                                .cached_shared_state
+                                .as_ref()
+                                .and_then(|state| {
+                                    state
+                                        .environments
+                                        .values()
+                                        .flat_map(|env| env.tabs.iter())
+                                        .find(|t| t.session_uuid == *hidden_uuid)
+                                        .map(|t| t.title.clone())
+                                })
+                                .unwrap_or_else(|| {
+                                    hidden_uuid[..8.min(hidden_uuid.len())].to_string()
+                                });
+
+                            let uuid_clone = hidden_uuid.clone();
+                            let restore_row = container(
+                                row![
+                                    text(format!("  {session_label}"))
+                                        .size(11)
+                                        .color(label_color)
+                                        .width(Length::Fill),
+                                    button(
+                                        text("Restore")
+                                            .size(10)
+                                            .color(Color::from_rgb8(0xa6, 0xe3, 0xa1)),
+                                    )
+                                    .on_press(Message::RestoreHiddenSession(uuid_clone))
+                                    .padding([2, 6])
+                                    .style(styles::ghost_button_style),
+                                ]
+                                .align_y(iced::Alignment::Center)
+                                .padding([2, 8]),
+                            )
+                            .style(|_: &iced::Theme| container::Style {
+                                background: Some(iced::Background::Color(Color::from_rgb8(
+                                    0x1e, 0x1e, 0x2e,
+                                ))),
+                                border: iced::Border {
+                                    radius: 2.0.into(),
+                                    ..Default::default()
+                                },
+                                ..Default::default()
+                            });
+                            card_items.push(restore_row.into());
+                        }
+                    }
                 }
 
                 // Buttons: + New workspace, Disconnect server
@@ -452,29 +567,6 @@ impl ShellKeep {
                 .style(styles::server_card_style);
             items.push(server_card.into());
             items.push(Space::new().height(4).into());
-        }
-
-        // Collapsible connect form for quick connections
-        if has_connection {
-            let toggle_label = if self.show_connect_form {
-                "Hide connect form"
-            } else {
-                "Connect to another server..."
-            };
-            items.push(
-                button(
-                    text(toggle_label)
-                        .size(12)
-                        .color(Color::from_rgb8(0x6c, 0x70, 0x86)),
-                )
-                .on_press(Message::ToggleConnectForm)
-                .padding([4, 8])
-                .style(styles::ghost_button_style)
-                .into(),
-            );
-            if self.show_connect_form {
-                items.push(self.view_welcome());
-            }
         }
 
         // + Add server button

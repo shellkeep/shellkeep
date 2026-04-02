@@ -197,7 +197,8 @@ impl ShellKeep {
             | Message::ShowDeleteWorkspace(..)
             | Message::ConfirmDeleteWorkspace
             | Message::CancelDeleteWorkspace
-            | Message::WorkspaceSessionsFound(..) => self.handle_workspace_message(message),
+            | Message::WorkspaceSessionsFound(..)
+            | Message::ToggleHiddenSessionsDropdown => self.handle_workspace_message(message),
 
             Message::Noop => Task::none(),
         }
@@ -240,6 +241,8 @@ impl ShellKeep {
             }
 
             Message::SshDisconnected(tab_id, reason) => {
+                // Clear connecting state on disconnect
+                self.connecting_server = None;
                 let max_attempts = self.config.ssh.reconnect_max_attempts;
                 if let Some(tab) = self.find_tab_mut(tab_id) {
                     // Clear channel state so subscription stops
@@ -304,6 +307,8 @@ impl ShellKeep {
     ) -> Task<Message> {
         match result {
             Ok(()) => {
+                // Clear connecting state on successful SSH connection
+                self.connecting_server = None;
                 // The async task wrote the channel into pending_channel.
                 // Move it to Connected state so the subscription picks it up.
                 if let Some(tab) = self.find_tab_mut(tab_id)
@@ -1643,39 +1648,28 @@ impl ShellKeep {
                     return Task::batch([window::close(win_id), iced::exit()]);
                 }
 
-                // Count active sessions in the window being closed
-                let active_count = self
-                    .windows
-                    .get(&win_id)
-                    .map(|w| {
-                        w.tabs
-                            .iter()
-                            .filter(|t| !t.is_dead() && t.terminal.is_some())
-                            .count()
-                    })
-                    .unwrap_or(0);
-                if active_count == 0 {
-                    // No active sessions in this window — close it
-                    self.windows.remove(&win_id);
-                    self.window_order.retain(|&id| id != win_id);
-                    if self.focused_window == Some(win_id) {
-                        self.focused_window = self.window_order.first().copied();
+                // Session window: hide all active tabs and close the window
+                if let Some(win) = self.windows.get(&win_id) {
+                    // Move all active session UUIDs to hidden_sessions
+                    for tab in &win.tabs {
+                        if !tab.is_dead()
+                            && !tab.session_uuid.is_empty()
+                            && !self.hidden_sessions.contains(&tab.session_uuid)
+                        {
+                            self.hidden_sessions.push(tab.session_uuid.clone());
+                        }
                     }
-                    self.flush_state();
-                    // If only control window remains, exit the app
-                    let has_session_windows = self
-                        .windows
-                        .values()
-                        .any(|w| w.kind == super::WindowKind::Session);
-                    if !has_session_windows {
-                        return Task::batch([window::close(win_id), iced::exit()]);
-                    }
-                    return window::close(win_id);
                 }
-                // Show confirmation dialog, remember which window to close
-                self.dialogs.close_window_id = Some(win_id);
-                self.dialogs.show_close_dialog = true;
-                Task::none()
+                // Remove the window
+                self.windows.remove(&win_id);
+                self.window_order.retain(|&id| id != win_id);
+                if self.focused_window == Some(win_id) {
+                    self.focused_window = self.window_order.first().copied();
+                }
+                self.state_dirty = true;
+                self.flush_state();
+                // If only control window remains, don't exit — user can still manage from control window
+                window::close(win_id)
             }
 
             Message::CloseDialogClose => {
@@ -2872,6 +2866,8 @@ impl ShellKeep {
                     }
                 }
                 self.server_state_loaded = true;
+                // Clear connecting state — we're fully connected now
+                self.connecting_server = None;
                 // Run deferred reconciliation FIRST (before flush_state, which
                 // would overwrite cached_shared_state with current tabs).
                 let reconcile_task = self.try_reconcile_pending();
@@ -2902,6 +2898,8 @@ impl ShellKeep {
                     // Update last_connected timestamp
                     self.saved_servers.push(server);
                     self.saved_servers.save();
+                    // Mark this server as connecting for UI feedback
+                    self.connecting_server = Some(uuid);
                     // Trigger the existing Connect flow
                     return self.update(Message::Connect);
                 }
@@ -3094,6 +3092,11 @@ impl ShellKeep {
             Message::WorkspaceSessionsFound(_uuid, _env, result) => {
                 // Delegate to existing ExistingSessionsFound
                 self.update(Message::ExistingSessionsFound(result))
+            }
+
+            Message::ToggleHiddenSessionsDropdown => {
+                self.show_hidden_sessions_dropdown = !self.show_hidden_sessions_dropdown;
+                Task::none()
             }
 
             _ => Task::none(),
