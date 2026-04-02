@@ -100,7 +100,7 @@ impl ShellKeep {
                         let remaining_ms = delay.saturating_sub(elapsed);
                         let remaining_secs = remaining_ms.div_ceil(1000);
                         if remaining_secs > 0 {
-                            format!("Next retry in {}s", remaining_secs)
+                            format!("Next retry in {remaining_secs}s")
                         } else {
                             "Retrying now...".to_string()
                         }
@@ -186,7 +186,7 @@ impl ShellKeep {
                     let remaining_ms = delay.saturating_sub(elapsed);
                     let remaining_secs = remaining_ms.div_ceil(1000);
                     if remaining_secs > 0 {
-                        format!("Next retry in {}s", remaining_secs)
+                        format!("Next retry in {remaining_secs}s")
                     } else {
                         "Retrying now...".to_string()
                     }
@@ -534,8 +534,10 @@ impl ShellKeep {
                 )
             };
             // P9: "Hide instead" button for single-tab close
-            let hide_btn: Option<Element<'_, Message>> = if count == 1 {
-                let idx = self.dialogs.pending_close_tabs.as_ref().unwrap()[0];
+            let hide_btn: Option<Element<'_, Message>> = if count == 1
+                && let Some(tabs) = self.dialogs.pending_close_tabs.as_ref()
+                && let Some(&idx) = tabs.first()
+            {
                 Some(
                     button(text("Hide instead").size(14))
                         .on_press(Message::HideTab(idx))

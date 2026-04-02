@@ -30,7 +30,7 @@ impl ShellKeep {
             let is_selected = self.dialogs.selected_env.as_ref() == Some(env);
             let is_current = **env == self.current_environment;
             let label = if is_current {
-                format!("{} (current)", env)
+                format!("{env} (current)")
             } else {
                 (*env).clone()
             };
@@ -167,7 +167,7 @@ impl ShellKeep {
                 text("Rename environment")
                     .size(18)
                     .color(Color::from_rgb8(0xcd, 0xd6, 0xf4)),
-                text(format!("Renaming \"{}\"", target_name))
+                text(format!("Renaming \"{target_name}\""))
                     .size(13)
                     .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
                 text_input("New name", &self.dialogs.rename_env_input)
@@ -228,7 +228,7 @@ impl ShellKeep {
                 text("Delete environment?")
                     .size(18)
                     .color(Color::from_rgb8(0xcd, 0xd6, 0xf4)),
-                text(format!("Environment: \"{}\"", target_name))
+                text(format!("Environment: \"{target_name}\""))
                     .size(13)
                     .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
                 text(warning)

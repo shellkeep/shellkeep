@@ -985,8 +985,7 @@ impl ShellKeep {
                                     if let Some(handle_arc) = mgr_guard.get_cached(&conn_key) {
                                         let handle = handle_arc.lock().await;
                                         let cmd = format!(
-                                            "tmux rename-session -t {} {} 2>/dev/null || true",
-                                            old_tmux, new_tmux
+                                            "tmux rename-session -t {old_tmux} {new_tmux} 2>/dev/null || true"
                                         );
                                         let _ = ssh::connection::exec_command(&handle, &cmd).await;
                                     }
@@ -1809,7 +1808,7 @@ impl ShellKeep {
                             .unwrap_or_else(|| "default".to_string());
                     }
                     self.toast = Some((
-                        format!("Environment \"{}\" deleted", name),
+                        format!("Environment \"{name}\" deleted"),
                         std::time::Instant::now(),
                     ));
                     self.state_dirty = true;
