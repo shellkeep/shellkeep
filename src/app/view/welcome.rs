@@ -332,8 +332,6 @@ impl ShellKeep {
                     );
                     let env_clone = env.clone();
                     let uuid_clone = uuid.clone();
-                    let uuid_clone2 = uuid.clone();
-                    let env_clone2 = env.clone();
 
                     let workspace_card = container(
                         row![
@@ -344,17 +342,9 @@ impl ShellKeep {
                             .spacing(2)
                             .width(Length::Fill),
                             button(text("Open").size(11).color(text_color))
-                                .on_press(Message::OpenWorkspace(uuid_clone, env_clone,))
+                                .on_press(Message::OpenWorkspace(uuid_clone, env_clone))
                                 .padding([4, 8])
                                 .style(styles::secondary_button_style),
-                            button(
-                                text("Disconnect")
-                                    .size(11)
-                                    .color(Color::from_rgb8(0xf3, 0x8b, 0xa8)),
-                            )
-                            .on_press(Message::DisconnectWorkspace(uuid_clone2, env_clone2,))
-                            .padding([4, 8])
-                            .style(styles::ghost_button_style),
                         ]
                         .spacing(6)
                         .align_y(iced::Alignment::Center)
@@ -491,32 +481,48 @@ impl ShellKeep {
                     }
                 }
 
-                // Buttons: + New workspace, Disconnect server
+                // Server-level buttons
                 let uuid_new = uuid.clone();
                 let uuid_disc = uuid.clone();
+                let visible_windows = self
+                    .windows
+                    .values()
+                    .filter(|w| w.kind == crate::app::WindowKind::Session)
+                    .count();
                 card_items.push(Space::new().height(4).into());
-                card_items.push(
-                    row![
-                        button(
-                            text("+ New workspace")
-                                .size(11)
-                                .color(Color::from_rgb8(0x89, 0xb4, 0xfa))
-                        )
-                        .on_press(Message::ShowNewWorkspace(uuid_new))
-                        .padding([4, 8])
-                        .style(styles::ghost_button_style),
-                        Space::new().width(Length::Fill),
-                        button(
-                            text("Disconnect")
-                                .size(11)
-                                .color(Color::from_rgb8(0xf3, 0x8b, 0xa8))
-                        )
-                        .on_press(Message::DisconnectAllWorkspaces(uuid_disc))
-                        .padding([4, 8])
-                        .style(styles::ghost_button_style),
-                    ]
+                let mut btn_row_items: Vec<Element<'_, Message>> = vec![
+                    button(
+                        text("+ New workspace")
+                            .size(11)
+                            .color(Color::from_rgb8(0x89, 0xb4, 0xfa)),
+                    )
+                    .on_press(Message::ShowNewWorkspace(uuid_new))
+                    .padding([4, 8])
+                    .style(styles::ghost_button_style)
+                    .into(),
+                    Space::new().width(Length::Fill).into(),
+                ];
+                if visible_windows > 0 {
+                    btn_row_items.push(
+                        button(text("Close all windows").size(11).color(label_color))
+                            .on_press(Message::CloseServer)
+                            .padding([4, 8])
+                            .style(styles::ghost_button_style)
+                            .into(),
+                    );
+                }
+                btn_row_items.push(
+                    button(
+                        text("Disconnect")
+                            .size(11)
+                            .color(Color::from_rgb8(0xf3, 0x8b, 0xa8)),
+                    )
+                    .on_press(Message::DisconnectAllWorkspaces(uuid_disc))
+                    .padding([4, 8])
+                    .style(styles::ghost_button_style)
                     .into(),
                 );
+                card_items.push(row(btn_row_items).spacing(4).into());
             } else {
                 // Disconnected server: show last connected + action buttons
                 if let Some(ts) = server.last_connected {
