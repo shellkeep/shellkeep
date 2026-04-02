@@ -277,7 +277,9 @@ impl ShellKeep {
         for server in &self.saved_servers.servers {
             let is_connected = self.is_server_connected(&server.uuid)
                 || self.current_conn.as_ref().is_some_and(|c| {
-                    c.key.host == server.host
+                    // Normalize: parse server.host in case it contains user@ or :port
+                    let (_, parsed_host, _) = crate::cli::parse_host_input(&server.host);
+                    c.key.host == parsed_host
                         && (c.key.username == server.user
                             || server.user.is_empty()
                             || c.key.username == crate::cli::default_ssh_username())

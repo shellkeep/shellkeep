@@ -3242,6 +3242,25 @@ impl ShellKeep {
             .and_then(|u| self.saved_servers.find_by_uuid(u))
             .map(|s| s.uuid.clone())
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        // Normalize host: if user typed "host:port", split them
+        let raw_host = self.dialogs.server_form_host.trim();
+        let (parsed_user, parsed_host, parsed_port) = crate::cli::parse_host_input(raw_host);
+        let effective_host = parsed_host;
+        let effective_user = if !self.dialogs.server_form_user.trim().is_empty() {
+            self.dialogs.server_form_user.clone()
+        } else if let Some(u) = parsed_user {
+            u
+        } else {
+            crate::cli::default_ssh_username()
+        };
+        let effective_port = if !self.dialogs.server_form_port.trim().is_empty() {
+            self.dialogs.server_form_port.clone()
+        } else if let Some(p) = parsed_port {
+            p
+        } else {
+            "22".to_string()
+        };
+
         SavedServer {
             uuid,
             name: if self.dialogs.server_form_name.trim().is_empty() {
@@ -3249,17 +3268,9 @@ impl ShellKeep {
             } else {
                 Some(self.dialogs.server_form_name.clone())
             },
-            host: self.dialogs.server_form_host.clone(),
-            user: if self.dialogs.server_form_user.trim().is_empty() {
-                crate::cli::default_ssh_username()
-            } else {
-                self.dialogs.server_form_user.clone()
-            },
-            port: if self.dialogs.server_form_port.trim().is_empty() {
-                "22".to_string()
-            } else {
-                self.dialogs.server_form_port.clone()
-            },
+            host: effective_host,
+            user: effective_user,
+            port: effective_port,
             identity_file: if self.dialogs.server_form_identity.trim().is_empty() {
                 None
             } else {
