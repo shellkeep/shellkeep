@@ -158,13 +158,13 @@ impl SavedServers {
             }
         }
         // Extract :port (skip IPv6 brackets)
-        if !remaining.starts_with('[') {
-            if let Some(colon_pos) = remaining.rfind(':') {
-                let parsed_port = remaining[colon_pos + 1..].to_string();
-                remaining = remaining[..colon_pos].to_string();
-                if port == "22" || port.is_empty() {
-                    port = parsed_port;
-                }
+        if !remaining.starts_with('[')
+            && let Some(colon_pos) = remaining.rfind(':')
+        {
+            let parsed_port = remaining[colon_pos + 1..].to_string();
+            remaining = remaining[..colon_pos].to_string();
+            if port == "22" || port.is_empty() {
+                port = parsed_port;
             }
         }
         (remaining, user, port)
