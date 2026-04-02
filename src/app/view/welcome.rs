@@ -276,10 +276,12 @@ impl ShellKeep {
         // Render each saved server as a card
         for server in &self.saved_servers.servers {
             let is_connected = self.is_server_connected(&server.uuid)
-                || self
-                    .current_conn
-                    .as_ref()
-                    .is_some_and(|c| c.key.host == server.host && c.key.username == server.user);
+                || self.current_conn.as_ref().is_some_and(|c| {
+                    c.key.host == server.host
+                        && (c.key.username == server.user
+                            || server.user.is_empty()
+                            || c.key.username == crate::cli::default_ssh_username())
+                });
             let is_connecting = self.connecting_server.as_deref() == Some(server.uuid.as_str());
 
             let status_icon = if is_connecting && !is_connected {

@@ -3215,7 +3215,11 @@ impl ShellKeep {
                 Some(self.dialogs.server_form_name.clone())
             },
             host: self.dialogs.server_form_host.clone(),
-            user: self.dialogs.server_form_user.clone(),
+            user: if self.dialogs.server_form_user.trim().is_empty() {
+                crate::cli::default_ssh_username()
+            } else {
+                self.dialogs.server_form_user.clone()
+            },
             port: if self.dialogs.server_form_port.trim().is_empty() {
                 "22".to_string()
             } else {
