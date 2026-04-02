@@ -117,7 +117,7 @@ pub(crate) fn ssh_channel_stream(data: &SshSubscriptionData) -> BoxStream<'stati
 // Async SSH operations
 // ---------------------------------------------------------------------------
 
-/// Parameters for establishing an SSH session.
+/// Parameters for establishing an SSH session (backward-compat wrapper).
 pub(crate) struct EstablishParams {
     pub conn_manager: Arc<Mutex<ConnectionManager>>,
     pub conn: ConnParams,
@@ -136,11 +136,61 @@ pub(crate) struct EstablishParams {
     pub workspace: String,
 }
 
-/// Establish an SSH session: connect, acquire lock, create tmux session, open PTY channel.
-/// Returns the raw russh Channel on success.
-pub(crate) async fn establish_ssh_session(
-    params: EstablishParams,
-) -> Result<russh::Channel<russh::client::Msg>, SshError> {
+/// Parameters for connecting to a server (control-plane).
+pub(crate) struct ConnectServerParams {
+    pub conn_manager: Arc<Mutex<ConnectionManager>>,
+    pub conn: ConnParams,
+    pub keepalive_secs: u32,
+    pub client_id: String,
+    pub workspace: String,
+    pub force_lock: bool,
+    pub phase: Arc<std::sync::Mutex<String>>,
+    pub password: Option<String>,
+}
+
+/// Parameters for opening a tab channel (data-plane).
+pub(crate) struct OpenTabParams {
+    pub conn_manager: Arc<Mutex<ConnectionManager>>,
+    pub conn: ConnParams,
+    pub tmux_session: String,
+    pub cols: u32,
+    pub rows: u32,
+    pub session_uuid: String,
+    pub phase: Arc<std::sync::Mutex<String>>,
+}
+
+/// Result returned by the control-plane server connection task.
+pub(crate) struct ServerConnectResult {
+    pub sessions: Vec<String>,
+    pub syncer: Arc<ssh::sftp::StateSyncer>,
+    pub shared_state: Option<String>,
+    pub device_state: Option<String>,
+}
+
+impl Clone for ServerConnectResult {
+    fn clone(&self) -> Self {
+        Self {
+            sessions: self.sessions.clone(),
+            syncer: self.syncer.clone(),
+            shared_state: self.shared_state.clone(),
+            device_state: self.device_state.clone(),
+        }
+    }
+}
+
+impl std::fmt::Debug for ServerConnectResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ServerConnectResult")
+            .field("sessions", &self.sessions)
+            .field("shared_state", &self.shared_state.is_some())
+            .field("device_state", &self.device_state.is_some())
+            .finish()
+    }
+}
+
+/// Connect to a server: SSH connect, health check, tmux version check, lock acquire.
+/// Does NOT create tmux sessions or open PTY channels (control-plane only).
+pub(crate) async fn connect_server(params: ConnectServerParams) -> Result<(), SshError> {
     let conn_key = params.conn.key.clone();
 
     // SAFETY: mutex is never held across a panic path
@@ -242,12 +292,29 @@ pub(crate) async fn establish_ssh_session(
             .await?;
     }
 
+    Ok(())
+}
+
+/// Open a PTY channel for a tab: create/attach tmux session, open channel.
+/// Assumes SSH connection already exists (uses get_or_connect for reconnection safety).
+pub(crate) async fn open_tab_channel(
+    params: OpenTabParams,
+) -> Result<russh::Channel<russh::client::Msg>, SshError> {
+    let conn_key = params.conn.key.clone();
+
     // FR-RECONNECT-03: verify tmux session exists before reattaching, create if needed
     // SAFETY: mutex is never held across a panic path
     #[allow(clippy::unwrap_used)]
     {
         *params.phase.lock().unwrap() = i18n::t(i18n::OPENING_SESSION).to_string();
     }
+
+    let handle_arc = {
+        let mut mgr = params.conn_manager.lock().await;
+        mgr.get_or_connect(&conn_key, params.conn.identity_file.as_deref(), None, 15)
+            .await?
+            .handle
+    };
 
     let check = {
         let h = handle_arc.lock().await;
@@ -315,4 +382,36 @@ pub(crate) async fn establish_ssh_session(
     }
 
     Ok(channel)
+}
+
+/// Establish an SSH session: connect, acquire lock, create tmux session, open PTY channel.
+/// Returns the raw russh Channel on success.
+///
+/// This is a backward-compat wrapper that calls `connect_server()` (control-plane)
+/// then `open_tab_channel()` (data-plane). Used by CLI launch and reconnection paths.
+pub(crate) async fn establish_ssh_session(
+    params: EstablishParams,
+) -> Result<russh::Channel<russh::client::Msg>, SshError> {
+    connect_server(ConnectServerParams {
+        conn_manager: params.conn_manager.clone(),
+        conn: params.conn.clone(),
+        keepalive_secs: params.keepalive_secs,
+        client_id: params.client_id.clone(),
+        workspace: params.workspace.clone(),
+        force_lock: params.force_lock,
+        phase: params.phase.clone(),
+        password: params.password.clone(),
+    })
+    .await?;
+
+    open_tab_channel(OpenTabParams {
+        conn_manager: params.conn_manager,
+        conn: params.conn,
+        tmux_session: params.tmux_session,
+        cols: params.cols,
+        rows: params.rows,
+        session_uuid: params.session_uuid,
+        phase: params.phase,
+    })
+    .await
 }

@@ -29,6 +29,7 @@ use iced::{Task, keyboard, window};
 use iced_term::settings::FontSettings;
 use iced_term::{AlacrittyColumn, AlacrittyLine, AlacrittyPoint, RegexSearch};
 use shellkeep::config::Config;
+use shellkeep::i18n;
 use shellkeep::ssh;
 use shellkeep::ssh::manager::ConnKey;
 #[allow(deprecated)] // legacy type kept for migration
@@ -162,9 +163,9 @@ impl ShellKeep {
             | Message::CopyScrollback => self.handle_search_message(message),
 
             // --- State sync messages ---
-            Message::StateSyncerReady(..) | Message::ServerStateLoaded(..) => {
-                self.handle_state_sync_message(message)
-            }
+            Message::StateSyncerReady(..)
+            | Message::ServerStateLoaded(..)
+            | Message::ServerConnected(..) => self.handle_state_sync_message(message),
 
             // --- Server / workspace management messages ---
             Message::ConnectServer(..)
@@ -333,68 +334,6 @@ impl ShellKeep {
                     }
                 }
 
-                // After first successful connect, list existing tmux sessions
-                if !self.sessions_listed && self.current_conn.is_some() {
-                    self.sessions_listed = true;
-                    let mgr = self.conn_manager.clone();
-                    // SAFETY: is_some() checked on the line above
-                    #[allow(clippy::unwrap_used)]
-                    let conn = self.current_conn.clone().unwrap();
-                    let conn_key = conn.key.clone();
-                    // FR-CONN-20: open a separate connection for SFTP state sync
-                    let mgr2 = self.conn_manager.clone();
-                    // SAFETY: is_some() checked above
-                    #[allow(clippy::unwrap_used)]
-                    let conn2 = self.current_conn.clone().unwrap();
-                    let conn_key2 = conn2.key.clone();
-                    let client_id = self.client_id.clone();
-
-                    return Task::batch([
-                        Task::perform(
-                            async move {
-                                let conn_result = {
-                                    let mut m = mgr.lock().await;
-                                    m.get_or_connect(
-                                        &conn_key,
-                                        conn.identity_file.as_deref(),
-                                        None,
-                                        15,
-                                    )
-                                    .await
-                                    .map_err(|e| e.to_string())?
-                                };
-                                let handle = conn_result.handle.lock().await;
-                                Ok(ssh::tmux::list_sessions_russh(&handle).await)
-                            },
-                            |result: Result<Vec<String>, String>| {
-                                Message::ExistingSessionsFound(result)
-                            },
-                        ),
-                        Task::perform(
-                            async move {
-                                let conn_result = {
-                                    let mut m = mgr2.lock().await;
-                                    m.get_or_connect(
-                                        &conn_key2,
-                                        conn2.identity_file.as_deref(),
-                                        None,
-                                        15,
-                                    )
-                                    .await
-                                    .map_err(|e| e.to_string())?
-                                };
-                                let syncer =
-                                    ssh::sftp::StateSyncer::new(conn_result.handle, &client_id)
-                                        .await
-                                        .map_err(|e| e.to_string())?;
-                                Ok(Arc::new(syncer))
-                            },
-                            |result: Result<Arc<ssh::sftp::StateSyncer>, String>| {
-                                Message::StateSyncerReady(result)
-                            },
-                        ),
-                    ]);
-                }
                 Task::none()
             }
             Err(e) => {
@@ -1365,7 +1304,7 @@ impl ShellKeep {
                     }
                 }
                 let ssh_args = self.build_ssh_args();
-                let label = ssh_args
+                let _label = ssh_args
                     .first()
                     .cloned()
                     .unwrap_or_else(|| ssh_args.join(" "));
@@ -1394,7 +1333,7 @@ impl ShellKeep {
                 self.current_conn = Some(conn);
 
                 self.recent.push(RecentConnection {
-                    label: label.clone(),
+                    label: _label.clone(),
                     ssh_args: ssh_args.clone(),
                     host: self.welcome.host_input.clone(),
                     user: self.welcome.user_input.clone(),
@@ -1410,23 +1349,77 @@ impl ShellKeep {
                 });
                 self.recent.save();
 
-                // Phase 5: open a new session window for the connection
-                let (session_win_id, session_open_task) = window::open(window::Settings {
-                    size: iced::Size::new(900.0, 600.0),
-                    ..window::Settings::default()
-                });
-                let mut session_win = super::AppWindow::new(session_win_id);
-                session_win.server_window_id = uuid::Uuid::new_v4().to_string();
-                // Item 8: default window name "user@host - Window N"
-                self.window_counter += 1;
-                session_win.name = format!("{} - Window {}", label, self.window_counter);
-                self.windows.insert(session_win_id, session_win);
-                self.window_order.push(session_win_id);
-                self.focused_window = Some(session_win_id);
+                // Launch control-plane connection task — no window opened yet.
+                // The ServerConnected handler will open session windows after
+                // server state is loaded and reconciliation is complete.
+                let mgr = self.conn_manager.clone();
+                // SAFETY: just set above
+                #[allow(clippy::unwrap_used)]
+                let conn = self.current_conn.clone().unwrap();
+                let conn_key = conn.key.clone();
+                let client_id = self.client_id.clone();
+                let workspace = self.current_environment.clone();
+                let keepalive = self.config.ssh.keepalive_interval;
+                let phase = Arc::new(std::sync::Mutex::new(i18n::t(i18n::CONNECTING).to_string()));
 
-                let tmux_session = self.next_tmux_session();
-                let tab_task = self.open_tab_russh(&label, &tmux_session);
-                Task::batch([session_open_task.map(|_| Message::Noop), tab_task])
+                Task::perform(
+                    async move {
+                        // 1. Connect to server (SSH + tmux check + lock)
+                        super::session::connect_server(super::session::ConnectServerParams {
+                            conn_manager: mgr.clone(),
+                            conn: conn.clone(),
+                            keepalive_secs: keepalive,
+                            client_id: client_id.clone(),
+                            workspace,
+                            force_lock: false,
+                            phase,
+                            password: None,
+                        })
+                        .await
+                        .map_err(|e| e.to_string())?;
+
+                        // 2. List existing tmux sessions
+                        let sessions = {
+                            let m = mgr.lock().await;
+                            if let Some(handle_arc) = m.get_cached(&conn_key) {
+                                let handle = handle_arc.lock().await;
+                                ssh::tmux::list_sessions_russh(&handle).await
+                            } else {
+                                Vec::new()
+                            }
+                        };
+
+                        // 3. Create StateSyncer + load state
+                        let conn_result = {
+                            let mut m = mgr.lock().await;
+                            m.get_or_connect(&conn_key, conn.identity_file.as_deref(), None, 15)
+                                .await
+                                .map_err(|e| e.to_string())?
+                        };
+                        let syncer = ssh::sftp::StateSyncer::new(conn_result.handle, &client_id)
+                            .await
+                            .map_err(|e| e.to_string())?;
+                        let syncer = Arc::new(syncer);
+
+                        // 4. Read server state
+                        let shared_state = syncer
+                            .read_shared_state()
+                            .await
+                            .map_err(|e| e.to_string())?;
+                        let device_state = syncer
+                            .read_device_state()
+                            .await
+                            .map_err(|e| e.to_string())?;
+
+                        Ok(Box::new(super::session::ServerConnectResult {
+                            sessions,
+                            syncer,
+                            shared_state,
+                            device_state,
+                        }))
+                    },
+                    Message::ServerConnected,
+                )
             }
 
             _ => Task::none(),
@@ -2870,6 +2863,104 @@ impl ShellKeep {
                 self.flush_state();
                 reconcile_task
             }
+
+            // Control-plane connection complete: SSH + tmux check + lock + state loaded
+            Message::ServerConnected(result) => match result {
+                Err(e) => {
+                    tracing::error!("server connection failed: {e}");
+                    self.connecting_server = None;
+                    self.error = Some(format!("Connection failed: {e}"));
+                    Task::none()
+                }
+                Ok(result) => {
+                    // Store the syncer
+                    self.state_syncer = Some(result.syncer);
+
+                    // Parse shared state
+                    if let Some(json) = result.shared_state {
+                        match serde_json::from_str::<SharedState>(&json) {
+                            Ok(state) => {
+                                tracing::info!(
+                                    "loaded server shared state: {} environments",
+                                    state.environments.len()
+                                );
+                                self.cached_shared_state = Some(state);
+                            }
+                            Err(e) => {
+                                tracing::warn!("corrupt server shared state: {e}");
+                                self.cached_shared_state = Some(SharedState::new());
+                            }
+                        }
+                    } else {
+                        tracing::info!("no server shared state found (first connection)");
+                        self.cached_shared_state = Some(SharedState::new());
+                    }
+
+                    // Parse device state
+                    if let Some(json) = result.device_state {
+                        match serde_json::from_str::<DeviceState>(&json) {
+                            Ok(state) => {
+                                tracing::info!(
+                                    "loaded server device state for {}",
+                                    state.client_id
+                                );
+                                self.cached_device_state = Some(state);
+                            }
+                            Err(e) => tracing::warn!("corrupt server device state: {e}"),
+                        }
+                    }
+
+                    self.server_state_loaded = true;
+                    self.sessions_listed = true;
+                    self.connecting_server = None;
+
+                    // Run reconciliation with the discovered sessions
+                    let reconcile_task = self.reconcile_sessions(result.sessions);
+
+                    // Open session window if reconciliation didn't create one
+                    let has_session_windows = self
+                        .windows
+                        .values()
+                        .any(|w| w.kind == super::WindowKind::Session);
+                    if !has_session_windows {
+                        let label = self
+                            .current_conn
+                            .as_ref()
+                            .map(|c| format!("{}@{}", c.key.username, c.key.host))
+                            .unwrap_or_else(|| "shellkeep".to_string());
+                        let (session_win_id, session_open_task) = window::open(window::Settings {
+                            size: iced::Size::new(900.0, 600.0),
+                            ..window::Settings::default()
+                        });
+                        let mut session_win = super::AppWindow::new(session_win_id);
+                        session_win.server_window_id = uuid::Uuid::new_v4().to_string();
+                        self.window_counter += 1;
+                        session_win.name = format!("{} - Window {}", label, self.window_counter);
+                        self.windows.insert(session_win_id, session_win);
+                        self.window_order.push(session_win_id);
+                        self.focused_window = Some(session_win_id);
+
+                        // If no tabs were restored by reconciliation, create a fresh one
+                        if self.all_tabs().next().is_none() {
+                            let tmux_session = self.next_tmux_session();
+                            let tab_task = self.open_tab_russh(&label, &tmux_session);
+                            return Task::batch([
+                                session_open_task.map(|_| Message::Noop),
+                                tab_task,
+                                reconcile_task,
+                            ]);
+                        }
+                        return Task::batch([
+                            session_open_task.map(|_| Message::Noop),
+                            reconcile_task,
+                        ]);
+                    }
+
+                    self.state_dirty = true;
+                    self.flush_state();
+                    reconcile_task
+                }
+            },
 
             _ => Task::none(),
         }

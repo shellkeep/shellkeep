@@ -239,6 +239,9 @@ pub(crate) enum Message {
     /// Keyed async result: sessions found for a workspace
     WorkspaceSessionsFound(String, String, Result<Vec<String>, String>),
 
+    /// Result of the control-plane server connection.
+    ServerConnected(Result<Box<super::session::ServerConnectResult>, String>),
+
     /// Intentional no-op — use for callbacks that require a Message but need no action.
     Noop,
 }
