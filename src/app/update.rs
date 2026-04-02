@@ -2507,10 +2507,7 @@ impl ShellKeep {
 
             // P23: copy arbitrary string to clipboard
             Message::CopyToClipboard(s) => {
-                self.toast = Some((
-                    "Copied to clipboard".to_string(),
-                    std::time::Instant::now(),
-                ));
+                self.toast = Some(("Copied to clipboard".to_string(), std::time::Instant::now()));
                 iced::clipboard::write(s)
             }
 

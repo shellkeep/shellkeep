@@ -105,8 +105,13 @@ impl ShellKeep {
                 // P7: estimate tab width from label length
                 // indicator(~14px) + label(~7px/char) + latency?(~30px) + close(~26px) + padding(24px) + spacing(~24px)
                 let display_len = tab.label.len().min(25);
-                let latency_extra: f32 = if tab.last_latency_ms.is_some_and(|ms| ms > 300) { 36.0 } else { 0.0 };
-                let est_width = 14.0 + (display_len as f32 * 7.0) + latency_extra + 26.0 + 24.0 + 18.0;
+                let latency_extra: f32 = if tab.last_latency_ms.is_some_and(|ms| ms > 300) {
+                    36.0
+                } else {
+                    0.0
+                };
+                let est_width =
+                    14.0 + (display_len as f32 * 7.0) + latency_extra + 26.0 + 24.0 + 18.0;
                 let ctx_x = tab_x_offset;
                 tab_x_offset += est_width + 1.0; // +1 for row spacing
 
@@ -135,13 +140,12 @@ impl ShellKeep {
         } else {
             Color::from_rgb8(0x6c, 0x70, 0x86)
         };
-        let restore_btn: Element<'_, Message> = button(
-            text(restore_label).size(11).color(restore_color),
-        )
-        .on_press(Message::ShowRestoreDropdown)
-        .padding([6, 8])
-        .style(styles::ghost_button_style)
-        .into();
+        let restore_btn: Element<'_, Message> =
+            button(text(restore_label).size(11).color(restore_color))
+                .on_press(Message::ShowRestoreDropdown)
+                .padding([6, 8])
+                .style(styles::ghost_button_style)
+                .into();
 
         // P10: wrap tabs in horizontal scrollable for overflow handling
         let scrollable_tabs = scrollable(row(tabs_row).spacing(1))

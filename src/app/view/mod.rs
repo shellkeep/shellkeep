@@ -270,7 +270,8 @@ impl ShellKeep {
         let status_bar = self.view_status_bar(win);
 
         // Wrap with tab context menu if active
-        let main_view: Element<'_, Message> = if let Some((tab_idx, ctx_x, _y)) = win.tab_context_menu
+        let main_view: Element<'_, Message> = if let Some((tab_idx, ctx_x, _y)) =
+            win.tab_context_menu
         {
             let mut menu_items: Vec<Element<'_, Message>> = Vec::new();
 
@@ -439,7 +440,11 @@ impl ShellKeep {
                 .iter()
                 .map(|t| {
                     let len = t.label.len().min(25) as f32;
-                    let latency = if t.last_latency_ms.is_some_and(|ms| ms > 300) { 36.0 } else { 0.0 };
+                    let latency = if t.last_latency_ms.is_some_and(|ms| ms > 300) {
+                        36.0
+                    } else {
+                        0.0
+                    };
                     14.0 + (len * 7.0) + latency + 26.0 + 24.0 + 18.0 + 1.0
                 })
                 .sum::<f32>()
@@ -641,130 +646,129 @@ impl ShellKeep {
         };
 
         // P21: unified environment dialog — new env is inline, rename/delete are sub-dialogs
-        let main_view: Element<'_, Message> = if self.dialogs.show_env_dialog
-            || self.dialogs.show_new_env_dialog
-        {
-            stack![main_view, self.view_env_dialog()].into()
-        } else if self.dialogs.show_rename_env_dialog {
-            stack![main_view, self.view_rename_env_dialog()].into()
-        } else if self.dialogs.show_delete_env_dialog {
-            stack![main_view, self.view_delete_env_dialog()].into()
-        } else {
-            main_view
-        };
-
-        // FR-CONN-03, FR-CONN-02: host key verification dialog overlay
         let main_view: Element<'_, Message> =
-            if let Some(ref prompt) = self.dialogs.pending_host_key_prompt {
-                use shellkeep::ssh::known_hosts::HostKeyStatus;
-                let label_color = Color::from_rgb8(0xa6, 0xad, 0xc8);
-                let text_color = Color::from_rgb8(0xcd, 0xd6, 0xf4);
-
-                let dialog = match prompt.status {
-                    HostKeyStatus::Unknown => {
-                        let host_label = format!("Host: {}:{}", prompt.host, prompt.port);
-                        let fp_label = format!("Fingerprint: {}", prompt.fingerprint);
-                        container(
-                            column![
-                                text("Unknown Host Key").size(18).color(text_color),
-                                Space::new().height(8),
-                                text(host_label.clone()).size(13).color(label_color),
-                                text(fp_label.clone()).size(13).color(label_color),
-                                Space::new().height(8),
-                                text("This host is not in your known_hosts file.")
-                                    .size(13)
-                                    .color(label_color),
-                                Space::new().height(12),
-                                row![
-                                    button(text("Cancel").size(13))
-                                        .on_press(Message::HostKeyReject)
-                                        .padding([8, 16])
-                                        .style(styles::secondary_button_style),
-                                    button(text("Connect once").size(13))
-                                        .on_press(Message::HostKeyConnectOnce)
-                                        .padding([8, 16])
-                                        .style(styles::secondary_button_style),
-                                    button(text("Accept and save").size(13))
-                                        .on_press(Message::HostKeyAcceptSave)
-                                        .padding([8, 16])
-                                        .style(styles::primary_button_style),
-                                ]
-                                .spacing(8),
-                            ]
-                            .spacing(4)
-                            .padding(24),
-                        )
-                        .style(styles::dialog_container_style)
-                    }
-                    HostKeyStatus::Changed => {
-                        let host_label = format!("Host: {}:{}", prompt.host, prompt.port);
-                        let new_fp = format!("New: {}", prompt.fingerprint);
-                        let old_fp = prompt
-                            .old_fingerprint
-                            .as_deref()
-                            .map(|fp| format!("Old: {fp}"))
-                            .unwrap_or_default();
-                        // P23: ssh-keygen removal command
-                        let removal_cmd =
-                            format!("ssh-keygen -R [{}]:{}", prompt.host, prompt.port);
-                        let cmd_for_copy = removal_cmd.clone();
-                        container(
-                            column![
-                                text("WARNING: HOST KEY HAS CHANGED")
-                                    .size(18)
-                                    .color(Color::from_rgb8(0xf3, 0x8b, 0xa8)),
-                                Space::new().height(8),
-                                text(host_label.clone()).size(13).color(label_color),
-                                text(old_fp.clone()).size(13).color(label_color),
-                                text(new_fp.clone()).size(13).color(label_color),
-                                Space::new().height(8),
-                                text("This may indicate a man-in-the-middle attack.")
-                                    .size(13)
-                                    .color(Color::from_rgb8(0xf3, 0x8b, 0xa8)),
-                                Space::new().height(4),
-                                text("To accept the new key, run:")
-                                    .size(13)
-                                    .color(label_color),
-                                text(removal_cmd)
-                                    .size(12)
-                                    .color(text_color)
-                                    .font(iced::Font::MONOSPACE),
-                                Space::new().height(12),
-                                row![
-                                    button(text("Copy command").size(13))
-                                        .on_press(Message::CopyToClipboard(cmd_for_copy))
-                                        .padding([8, 16])
-                                        .style(styles::secondary_button_style),
-                                    button(text("Disconnect").size(13))
-                                        .on_press(Message::HostKeyChangedDismiss)
-                                        .padding([8, 16])
-                                        .style(styles::danger_button_style),
-                                ]
-                                .spacing(8),
-                            ]
-                            .spacing(4)
-                            .padding(24),
-                        )
-                        .style(styles::dialog_container_style)
-                    }
-                    HostKeyStatus::Known => {
-                        // Should not happen, but dismiss gracefully
-                        container(text(""))
-                    }
-                };
-
-                let scrim = mouse_area(
-                    container(Space::new().width(Length::Fill).height(Length::Fill))
-                        .width(Length::Fill)
-                        .height(Length::Fill)
-                        .style(styles::scrim_style),
-                )
-                .on_press(Message::HostKeyReject);
-
-                stack![main_view, scrim, center(dialog)].into()
+            if self.dialogs.show_env_dialog || self.dialogs.show_new_env_dialog {
+                stack![main_view, self.view_env_dialog()].into()
+            } else if self.dialogs.show_rename_env_dialog {
+                stack![main_view, self.view_rename_env_dialog()].into()
+            } else if self.dialogs.show_delete_env_dialog {
+                stack![main_view, self.view_delete_env_dialog()].into()
             } else {
                 main_view
             };
+
+        // FR-CONN-03, FR-CONN-02: host key verification dialog overlay
+        let main_view: Element<'_, Message> = if let Some(ref prompt) =
+            self.dialogs.pending_host_key_prompt
+        {
+            use shellkeep::ssh::known_hosts::HostKeyStatus;
+            let label_color = Color::from_rgb8(0xa6, 0xad, 0xc8);
+            let text_color = Color::from_rgb8(0xcd, 0xd6, 0xf4);
+
+            let dialog = match prompt.status {
+                HostKeyStatus::Unknown => {
+                    let host_label = format!("Host: {}:{}", prompt.host, prompt.port);
+                    let fp_label = format!("Fingerprint: {}", prompt.fingerprint);
+                    container(
+                        column![
+                            text("Unknown Host Key").size(18).color(text_color),
+                            Space::new().height(8),
+                            text(host_label.clone()).size(13).color(label_color),
+                            text(fp_label.clone()).size(13).color(label_color),
+                            Space::new().height(8),
+                            text("This host is not in your known_hosts file.")
+                                .size(13)
+                                .color(label_color),
+                            Space::new().height(12),
+                            row![
+                                button(text("Cancel").size(13))
+                                    .on_press(Message::HostKeyReject)
+                                    .padding([8, 16])
+                                    .style(styles::secondary_button_style),
+                                button(text("Connect once").size(13))
+                                    .on_press(Message::HostKeyConnectOnce)
+                                    .padding([8, 16])
+                                    .style(styles::secondary_button_style),
+                                button(text("Accept and save").size(13))
+                                    .on_press(Message::HostKeyAcceptSave)
+                                    .padding([8, 16])
+                                    .style(styles::primary_button_style),
+                            ]
+                            .spacing(8),
+                        ]
+                        .spacing(4)
+                        .padding(24),
+                    )
+                    .style(styles::dialog_container_style)
+                }
+                HostKeyStatus::Changed => {
+                    let host_label = format!("Host: {}:{}", prompt.host, prompt.port);
+                    let new_fp = format!("New: {}", prompt.fingerprint);
+                    let old_fp = prompt
+                        .old_fingerprint
+                        .as_deref()
+                        .map(|fp| format!("Old: {fp}"))
+                        .unwrap_or_default();
+                    // P23: ssh-keygen removal command
+                    let removal_cmd = format!("ssh-keygen -R [{}]:{}", prompt.host, prompt.port);
+                    let cmd_for_copy = removal_cmd.clone();
+                    container(
+                        column![
+                            text("WARNING: HOST KEY HAS CHANGED")
+                                .size(18)
+                                .color(Color::from_rgb8(0xf3, 0x8b, 0xa8)),
+                            Space::new().height(8),
+                            text(host_label.clone()).size(13).color(label_color),
+                            text(old_fp.clone()).size(13).color(label_color),
+                            text(new_fp.clone()).size(13).color(label_color),
+                            Space::new().height(8),
+                            text("This may indicate a man-in-the-middle attack.")
+                                .size(13)
+                                .color(Color::from_rgb8(0xf3, 0x8b, 0xa8)),
+                            Space::new().height(4),
+                            text("To accept the new key, run:")
+                                .size(13)
+                                .color(label_color),
+                            text(removal_cmd)
+                                .size(12)
+                                .color(text_color)
+                                .font(iced::Font::MONOSPACE),
+                            Space::new().height(12),
+                            row![
+                                button(text("Copy command").size(13))
+                                    .on_press(Message::CopyToClipboard(cmd_for_copy))
+                                    .padding([8, 16])
+                                    .style(styles::secondary_button_style),
+                                button(text("Disconnect").size(13))
+                                    .on_press(Message::HostKeyChangedDismiss)
+                                    .padding([8, 16])
+                                    .style(styles::danger_button_style),
+                            ]
+                            .spacing(8),
+                        ]
+                        .spacing(4)
+                        .padding(24),
+                    )
+                    .style(styles::dialog_container_style)
+                }
+                HostKeyStatus::Known => {
+                    // Should not happen, but dismiss gracefully
+                    container(text(""))
+                }
+            };
+
+            let scrim = mouse_area(
+                container(Space::new().width(Length::Fill).height(Length::Fill))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .style(styles::scrim_style),
+            )
+            .on_press(Message::HostKeyReject);
+
+            stack![main_view, scrim, center(dialog)].into()
+        } else {
+            main_view
+        };
 
         // FR-CONN-09: password prompt dialog overlay
         let main_view: Element<'_, Message> = if self.dialogs.show_password_dialog {
@@ -901,9 +905,7 @@ impl ShellKeep {
 
             let dialog = container(
                 column![
-                    text("Keyboard Shortcuts")
-                        .size(18)
-                        .color(text_color),
+                    text("Keyboard Shortcuts").size(18).color(text_color),
                     Space::new().height(12),
                     column(shortcut_rows).spacing(6),
                     Space::new().height(12),

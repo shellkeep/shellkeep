@@ -67,7 +67,9 @@ impl ShellKeep {
                 .style(styles::ghost_button_style);
 
             let delete_btn = button(
-                text("\u{1F5D1}").size(12).color(Color::from_rgb8(0xf3, 0x8b, 0xa8)),
+                text("\u{1F5D1}")
+                    .size(12)
+                    .color(Color::from_rgb8(0xf3, 0x8b, 0xa8)),
             )
             .on_press(Message::ShowDeleteEnvDialog(env_name2))
             .padding([6, 8])

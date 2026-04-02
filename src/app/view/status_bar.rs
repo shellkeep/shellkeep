@@ -29,7 +29,9 @@ impl ShellKeep {
             String::new()
         };
         let status_text = if dead_count > 0 {
-            format!("{total} tabs ({active_count} active, {dead_count} disconnected){hidden_suffix}{zoom_info}")
+            format!(
+                "{total} tabs ({active_count} active, {dead_count} disconnected){hidden_suffix}{zoom_info}"
+            )
         } else {
             format!(
                 "{total} tab{}{hidden_suffix}{zoom_info}",

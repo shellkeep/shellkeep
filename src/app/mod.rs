@@ -1066,7 +1066,10 @@ impl ShellKeep {
         // P24-25: update tray with detailed session status
         let any_show_welcome = self.windows.values().any(|w| w.show_welcome);
         if let Some(ref tray) = self.tray {
-            let active_count = self.all_tabs().filter(|t| !t.is_dead() && !t.is_auto_reconnect()).count();
+            let active_count = self
+                .all_tabs()
+                .filter(|t| !t.is_dead() && !t.is_auto_reconnect())
+                .count();
             let reconnecting_count = self.all_tabs().filter(|t| t.is_auto_reconnect()).count();
             let dead_count = self.all_tabs().filter(|t| t.is_dead()).count();
             let hidden_count = self.hidden_sessions.len();
