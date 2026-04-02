@@ -71,8 +71,22 @@ impl SavedServers {
     pub fn load() -> Self {
         let path = Self::file_path();
         if let Ok(data) = fs::read_to_string(&path)
-            && let Ok(servers) = serde_json::from_str(&data)
+            && let Ok(mut servers) = serde_json::from_str::<Self>(&data)
         {
+            // Normalize hosts that may contain user@ or :port from older saves
+            let mut dirty = false;
+            for s in &mut servers.servers {
+                let normalized = Self::normalize_host(&s.host, &s.user, &s.port);
+                if normalized.0 != s.host || normalized.1 != s.user || normalized.2 != s.port {
+                    s.host = normalized.0;
+                    s.user = normalized.1;
+                    s.port = normalized.2;
+                    dirty = true;
+                }
+            }
+            if dirty {
+                servers.save();
+            }
             return servers;
         }
         // Try migration from recent.json
@@ -114,6 +128,46 @@ impl SavedServers {
         self.servers.retain(|s| s.uuid != server.uuid);
         self.servers.insert(0, server);
         self.servers.truncate(MAX_SERVERS);
+    }
+
+    /// Normalize a host field that may contain `user@host:port`.
+    /// Returns (host, user, port) with components split out.
+    fn normalize_host(
+        host: &str,
+        current_user: &str,
+        current_port: &str,
+    ) -> (String, String, String) {
+        // Quick check: if host doesn't contain @ or : it's already clean
+        if !host.contains('@') && !host.contains(':') {
+            return (
+                host.to_string(),
+                current_user.to_string(),
+                current_port.to_string(),
+            );
+        }
+        let mut user = current_user.to_string();
+        let mut port = current_port.to_string();
+        let mut remaining = host.to_string();
+
+        // Extract user@
+        if let Some(at_pos) = remaining.find('@') {
+            let parsed_user = remaining[..at_pos].to_string();
+            remaining = remaining[at_pos + 1..].to_string();
+            if user.is_empty() || user == "user" {
+                user = parsed_user;
+            }
+        }
+        // Extract :port (skip IPv6 brackets)
+        if !remaining.starts_with('[') {
+            if let Some(colon_pos) = remaining.rfind(':') {
+                let parsed_port = remaining[colon_pos + 1..].to_string();
+                remaining = remaining[..colon_pos].to_string();
+                if port == "22" || port.is_empty() {
+                    port = parsed_port;
+                }
+            }
+        }
+        (remaining, user, port)
     }
 
     /// Find a server by UUID.
