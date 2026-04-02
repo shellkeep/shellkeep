@@ -319,7 +319,7 @@ impl ShellKeep {
                             button(
                                 text("Close all")
                                     .size(12)
-                                    .color(Color::from_rgb8(0xf3, 0x8b, 0xa8))
+                                    .color(Color::from_rgb8(0x1e, 0x1e, 0x2e))
                             )
                             .on_press(Message::CloseServer)
                             .padding([6, 12])
