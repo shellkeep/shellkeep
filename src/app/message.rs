@@ -162,8 +162,6 @@ pub(crate) enum Message {
     ConfirmCloseServer,
     /// Cancel destructive CloseServer action
     CancelCloseServer,
-    /// Toggle visibility of the "connect to another server" form
-    ToggleConnectForm,
     /// Rename the current session window
     RenameWindow,
     /// Window rename input changed

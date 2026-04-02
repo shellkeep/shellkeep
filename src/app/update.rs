@@ -75,7 +75,6 @@ impl ShellKeep {
             | Message::CloseServer
             | Message::ConfirmCloseServer
             | Message::CancelCloseServer
-            | Message::ToggleConnectForm
             | Message::RenameWindow
             | Message::WindowRenameInputChanged(..)
             | Message::FinishWindowRename
@@ -1234,12 +1233,6 @@ impl ShellKeep {
 
             Message::CancelCloseServer => {
                 self.confirm_close_server = false;
-                Task::none()
-            }
-
-            // Item 7: toggle connect form visibility in control window
-            Message::ToggleConnectForm => {
-                self.show_connect_form = !self.show_connect_form;
                 Task::none()
             }
 

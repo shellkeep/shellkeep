@@ -298,9 +298,6 @@ pub(crate) struct ShellKeep {
     /// Locally saved servers (replaces RecentConnections for new UI)
     pub(crate) saved_servers: SavedServers,
 
-    /// Whether the connect form is shown in the control window
-    pub(crate) show_connect_form: bool,
-
     /// UUID of server currently being connected to (for UI state)
     pub(crate) connecting_server: Option<String>,
 
@@ -375,7 +372,6 @@ impl ShellKeep {
             active_workspaces: Vec::new(),
             state_syncers: HashMap::new(),
             saved_servers,
-            show_connect_form: false,
             connecting_server: None,
             show_hidden_sessions_dropdown: false,
             confirm_close_server: false,
