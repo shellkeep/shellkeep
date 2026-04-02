@@ -178,6 +178,67 @@ pub(crate) enum Message {
     ShowShortcutsDialog,
     /// P18-20: dismiss keyboard shortcuts dialog
     DismissShortcutsDialog,
+    // ----- Phase 6: server management -----
+    /// Connect to a saved server by UUID
+    ConnectServer(String),
+    /// Disconnect all workspaces for a server UUID
+    DisconnectAllWorkspaces(String),
+    /// Open edit form for a saved server
+    EditServer(String),
+    /// Start forget-server confirmation flow
+    ForgetServer(String),
+    /// Confirm forget-server
+    ConfirmForgetServer,
+    /// Cancel forget-server
+    CancelForgetServer,
+    /// Show the server add/edit form (None=add, Some(uuid)=edit)
+    ShowServerForm(Option<String>),
+    /// Return from server form to server list
+    BackToServerList,
+    /// Save server from form fields
+    SaveServer,
+    /// Save server and immediately connect
+    SaveAndConnectServer,
+    /// Server form field changed
+    ServerFormNameChanged(String),
+    ServerFormHostChanged(String),
+    ServerFormPortChanged(String),
+    ServerFormUserChanged(String),
+    ServerFormIdentityChanged(String),
+
+    // ----- Phase 6: workspace management -----
+    /// Connect to a workspace (server_uuid, env_name)
+    ConnectWorkspace(String, String),
+    /// Disconnect a workspace (server_uuid, env_name)
+    DisconnectWorkspace(String, String),
+    /// Focus existing windows for a workspace
+    OpenWorkspace(String, String),
+    /// Show new workspace dialog for server_uuid
+    ShowNewWorkspace(String),
+    /// New workspace name input changed
+    NewWorkspaceInputChanged(String),
+    /// Confirm new workspace creation
+    ConfirmNewWorkspace,
+    /// Cancel new workspace creation
+    CancelNewWorkspace,
+    /// Show rename workspace dialog (server_uuid, env_name)
+    ShowRenameWorkspace(String, String),
+    /// Rename workspace input changed
+    RenameWorkspaceInputChanged(String),
+    /// Confirm workspace rename
+    ConfirmRenameWorkspace,
+    /// Cancel workspace rename
+    CancelRenameWorkspace,
+    /// Show delete workspace dialog (server_uuid, env_name)
+    ShowDeleteWorkspace(String, String),
+    /// Confirm workspace deletion
+    ConfirmDeleteWorkspace,
+    /// Cancel workspace deletion
+    CancelDeleteWorkspace,
+
+    /// Keyed async result: sessions found for a workspace
+    WorkspaceSessionsFound(String, String, Result<Vec<String>, String>),
+
     /// Intentional no-op — use for callbacks that require a Message but need no action.
     Noop,
 }

@@ -52,7 +52,7 @@ You SSH into a server, set up your terminal tabs, get deep into a debugging sess
 
 **Host key verification (TOFU)** -- Trust-on-first-use with SHA256 fingerprint display. Explicit cipher, MAC, and KEX configuration.
 
-**Environments** -- Named groups of sessions for context separation. Switch between "Backend", "Frontend", and "DevOps" environments instantly.
+**Workspaces** -- Named groups of windows and sessions per server. Run multiple workspaces on the same server to separate contexts like "Backend", "Frontend", and "DevOps".
 
 **GPU-accelerated terminal** -- Powered by alacritty_terminal (same engine as Zed and Alacritty). True color, Unicode, hyperlinks, perfect TUI rendering.
 
@@ -108,10 +108,10 @@ shellkeep is a **client-only** application. The architecture is simple:
 
 1. **Connect** -- shellkeep opens an SSH connection to the server
 2. **Attach** -- On the server, it creates or reattaches to tmux sessions (one per tab)
-3. **Sync** -- Layout state (tabs, names, positions) is stored as a small JSON file on the server via SFTP, keyed by device ID
+3. **Sync** -- Layout state (tabs, names, positions) is stored as a small state file (`~/.shellkeep/`, typically <10 KB) on the server via SFTP, keyed by device ID
 4. **Reconnect** -- When the connection drops, shellkeep retries with exponential backoff and reattaches to the same tmux sessions -- all output is preserved
 
-No custom software runs on the server. No ports to open. No configuration files to edit.
+No installation on the server -- no binaries, no daemons, no root access. Just a tiny state file in `~/.shellkeep/`.
 
 ---
 
@@ -269,7 +269,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions and guidelines. Ex
 
 - GPU-accelerated Rust UI with iced + alacritty_terminal (Linux, macOS, Windows)
 - Single-hop SSH with full tmux integration
-- Per-device layout persistence and environments
+- Per-device layout persistence and workspaces
 - AppImage, .deb, .dmg, and Windows installer
 - English and pt_BR localization
 

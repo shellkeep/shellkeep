@@ -266,9 +266,9 @@ impl HistoryWriter {
 /// Build the tmux pipe-pane command for server-side capture.
 pub fn pipe_pane_command(tmux_session: &str, session_uuid: &str) -> String {
     format!(
-        "mkdir -p ~/.terminal-state/history && \
+        "mkdir -p ~/.shellkeep/history && \
          tmux pipe-pane -t {tmux_session} \
-         'cat >> ~/.terminal-state/history/{session_uuid}.raw'"
+         'cat >> ~/.shellkeep/history/{session_uuid}.raw'"
     )
 }
 

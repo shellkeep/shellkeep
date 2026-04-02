@@ -24,17 +24,33 @@ const LOCK_ORPHAN_MULTIPLIER: u64 = 2;
 /// Default keepalive timeout in seconds.
 const DEFAULT_KEEPALIVE_TIMEOUT: u64 = 30;
 
-fn lock_session_name() -> String {
-    "shellkeep-lock".to_string()
+/// Build the per-workspace lock session name. /* FR-LOCK-02 */
+/// Sanitizes the workspace name for use as a tmux session name.
+fn lock_session_name(workspace: &str) -> String {
+    let sanitized: String = workspace
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    format!("shellkeep-lock-{sanitized}")
 }
 
-/// Check if a lock exists on this server. /* FR-LOCK-02 */
+/// Legacy lock session name (pre-v0.3, single lock per server).
+const LEGACY_LOCK_NAME: &str = "shellkeep-lock";
+
+/// Check if a lock exists on this server for the given workspace. /* FR-LOCK-02 */
 /// Returns Some(LockInfo) if locked, None if not.
 pub async fn check_lock(
     handle: &russh::client::Handle<SshHandler>,
     client_id: &str,
+    workspace: &str,
 ) -> Result<Option<LockInfo>, SshError> {
-    let lock_name = lock_session_name();
+    let lock_name = lock_session_name(workspace);
 
     // tmux has-session exits 0 if session exists, 1 if not.
     // We wrap it in a shell check to get the exit status.
@@ -82,20 +98,21 @@ fn parse_lock_env(env_output: &str, fallback_client_id: &str) -> LockInfo {
     info
 }
 
-/// Acquire the lock. Returns Err if lock already held by another client. /* FR-LOCK-01 */
+/// Acquire the lock for a workspace. Returns Err if lock already held by another client. /* FR-LOCK-01 */
 pub async fn acquire_lock(
     handle: &russh::client::Handle<SshHandler>,
     client_id: &str,
     keepalive_timeout: Option<u64>,
+    workspace: &str,
 ) -> Result<(), SshError> {
-    let lock_name = lock_session_name();
+    let lock_name = lock_session_name(workspace);
     let hostname = whoami::fallible::hostname().unwrap_or_else(|_| "unknown".to_string());
     let pid = std::process::id();
     let version = env!("CARGO_PKG_VERSION");
     let now = chrono::Utc::now().to_rfc3339();
 
     // Check if lock already exists
-    if let Some(existing) = check_lock(handle, client_id).await? {
+    if let Some(existing) = check_lock(handle, client_id, workspace).await? {
         // FR-LOCK-06: same host + PID → renew silently
         if existing.hostname == hostname && existing.pid == pid {
             return set_lock_env(handle, &lock_name, client_id, &hostname, pid, version, &now)
@@ -111,7 +128,7 @@ pub async fn acquire_lock(
                 existing.hostname,
                 existing.connected_at
             );
-            release_lock(handle).await?;
+            release_lock(handle, workspace).await?;
             // Fall through to create new lock
         } else {
             return Err(SshError::Channel(format!(
@@ -156,20 +173,52 @@ async fn set_lock_env(
     Ok(())
 }
 
-/// Update heartbeat timestamp. /* FR-LOCK-04 */
-pub async fn heartbeat(handle: &russh::client::Handle<SshHandler>) -> Result<(), SshError> {
-    let lock_name = lock_session_name();
+/// Update heartbeat timestamp for a workspace lock. /* FR-LOCK-04 */
+pub async fn heartbeat(
+    handle: &russh::client::Handle<SshHandler>,
+    workspace: &str,
+) -> Result<(), SshError> {
+    let lock_name = lock_session_name(workspace);
     let now = chrono::Utc::now().to_rfc3339();
     let cmd = format!("tmux set-environment -t {lock_name} SHELLKEEP_LOCK_CONNECTED_AT '{now}'");
     connection::exec_command(handle, &cmd).await?;
     Ok(())
 }
 
-/// Release the lock. /* FR-LOCK-05 */
-pub async fn release_lock(handle: &russh::client::Handle<SshHandler>) -> Result<(), SshError> {
-    let lock_name = lock_session_name();
+/// Release the lock for a workspace. /* FR-LOCK-05 */
+pub async fn release_lock(
+    handle: &russh::client::Handle<SshHandler>,
+    workspace: &str,
+) -> Result<(), SshError> {
+    let lock_name = lock_session_name(workspace);
     let cmd = format!("tmux kill-session -t {lock_name} 2>/dev/null || true");
     connection::exec_command(handle, &cmd).await?;
+    Ok(())
+}
+
+/// Clean up the legacy lock session (pre-v0.3 "shellkeep-lock") if it exists
+/// and belongs to this client.
+pub async fn cleanup_legacy_lock(
+    handle: &russh::client::Handle<SshHandler>,
+    client_id: &str,
+) -> Result<(), SshError> {
+    let check_cmd = format!(
+        "tmux has-session -t {LEGACY_LOCK_NAME} 2>/dev/null && echo LOCK_EXISTS || echo LOCK_NONE"
+    );
+    let result = connection::exec_command(handle, &check_cmd).await?;
+    if !result.trim().contains("LOCK_EXISTS") {
+        return Ok(());
+    }
+    // Read the lock owner
+    let env_cmd = format!("tmux show-environment -t {LEGACY_LOCK_NAME} 2>/dev/null");
+    let env_output = connection::exec_command(handle, &env_cmd).await?;
+    let info = parse_lock_env(&env_output, "");
+    // Only kill if it belongs to this client (or is orphaned)
+    if info.client_id == client_id || is_orphaned(&info, DEFAULT_KEEPALIVE_TIMEOUT) {
+        let kill_cmd = format!("tmux kill-session -t {LEGACY_LOCK_NAME} 2>/dev/null || true");
+        connection::exec_command(handle, &kill_cmd).await?;
+        tracing::info!("cleaned up legacy lock session '{LEGACY_LOCK_NAME}'");
+    }
     Ok(())
 }
 
@@ -194,8 +243,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn lock_session_name_format() {
-        assert_eq!(lock_session_name(), "shellkeep-lock");
+    fn lock_session_name_default() {
+        assert_eq!(lock_session_name("Default"), "shellkeep-lock-Default");
+    }
+
+    #[test]
+    fn lock_session_name_sanitizes_spaces() {
+        assert_eq!(lock_session_name("My Project"), "shellkeep-lock-My-Project");
+    }
+
+    #[test]
+    fn lock_session_name_sanitizes_special_chars() {
+        assert_eq!(
+            lock_session_name("test/foo@bar"),
+            "shellkeep-lock-test-foo-bar"
+        );
+    }
+
+    #[test]
+    fn lock_session_name_preserves_valid_chars() {
+        assert_eq!(
+            lock_session_name("ESSR-2024_prod"),
+            "shellkeep-lock-ESSR-2024_prod"
+        );
+    }
+
+    #[test]
+    fn legacy_lock_name_constant() {
+        assert_eq!(LEGACY_LOCK_NAME, "shellkeep-lock");
     }
 
     #[test]

@@ -158,7 +158,7 @@ assert_exit_code "Server still responsive after tmux detection failure" 0 "$rc"
 assert_contains "Server responds correctly" "$result" "still-alive"
 
 # Verify no stale state was created on the server.
-state_exists=$(fr_ssh_cmd_nocheck "ls /home/$FR_SSH_USER/.terminal-state/*.json 2>/dev/null | wc -l" || echo "0")
+state_exists=$(fr_ssh_cmd_nocheck "ls /home/$FR_SSH_USER/.shellkeep/*.json 2>/dev/null | wc -l" || echo "0")
 assert_num_eq "No state file created (flow aborted before state phase)" "$state_exists" 0
 
 # Verify no tmux sessions were created (tmux not available).

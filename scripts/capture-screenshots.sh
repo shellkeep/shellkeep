@@ -55,7 +55,7 @@ RUN apt-get update && apt-get install -y openssh-server tmux iproute2 iptables &
     mkdir -p /run/sshd && \
     useradd -m -s /bin/bash testuser && \
     echo 'testuser:testpass' | chpasswd && \
-    mkdir -p /home/testuser/.terminal-state/environments && \
+    mkdir -p /home/testuser/.shellkeep/environments && \
     chown -R testuser:testuser /home/testuser && \
     sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
     echo "PermitRootLogin no" >> /etc/ssh/sshd_config

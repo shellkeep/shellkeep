@@ -46,7 +46,12 @@ impl ShellKeep {
         };
 
         // FR-ENV-01: environment indicator (hidden when only "default" env)
-        let show_env = !self.current_environment.eq_ignore_ascii_case("default");
+        // Phase 6: prefer workspace_env from window, fall back to current_environment
+        let env_label = win
+            .workspace_env
+            .as_deref()
+            .unwrap_or(&self.current_environment);
+        let show_env = !env_label.eq_ignore_ascii_case("default");
 
         let shortcuts_btn = button(text("\u{2328}").size(12))
             .on_press(Message::ShowShortcutsDialog)
@@ -63,7 +68,7 @@ impl ShellKeep {
         if show_env {
             bar_items.push(Space::new().width(16).into());
             bar_items.push(
-                text(format!("env: {}", self.current_environment))
+                text(format!("workspace: {env_label}"))
                     .size(11)
                     .color(Color::from_rgb8(0x89, 0xb4, 0xfa))
                     .into(),

@@ -44,7 +44,7 @@ CHAOS_SSH_PASS="${CHAOS_SSH_PASS:-testpass}"
 # ServerAliveInterval/CountMax provide client-side keepalive detection.
 CHAOS_SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=3"
 
-CHAOS_REMOTE_STATE_DIR="/home/testuser/.terminal-state"
+CHAOS_REMOTE_STATE_DIR="/home/testuser/.shellkeep"
 
 # ---- Logging -------------------------------------------------------------- #
 

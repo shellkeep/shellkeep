@@ -49,7 +49,7 @@ FR_SSH_PASS="${FR_SSH_PASS:-testpass}"
 FR_SSH_OPTS_NOCHECK="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
 
 # State directory on the remote server.
-FR_REMOTE_STATE_DIR="/home/testuser/.terminal-state"
+FR_REMOTE_STATE_DIR="/home/testuser/.shellkeep"
 
 # ---- Logging -------------------------------------------------------------- #
 

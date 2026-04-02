@@ -3,6 +3,9 @@
 
 //! Message dispatch and state update logic.
 //!
+// TODO: migrate from RecentConnections to SavedServers, then remove this allow
+#![allow(deprecated)]
+//!
 //! This is the core of the iced application: every user action, SSH event,
 //! and timer tick arrives as a [`Message`] and is routed by [`ShellKeep::update`]
 //! to one of seven handler methods:
@@ -28,6 +31,7 @@ use iced_term::{AlacrittyColumn, AlacrittyLine, AlacrittyPoint, RegexSearch};
 use shellkeep::config::Config;
 use shellkeep::ssh;
 use shellkeep::ssh::manager::ConnKey;
+#[allow(deprecated)] // legacy type kept for migration
 use shellkeep::state::recent::RecentConnection;
 use shellkeep::state::state_file::{DeviceState, SharedState};
 use shellkeep::tray::{Tray, TrayAction};
@@ -162,6 +166,38 @@ impl ShellKeep {
             Message::StateSyncerReady(..) | Message::ServerStateLoaded(..) => {
                 self.handle_state_sync_message(message)
             }
+
+            // --- Server / workspace management messages ---
+            Message::ConnectServer(..)
+            | Message::DisconnectAllWorkspaces(..)
+            | Message::EditServer(..)
+            | Message::ForgetServer(..)
+            | Message::ConfirmForgetServer
+            | Message::CancelForgetServer
+            | Message::ShowServerForm(..)
+            | Message::BackToServerList
+            | Message::SaveServer
+            | Message::SaveAndConnectServer
+            | Message::ServerFormNameChanged(..)
+            | Message::ServerFormHostChanged(..)
+            | Message::ServerFormPortChanged(..)
+            | Message::ServerFormUserChanged(..)
+            | Message::ServerFormIdentityChanged(..)
+            | Message::ConnectWorkspace(..)
+            | Message::DisconnectWorkspace(..)
+            | Message::OpenWorkspace(..)
+            | Message::ShowNewWorkspace(..)
+            | Message::NewWorkspaceInputChanged(..)
+            | Message::ConfirmNewWorkspace
+            | Message::CancelNewWorkspace
+            | Message::ShowRenameWorkspace(..)
+            | Message::RenameWorkspaceInputChanged(..)
+            | Message::ConfirmRenameWorkspace
+            | Message::CancelRenameWorkspace
+            | Message::ShowDeleteWorkspace(..)
+            | Message::ConfirmDeleteWorkspace
+            | Message::CancelDeleteWorkspace
+            | Message::WorkspaceSessionsFound(..) => self.handle_workspace_message(message),
 
             Message::Noop => Task::none(),
         }
@@ -2071,12 +2107,13 @@ impl ShellKeep {
                     None => return Task::none(),
                 };
                 let conn_key = conn.key.clone();
+                let workspace = self.current_environment.clone();
                 Task::perform(
                     async move {
                         let mgr = mgr.lock().await;
                         if let Some(handle_arc) = mgr.get_cached(&conn_key) {
                             let handle = handle_arc.lock().await;
-                            ssh::lock::heartbeat(&handle)
+                            ssh::lock::heartbeat(&handle, &workspace)
                                 .await
                                 .map_err(|e| e.to_string())
                         } else {
@@ -2846,6 +2883,255 @@ impl ShellKeep {
             }
 
             _ => Task::none(),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Server / workspace management messages (Phase 6)
+    // -----------------------------------------------------------------------
+
+    fn handle_workspace_message(&mut self, message: Message) -> Task<Message> {
+        match message {
+            Message::ConnectServer(uuid) => {
+                if let Some(server) = self.saved_servers.find_by_uuid(&uuid).cloned() {
+                    // Populate welcome fields from saved server
+                    self.welcome.host_input = server.host.clone();
+                    self.welcome.port_input = server.port.clone();
+                    self.welcome.user_input = server.user.clone();
+                    self.welcome.identity_input = server.identity_file.clone().unwrap_or_default();
+                    // Update last_connected timestamp
+                    self.saved_servers.push(server);
+                    self.saved_servers.save();
+                    // Trigger the existing Connect flow
+                    return self.update(Message::Connect);
+                }
+                Task::none()
+            }
+
+            Message::DisconnectAllWorkspaces(_uuid) => {
+                // Delegate to existing DisconnectServer logic
+                self.update(Message::DisconnectServer)
+            }
+
+            Message::EditServer(uuid) => self.update(Message::ShowServerForm(Some(uuid))),
+
+            Message::ForgetServer(uuid) => {
+                self.dialogs.show_forget_server = Some(uuid);
+                Task::none()
+            }
+
+            Message::ConfirmForgetServer => {
+                if let Some(uuid) = self.dialogs.show_forget_server.take() {
+                    self.saved_servers.remove_by_uuid(&uuid);
+                    self.saved_servers.save();
+                }
+                Task::none()
+            }
+
+            Message::CancelForgetServer => {
+                self.dialogs.show_forget_server = None;
+                Task::none()
+            }
+
+            Message::ShowServerForm(opt_uuid) => {
+                if let Some(ref uuid) = opt_uuid {
+                    // Editing: populate form from saved server
+                    if let Some(server) = self.saved_servers.find_by_uuid(uuid) {
+                        self.dialogs.server_form_name = server.name.clone().unwrap_or_default();
+                        self.dialogs.server_form_host = server.host.clone();
+                        self.dialogs.server_form_port = server.port.clone();
+                        self.dialogs.server_form_user = server.user.clone();
+                        self.dialogs.server_form_identity =
+                            server.identity_file.clone().unwrap_or_default();
+                    }
+                } else {
+                    // Adding: clear form
+                    self.dialogs.server_form_name.clear();
+                    self.dialogs.server_form_host.clear();
+                    self.dialogs.server_form_port = "22".to_string();
+                    self.dialogs.server_form_user = crate::cli::default_ssh_username();
+                    self.dialogs.server_form_identity.clear();
+                }
+                self.dialogs.show_server_form = Some(opt_uuid);
+                Task::none()
+            }
+
+            Message::BackToServerList => {
+                self.dialogs.show_server_form = None;
+                Task::none()
+            }
+
+            Message::SaveServer => {
+                let server = self.build_server_from_form();
+                self.saved_servers.push(server);
+                self.saved_servers.save();
+                self.dialogs.show_server_form = None;
+                Task::none()
+            }
+
+            Message::SaveAndConnectServer => {
+                let server = self.build_server_from_form();
+                let uuid = server.uuid.clone();
+                self.saved_servers.push(server);
+                self.saved_servers.save();
+                self.dialogs.show_server_form = None;
+                self.update(Message::ConnectServer(uuid))
+            }
+
+            Message::ServerFormNameChanged(v) => {
+                self.dialogs.server_form_name = v;
+                Task::none()
+            }
+            Message::ServerFormHostChanged(v) => {
+                self.dialogs.server_form_host = v;
+                Task::none()
+            }
+            Message::ServerFormPortChanged(v) => {
+                self.dialogs.server_form_port = v;
+                Task::none()
+            }
+            Message::ServerFormUserChanged(v) => {
+                self.dialogs.server_form_user = v;
+                Task::none()
+            }
+            Message::ServerFormIdentityChanged(v) => {
+                self.dialogs.server_form_identity = v;
+                Task::none()
+            }
+
+            Message::ConnectWorkspace(_server_uuid, env) => {
+                // Delegate to existing SwitchEnvironment logic
+                self.update(Message::SwitchEnvironment(env))
+            }
+
+            Message::DisconnectWorkspace(_server_uuid, _env) => {
+                self.update(Message::DisconnectServer)
+            }
+
+            Message::OpenWorkspace(_server_uuid, _env) => {
+                // Focus first session window
+                if let Some((&id, _)) = self
+                    .windows
+                    .iter()
+                    .find(|(_, w)| w.kind == super::WindowKind::Session)
+                {
+                    self.focused_window = Some(id);
+                }
+                Task::none()
+            }
+
+            Message::ShowNewWorkspace(server_uuid) => {
+                self.dialogs.show_new_workspace = Some(server_uuid);
+                self.dialogs.new_workspace_input.clear();
+                Task::none()
+            }
+
+            Message::NewWorkspaceInputChanged(v) => {
+                self.dialogs.new_workspace_input = v;
+                Task::none()
+            }
+
+            Message::ConfirmNewWorkspace => {
+                self.dialogs.show_new_workspace = None;
+                let name = std::mem::take(&mut self.dialogs.new_workspace_input);
+                if !name.trim().is_empty() {
+                    self.dialogs.new_env_input = name;
+                    return self.update(Message::ConfirmNewEnv);
+                }
+                Task::none()
+            }
+
+            Message::CancelNewWorkspace => {
+                self.dialogs.show_new_workspace = None;
+                Task::none()
+            }
+
+            Message::ShowRenameWorkspace(_server_uuid, env) => {
+                self.dialogs.show_workspace_rename = Some((_server_uuid, env.clone()));
+                self.dialogs.workspace_rename_input = env;
+                Task::none()
+            }
+
+            Message::RenameWorkspaceInputChanged(v) => {
+                self.dialogs.workspace_rename_input = v;
+                Task::none()
+            }
+
+            Message::ConfirmRenameWorkspace => {
+                if let Some((_server_uuid, old_name)) = self.dialogs.show_workspace_rename.take() {
+                    let new_name = std::mem::take(&mut self.dialogs.workspace_rename_input);
+                    if !new_name.trim().is_empty() {
+                        self.dialogs.rename_env_target = Some(old_name);
+                        self.dialogs.rename_env_input = new_name;
+                        return self.update(Message::ConfirmRenameEnv);
+                    }
+                }
+                Task::none()
+            }
+
+            Message::CancelRenameWorkspace => {
+                self.dialogs.show_workspace_rename = None;
+                Task::none()
+            }
+
+            Message::ShowDeleteWorkspace(_server_uuid, env) => {
+                self.dialogs.show_workspace_delete = Some((_server_uuid, env.clone()));
+                self.dialogs.delete_env_target = Some(env);
+                Task::none()
+            }
+
+            Message::ConfirmDeleteWorkspace => {
+                self.dialogs.show_workspace_delete = None;
+                self.update(Message::ConfirmDeleteEnv)
+            }
+
+            Message::CancelDeleteWorkspace => {
+                self.dialogs.show_workspace_delete = None;
+                self.dialogs.delete_env_target = None;
+                Task::none()
+            }
+
+            Message::WorkspaceSessionsFound(_uuid, _env, result) => {
+                // Delegate to existing ExistingSessionsFound
+                self.update(Message::ExistingSessionsFound(result))
+            }
+
+            _ => Task::none(),
+        }
+    }
+
+    /// Build a `SavedServer` from the current form fields.
+    fn build_server_from_form(&self) -> shellkeep::state::server::SavedServer {
+        use shellkeep::state::server::SavedServer;
+        // If editing an existing server, reuse its UUID
+        let uuid = self
+            .dialogs
+            .show_server_form
+            .as_ref()
+            .and_then(|opt| opt.as_ref())
+            .and_then(|u| self.saved_servers.find_by_uuid(u))
+            .map(|s| s.uuid.clone())
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        SavedServer {
+            uuid,
+            name: if self.dialogs.server_form_name.trim().is_empty() {
+                None
+            } else {
+                Some(self.dialogs.server_form_name.clone())
+            },
+            host: self.dialogs.server_form_host.clone(),
+            user: self.dialogs.server_form_user.clone(),
+            port: if self.dialogs.server_form_port.trim().is_empty() {
+                "22".to_string()
+            } else {
+                self.dialogs.server_form_port.clone()
+            },
+            identity_file: if self.dialogs.server_form_identity.trim().is_empty() {
+                None
+            } else {
+                Some(self.dialogs.server_form_identity.clone())
+            },
+            last_connected: None,
         }
     }
 }

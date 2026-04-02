@@ -23,7 +23,9 @@ use iced_term::{RegexSearch, SearchMatch};
 use shellkeep::config::Config;
 use shellkeep::ssh::manager::{ConnKey, ConnectionManager};
 use shellkeep::state::history;
+#[allow(deprecated)] // legacy type kept for migration
 use shellkeep::state::recent::RecentConnections;
+use shellkeep::state::server::SavedServers;
 use shellkeep::state::state_file::{
     DeviceState, Environment, SharedState, TabState, WindowGeometry,
 };
@@ -80,6 +82,34 @@ pub(crate) struct DialogState {
     pub(crate) lock_target_tab: Option<TabId>,
     pub(crate) pending_close_tabs: Option<Vec<usize>>,
     pub(crate) show_shortcuts_dialog: bool,
+    // Phase 6: workspace/server dialog state
+    pub(crate) show_workspace_rename: Option<(String, String)>,
+    pub(crate) workspace_rename_input: String,
+    pub(crate) show_workspace_delete: Option<(String, String)>,
+    pub(crate) show_forget_server: Option<String>,
+    pub(crate) show_server_form: Option<Option<String>>,
+    pub(crate) server_form_name: String,
+    pub(crate) server_form_host: String,
+    pub(crate) server_form_port: String,
+    pub(crate) server_form_user: String,
+    pub(crate) server_form_identity: String,
+    pub(crate) show_new_workspace: Option<String>,
+    pub(crate) new_workspace_input: String,
+}
+
+// ---------------------------------------------------------------------------
+// Active workspace state — Phase 4: multi-workspace support
+// ---------------------------------------------------------------------------
+
+/// An active workspace connection.
+#[allow(dead_code)]
+pub(crate) struct ActiveWorkspace {
+    pub(crate) server_uuid: String,
+    pub(crate) environment: String,
+    pub(crate) conn_params: ConnParams,
+    pub(crate) sessions_listed: bool,
+    pub(crate) server_state_loaded: bool,
+    pub(crate) pending_server_sessions: Option<Vec<String>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -108,6 +138,10 @@ pub(crate) struct AppWindow {
     pub(crate) title: String,
     /// User-visible window name (e.g. "user@host - Window 1")
     pub(crate) name: String,
+    /// Which workspace environment this window shows (None for control window)
+    pub(crate) workspace_env: Option<String>,
+    /// Which saved server this window is connected to (None for control window)
+    pub(crate) server_uuid: Option<String>,
     /// Whether the welcome screen is shown in this window
     pub(crate) show_welcome: bool,
     pub(crate) renaming_tab: Option<usize>,
@@ -134,6 +168,8 @@ impl AppWindow {
             active_tab: 0,
             title: "shellkeep".to_string(),
             name: String::new(),
+            workspace_env: None,
+            server_uuid: None,
             show_welcome: false,
             renaming_tab: None,
             context_menu: None,
@@ -157,6 +193,8 @@ impl AppWindow {
             active_tab: 0,
             title: "shellkeep".to_string(),
             name: "shellkeep".to_string(),
+            workspace_env: None,
+            server_uuid: None,
             show_welcome: true,
             renaming_tab: None,
             context_menu: None,
@@ -229,6 +267,7 @@ pub(crate) struct ShellKeep {
     pub(crate) welcome: WelcomeState,
 
     pub(crate) config: Config,
+    #[allow(deprecated)]
     pub(crate) recent: RecentConnections,
     pub(crate) error: Option<String>,
 
@@ -251,6 +290,13 @@ pub(crate) struct ShellKeep {
 
     /// Hidden session UUIDs (per-device, not restored as tabs on connect)
     pub(crate) hidden_sessions: Vec<String>,
+
+    /// Multi-workspace: active workspace connections
+    pub(crate) active_workspaces: Vec<ActiveWorkspace>,
+    /// Multi-workspace: state syncers keyed by connection
+    pub(crate) state_syncers: HashMap<ConnKey, Arc<ssh::sftp::StateSyncer>>,
+    /// Locally saved servers (replaces RecentConnections for new UI)
+    pub(crate) saved_servers: SavedServers,
 
     /// Whether the connect form is shown in the control window
     pub(crate) show_connect_form: bool,
@@ -288,7 +334,9 @@ impl ShellKeep {
     ) -> (Self, Task<Message>) {
         let username = crate::cli::default_ssh_username();
         let config = Config::load();
+        #[allow(deprecated)]
         let recent = RecentConnections::load();
+        let saved_servers = SavedServers::load();
         let default_port = config.ssh.default_port.to_string();
 
         // Phase 5: open the control window on startup
@@ -318,6 +366,9 @@ impl ShellKeep {
             client_id: shellkeep::state::client_id::resolve(config.general.client_id.as_deref()),
             current_environment: "Default".to_string(),
             hidden_sessions: Vec::new(),
+            active_workspaces: Vec::new(),
+            state_syncers: HashMap::new(),
+            saved_servers,
             show_connect_form: false,
             confirm_close_server: false,
             renaming_window: None,
@@ -372,6 +423,18 @@ impl ShellKeep {
                 lock_target_tab: None,
                 pending_close_tabs: None,
                 show_shortcuts_dialog: false,
+                show_workspace_rename: None,
+                workspace_rename_input: String::new(),
+                show_workspace_delete: None,
+                show_forget_server: None,
+                show_server_form: None,
+                server_form_name: String::new(),
+                server_form_host: String::new(),
+                server_form_port: String::new(),
+                server_form_user: String::new(),
+                server_form_identity: String::new(),
+                show_new_workspace: None,
+                new_workspace_input: String::new(),
             },
             state_syncer: None,
             cached_shared_state: None,
@@ -535,6 +598,85 @@ impl ShellKeep {
             }
         }
         None
+    }
+
+    // -----------------------------------------------------------------------
+    // Multi-workspace helpers
+    // -----------------------------------------------------------------------
+
+    /// Find the active workspace for a server + environment.
+    #[allow(dead_code)]
+    pub(crate) fn find_workspace(&self, server_uuid: &str, env: &str) -> Option<&ActiveWorkspace> {
+        self.active_workspaces
+            .iter()
+            .find(|w| w.server_uuid == server_uuid && w.environment == env)
+    }
+
+    /// Find the active workspace for a server + environment (mutable).
+    #[allow(dead_code)]
+    pub(crate) fn find_workspace_mut(
+        &mut self,
+        server_uuid: &str,
+        env: &str,
+    ) -> Option<&mut ActiveWorkspace> {
+        self.active_workspaces
+            .iter_mut()
+            .find(|w| w.server_uuid == server_uuid && w.environment == env)
+    }
+
+    /// Get the workspace for the currently focused window.
+    #[allow(dead_code)]
+    pub(crate) fn focused_workspace(&self) -> Option<&ActiveWorkspace> {
+        let win_id = self.focused_window?;
+        let win = self.windows.get(&win_id)?;
+        let server_uuid = win.server_uuid.as_ref()?;
+        let env = win.workspace_env.as_ref()?;
+        self.find_workspace(server_uuid, env)
+    }
+
+    /// Get a state syncer for a connection key.
+    #[allow(dead_code)]
+    pub(crate) fn state_syncer_for(&self, key: &ConnKey) -> Option<&Arc<ssh::sftp::StateSyncer>> {
+        self.state_syncers.get(key)
+    }
+
+    /// Get environments discovered for a connected server (from cached_shared_state).
+    #[allow(dead_code)]
+    pub(crate) fn server_environments(&self, _server_uuid: &str) -> Vec<String> {
+        self.cached_shared_state
+            .as_ref()
+            .map(|s| s.environments.keys().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// Check if a server has any active workspaces.
+    #[allow(dead_code)]
+    pub(crate) fn is_server_connected(&self, server_uuid: &str) -> bool {
+        self.active_workspaces
+            .iter()
+            .any(|w| w.server_uuid == server_uuid)
+    }
+
+    /// Get all active workspaces for a server.
+    #[allow(dead_code)]
+    pub(crate) fn workspaces_for_server(&self, server_uuid: &str) -> Vec<&ActiveWorkspace> {
+        self.active_workspaces
+            .iter()
+            .filter(|w| w.server_uuid == server_uuid)
+            .collect()
+    }
+
+    /// Count active (connected) sessions for a workspace.
+    #[allow(dead_code)]
+    pub(crate) fn workspace_session_count(&self, server_uuid: &str, env: &str) -> usize {
+        self.windows
+            .values()
+            .filter(|w| {
+                w.server_uuid.as_deref() == Some(server_uuid)
+                    && w.workspace_env.as_deref() == Some(env)
+            })
+            .map(|w| w.tabs.len())
+            .sum()
     }
 
     // -----------------------------------------------------------------------
@@ -965,6 +1107,7 @@ impl ShellKeep {
             phase,
             password,
             force_lock,
+            workspace: self.current_environment.clone(),
         };
         Task::perform(
             async move {

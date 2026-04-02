@@ -6,7 +6,7 @@
 #
 # Tests the first-connection flow:
 #   - SSH connection to a fresh server (no prior shellkeep state)
-#   - State directory creation (~/.terminal-state/)
+#   - State directory creation (~/.shellkeep/)
 #   - Default environment creation ("Default")
 #   - tmux session creation (new tabs)
 #   - Session renaming
@@ -43,7 +43,7 @@ e2e_start_container "$CONTAINER_SUFFIX"
 
 e2e_section "Fresh server state"
 
-# The Dockerfile creates ~/.terminal-state/ but with no state files.
+# The Dockerfile creates ~/.shellkeep/ but with no state files.
 state_files=$(e2e_ssh_cmd "ls '$E2E_REMOTE_STATE_DIR'/*.json 2>/dev/null | wc -l" || echo "0")
 assert_num_eq "No state files on fresh server" "$state_files" 0
 

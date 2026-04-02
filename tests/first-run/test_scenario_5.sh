@@ -121,7 +121,7 @@ fr_section "Phase 3: Flow aborts at auth — tmux detection never reached"
 # flow order: Connect -> Verify Host Key -> Authenticate -> Check tmux.
 
 # Verify no server-side artifacts were created.
-state_count=$(fr_ssh_cmd_nocheck "ls /home/$FR_SSH_USER/.terminal-state/*.json 2>/dev/null | wc -l" || echo "0")
+state_count=$(fr_ssh_cmd_nocheck "ls /home/$FR_SSH_USER/.shellkeep/*.json 2>/dev/null | wc -l" || echo "0")
 assert_num_eq "No state files created" "$state_count" 0
 
 # Verify tmux is indeed not installed (confirming test setup).
@@ -189,7 +189,7 @@ assert_contains "Server responds" "$alive" "alive-after-failures"
 fr_section "Phase 6: Clean state after failures"
 
 # No orphaned processes, no stale files.
-state_count=$(fr_ssh_cmd_nocheck "ls /home/$FR_SSH_USER/.terminal-state/*.json 2>/dev/null | wc -l" || echo "0")
+state_count=$(fr_ssh_cmd_nocheck "ls /home/$FR_SSH_USER/.shellkeep/*.json 2>/dev/null | wc -l" || echo "0")
 assert_num_eq "Still no state files after repeated failures" "$state_count" 0
 
 # No tmux sessions (tmux not installed).

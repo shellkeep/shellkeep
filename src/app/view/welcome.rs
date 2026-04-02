@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: 2026 shellkeep contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+// TODO: migrate from RecentConnections to SavedServers, then remove this allow
+#![allow(deprecated)]
+
 use crate::ShellKeep;
 use crate::app::Message;
 use crate::app::view::styles;
@@ -214,131 +217,245 @@ impl ShellKeep {
         center(form).into()
     }
 
-    /// Phase 5: render the control window — welcome/connect form + connected servers.
+    /// Phase 6: render the control window — server cards with workspace sub-cards.
     pub(crate) fn view_control_window(&self) -> Element<'_, Message> {
-        let mut items: Vec<Element<'_, Message>> = Vec::new();
+        let text_color = Color::from_rgb8(0xcd, 0xd6, 0xf4);
+        let label_color = Color::from_rgb8(0xa6, 0xad, 0xc8);
 
-        // Small logo header — only show when connected (otherwise the welcome form has the big logo)
-        if self.current_conn.is_some() {
-            let logo_row = row![
-                text("\u{1F41A}").size(24),
-                column![
-                    text("shellkeep")
-                        .size(16)
-                        .color(Color::from_rgb8(0x89, 0xb4, 0xfa)),
-                    text("SSH sessions that survive everything")
-                        .size(10)
-                        .color(Color::from_rgb8(0x6c, 0x70, 0x86)),
-                ]
-                .spacing(2),
-            ]
-            .spacing(8)
-            .align_y(iced::Alignment::Center);
-            items.push(logo_row.into());
-            items.push(Space::new().height(8).into());
+        // Phase 6: if the server form is open, show it full-screen
+        if let Some(ref opt_uuid) = self.dialogs.show_server_form {
+            return self.view_server_form(opt_uuid.as_deref());
         }
 
-        // Show connected servers section if we have an active connection
-        if self.current_conn.is_some() {
-            let label_color = Color::from_rgb8(0xa6, 0xad, 0xc8);
-            let text_color = Color::from_rgb8(0xcd, 0xd6, 0xf4);
+        // If no saved servers AND no active connection, show the original welcome form
+        let has_servers = !self.saved_servers.servers.is_empty();
+        let has_connection = self.current_conn.is_some();
 
-            items.push(text("Connected servers").size(16).color(text_color).into());
+        if !has_servers && !has_connection {
+            let items: Vec<Element<'_, Message>> = vec![
+                self.view_welcome(),
+                Space::new().height(8).into(),
+                button(
+                    text("+ Add server")
+                        .size(13)
+                        .color(Color::from_rgb8(0x89, 0xb4, 0xfa)),
+                )
+                .on_press(Message::ShowServerForm(None))
+                .padding([8, 16])
+                .style(styles::ghost_button_style)
+                .into(),
+            ];
+            let content: Element<'_, Message> = scrollable(
+                container(column(items).spacing(8).padding(16).max_width(420)).width(Length::Fill),
+            )
+            .into();
+            return content;
+        }
 
-            // Gather info about the current connection
-            if let Some(ref conn) = self.current_conn {
-                let server_label =
-                    format!("{}@{}:{}", conn.key.username, conn.key.host, conn.key.port);
-                let session_count = self
-                    .windows
-                    .values()
-                    .filter(|w| w.kind == crate::app::WindowKind::Session)
-                    .flat_map(|w| w.tabs.iter())
-                    .filter(|t| !t.is_dead() && t.terminal.is_some())
-                    .count();
-                let total_count = self
-                    .windows
-                    .values()
-                    .filter(|w| w.kind == crate::app::WindowKind::Session)
-                    .flat_map(|w| w.tabs.iter())
-                    .count();
-                let status_text = if session_count > 0 {
-                    format!(
-                        "{session_count} active session{}",
+        // --- Server card list ---
+        let mut items: Vec<Element<'_, Message>> = Vec::new();
+
+        // Logo header
+        let logo_row = row![
+            text("\u{1F41A}").size(24),
+            column![
+                text("shellkeep")
+                    .size(16)
+                    .color(Color::from_rgb8(0x89, 0xb4, 0xfa)),
+                text("SSH sessions that survive everything")
+                    .size(10)
+                    .color(Color::from_rgb8(0x6c, 0x70, 0x86)),
+            ]
+            .spacing(2),
+        ]
+        .spacing(8)
+        .align_y(iced::Alignment::Center);
+        items.push(logo_row.into());
+        items.push(Space::new().height(8).into());
+
+        // Render each saved server as a card
+        for server in &self.saved_servers.servers {
+            let is_connected = self.is_server_connected(&server.uuid)
+                || self
+                    .current_conn
+                    .as_ref()
+                    .is_some_and(|c| c.key.host == server.host && c.key.username == server.user);
+
+            let status_icon = if is_connected {
+                text("\u{25CF}")
+                    .size(10)
+                    .color(Color::from_rgb8(0xa6, 0xe3, 0xa1))
+            } else {
+                text("\u{25CB}")
+                    .size(10)
+                    .color(Color::from_rgb8(0x6c, 0x70, 0x86))
+            };
+
+            let label = server.display_label();
+            let uuid = server.uuid.clone();
+
+            let mut card_items: Vec<Element<'_, Message>> = Vec::new();
+
+            // Header row: status icon + label
+            card_items.push(
+                row![status_icon, text(label).size(14).color(text_color),]
+                    .spacing(8)
+                    .align_y(iced::Alignment::Center)
+                    .into(),
+            );
+
+            if is_connected {
+                // Show workspace sub-cards for each environment
+                let envs = self.server_environments(&uuid);
+                for env in &envs {
+                    let session_count = self.workspace_session_count(&uuid, env);
+                    let count_text = format!(
+                        "{session_count} session{}",
                         if session_count == 1 { "" } else { "s" }
-                    )
-                } else if total_count > 0 {
-                    "disconnected".to_string()
-                } else {
-                    "connected, no sessions".to_string()
-                };
+                    );
+                    let env_clone = env.clone();
+                    let uuid_clone = uuid.clone();
+                    let uuid_clone2 = uuid.clone();
+                    let env_clone2 = env.clone();
 
-                // Item 6: state sync status
-                let sync_status = if self.state_syncer.is_some() {
-                    "State synced \u{2713}"
-                } else if self.current_conn.is_some() {
-                    "Local only \u{26A0}"
-                } else {
-                    ""
-                };
-
-                let server_card = container(
-                    column![
+                    let workspace_card = container(
                         row![
-                            text("\u{25CF}").size(10).color(if session_count > 0 {
-                                Color::from_rgb8(0xa6, 0xe3, 0xa1)
-                            } else {
-                                Color::from_rgb8(0xf9, 0xe2, 0xaf)
-                            }),
                             column![
-                                text(server_label).size(14).color(text_color),
-                                text(status_text).size(11).color(label_color),
-                                text(sync_status)
-                                    .size(10)
-                                    .color(if self.state_syncer.is_some() {
-                                        Color::from_rgb8(0xa6, 0xe3, 0xa1)
-                                    } else {
-                                        Color::from_rgb8(0xf9, 0xe2, 0xaf)
-                                    }),
+                                text(env.clone()).size(12).color(text_color),
+                                text(count_text).size(10).color(label_color),
                             ]
-                            .spacing(2),
-                        ]
-                        .spacing(8)
-                        .align_y(iced::Alignment::Center),
-                        Space::new().height(8),
-                        // Item 2: disconnect and close buttons
-                        row![
+                            .spacing(2)
+                            .width(Length::Fill),
+                            button(text("Open").size(11).color(text_color))
+                                .on_press(Message::OpenWorkspace(uuid_clone, env_clone,))
+                                .padding([4, 8])
+                                .style(styles::secondary_button_style),
                             button(
                                 text("Disconnect")
-                                    .size(12)
-                                    .color(Color::from_rgb8(0xcd, 0xd6, 0xf4))
+                                    .size(11)
+                                    .color(Color::from_rgb8(0xf3, 0x8b, 0xa8)),
                             )
-                            .on_press(Message::DisconnectServer)
+                            .on_press(Message::DisconnectWorkspace(uuid_clone2, env_clone2,))
+                            .padding([4, 8])
+                            .style(styles::ghost_button_style),
+                        ]
+                        .spacing(6)
+                        .align_y(iced::Alignment::Center)
+                        .padding([6, 8]),
+                    )
+                    .style(|_: &iced::Theme| container::Style {
+                        background: Some(iced::Background::Color(Color::from_rgb8(
+                            0x24, 0x24, 0x36,
+                        ))),
+                        border: iced::Border {
+                            radius: 4.0.into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    });
+                    card_items.push(workspace_card.into());
+                }
+
+                // If no environments listed yet, show status
+                if envs.is_empty() {
+                    let active_sessions = self
+                        .windows
+                        .values()
+                        .filter(|w| w.kind == crate::app::WindowKind::Session)
+                        .flat_map(|w| w.tabs.iter())
+                        .filter(|t| !t.is_dead())
+                        .count();
+                    let status = format!(
+                        "{active_sessions} active session{}",
+                        if active_sessions == 1 { "" } else { "s" }
+                    );
+                    card_items.push(text(status).size(11).color(label_color).into());
+                }
+
+                // Buttons: + New workspace, Disconnect server
+                let uuid_new = uuid.clone();
+                let uuid_disc = uuid.clone();
+                card_items.push(Space::new().height(4).into());
+                card_items.push(
+                    row![
+                        button(
+                            text("+ New workspace")
+                                .size(11)
+                                .color(Color::from_rgb8(0x89, 0xb4, 0xfa))
+                        )
+                        .on_press(Message::ShowNewWorkspace(uuid_new))
+                        .padding([4, 8])
+                        .style(styles::ghost_button_style),
+                        Space::new().width(Length::Fill),
+                        button(
+                            text("Disconnect")
+                                .size(11)
+                                .color(Color::from_rgb8(0xf3, 0x8b, 0xa8))
+                        )
+                        .on_press(Message::DisconnectAllWorkspaces(uuid_disc))
+                        .padding([4, 8])
+                        .style(styles::ghost_button_style),
+                    ]
+                    .into(),
+                );
+            } else {
+                // Disconnected server: show last connected + action buttons
+                if let Some(ts) = server.last_connected {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+                    let ago = now.saturating_sub(ts);
+                    let time_str = i18n::format_relative_time(ago);
+                    card_items.push(
+                        text(format!("Last connected: {time_str}"))
+                            .size(11)
+                            .color(label_color)
+                            .into(),
+                    );
+                }
+
+                let uuid_conn = uuid.clone();
+                let uuid_edit = uuid.clone();
+                let uuid_forget = uuid.clone();
+                card_items.push(Space::new().height(4).into());
+                card_items.push(
+                    row![
+                        button(
+                            text("Connect")
+                                .size(12)
+                                .color(Color::from_rgb8(0x1e, 0x1e, 0x2e))
+                        )
+                        .on_press(Message::ConnectServer(uuid_conn))
+                        .padding([6, 12])
+                        .style(styles::primary_button_style),
+                        button(text("Edit").size(12).color(text_color))
+                            .on_press(Message::EditServer(uuid_edit))
                             .padding([6, 12])
                             .style(styles::secondary_button_style),
-                            button(
-                                text("Close all")
-                                    .size(12)
-                                    .color(Color::from_rgb8(0x1e, 0x1e, 0x2e))
-                            )
-                            .on_press(Message::CloseServer)
-                            .padding([6, 12])
-                            .style(styles::danger_button_style),
-                        ]
-                        .spacing(8),
+                        button(
+                            text("Forget")
+                                .size(12)
+                                .color(Color::from_rgb8(0xf3, 0x8b, 0xa8))
+                        )
+                        .on_press(Message::ForgetServer(uuid_forget))
+                        .padding([6, 12])
+                        .style(styles::ghost_button_style),
                     ]
-                    .spacing(4)
-                    .padding(12),
-                )
-                .width(Length::Fill)
-                .style(styles::server_card_style);
-
-                items.push(server_card.into());
+                    .spacing(8)
+                    .into(),
+                );
             }
 
-            items.push(Space::new().height(16).into());
+            let server_card = container(column(card_items).spacing(4).padding(12))
+                .width(Length::Fill)
+                .style(styles::server_card_style);
+            items.push(server_card.into());
+            items.push(Space::new().height(4).into());
+        }
 
-            // Item 7: collapsible connect form when already connected
+        // Collapsible connect form for quick connections
+        if has_connection {
             let toggle_label = if self.show_connect_form {
                 "Hide connect form"
             } else {
@@ -355,30 +472,40 @@ impl ShellKeep {
                 .style(styles::ghost_button_style)
                 .into(),
             );
-
             if self.show_connect_form {
                 items.push(self.view_welcome());
             }
-        } else {
-            // No connection — show full welcome form
-            items.push(self.view_welcome());
         }
 
-        // Item 2: close-server confirmation overlay
+        // + Add server button
+        items.push(Space::new().height(8).into());
+        items.push(
+            button(
+                text("+ Add server")
+                    .size(13)
+                    .color(Color::from_rgb8(0x89, 0xb4, 0xfa)),
+            )
+            .on_press(Message::ShowServerForm(None))
+            .padding([8, 16])
+            .style(styles::ghost_button_style)
+            .into(),
+        );
+
         let control_content: Element<'_, Message> = scrollable(
             container(column(items).spacing(8).padding(16).max_width(420)).width(Length::Fill),
         )
         .into();
 
+        // Overlay dialogs
         if self.confirm_close_server {
             let dialog = container(
                 column![
                     text("Close all sessions?")
                         .size(18)
-                        .color(Color::from_rgb8(0xcd, 0xd6, 0xf4)),
+                        .color(text_color),
                     text("This will terminate ALL tmux sessions on the server.\nThis cannot be undone.")
                         .size(13)
-                        .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
+                        .color(label_color),
                     Space::new().height(12),
                     row![
                         button(text("Cancel").size(14))
@@ -404,8 +531,312 @@ impl ShellKeep {
             .style(styles::dialog_container_style);
             use iced::widget::{center, stack};
             stack![control_content, center(dialog)].into()
+        } else if self.dialogs.show_forget_server.is_some() {
+            let label = self
+                .dialogs
+                .show_forget_server
+                .as_ref()
+                .and_then(|u| self.saved_servers.find_by_uuid(u))
+                .map(|s| s.display_label())
+                .unwrap_or_else(|| "this server".to_string());
+            let dialog = self.view_forget_server_dialog(&label);
+            use iced::widget::{center, stack};
+            stack![control_content, center(dialog)].into()
+        } else if self.dialogs.show_new_workspace.is_some() {
+            let dialog = self.view_new_workspace_dialog(&self.dialogs.new_workspace_input.clone());
+            use iced::widget::{center, stack};
+            stack![control_content, center(dialog)].into()
+        } else if self.dialogs.show_workspace_rename.is_some() {
+            let env = self
+                .dialogs
+                .show_workspace_rename
+                .as_ref()
+                .map(|(_, e)| e.clone())
+                .unwrap_or_default();
+            let dialog = self
+                .view_workspace_rename_dialog(&env, &self.dialogs.workspace_rename_input.clone());
+            use iced::widget::{center, stack};
+            stack![control_content, center(dialog)].into()
+        } else if self.dialogs.show_workspace_delete.is_some() {
+            let env = self
+                .dialogs
+                .show_workspace_delete
+                .as_ref()
+                .map(|(_, e)| e.clone())
+                .unwrap_or_default();
+            let dialog = self.view_workspace_delete_dialog(&env);
+            use iced::widget::{center, stack};
+            stack![control_content, center(dialog)].into()
         } else {
             control_content
         }
+    }
+
+    /// Phase 6: server add/edit form.
+    fn view_server_form(&self, editing_uuid: Option<&str>) -> Element<'_, Message> {
+        let text_color = Color::from_rgb8(0xcd, 0xd6, 0xf4);
+        let label_color = Color::from_rgb8(0xa6, 0xad, 0xc8);
+
+        let title = if editing_uuid.is_some() {
+            "Edit server"
+        } else {
+            "Add server"
+        };
+
+        let name_field = text_input("Display name (optional)", &self.dialogs.server_form_name)
+            .on_input(Message::ServerFormNameChanged)
+            .size(14)
+            .padding(10);
+
+        let host_field = text_input("hostname or IP", &self.dialogs.server_form_host)
+            .on_input(Message::ServerFormHostChanged)
+            .on_submit(Message::SaveAndConnectServer)
+            .size(14)
+            .padding(10);
+
+        let user_field = text_input("username", &self.dialogs.server_form_user)
+            .on_input(Message::ServerFormUserChanged)
+            .size(14)
+            .padding(10);
+
+        let port_field = text_input("22", &self.dialogs.server_form_port)
+            .on_input(Message::ServerFormPortChanged)
+            .size(14)
+            .padding(10)
+            .width(80);
+
+        let identity_field = text_input(
+            "path to private key (optional)",
+            &self.dialogs.server_form_identity,
+        )
+        .on_input(Message::ServerFormIdentityChanged)
+        .size(14)
+        .padding(10);
+
+        let can_save = !self.dialogs.server_form_host.trim().is_empty();
+
+        let save_btn = if can_save {
+            button(text("Save").size(14).color(text_color))
+                .on_press(Message::SaveServer)
+                .padding([10, 24])
+                .style(styles::secondary_button_style)
+        } else {
+            button(
+                text("Save")
+                    .size(14)
+                    .color(Color::from_rgb8(0x6c, 0x70, 0x86)),
+            )
+            .padding([10, 24])
+            .style(styles::secondary_button_style)
+        };
+
+        let connect_btn = if can_save {
+            button(
+                text("Save & Connect")
+                    .size(14)
+                    .color(Color::from_rgb8(0x1e, 0x1e, 0x2e)),
+            )
+            .on_press(Message::SaveAndConnectServer)
+            .padding([10, 24])
+            .style(styles::primary_button_style)
+        } else {
+            button(
+                text("Save & Connect")
+                    .size(14)
+                    .color(Color::from_rgb8(0x6c, 0x70, 0x86)),
+            )
+            .padding([10, 24])
+            .style(styles::secondary_button_style)
+        };
+
+        let form = column![
+            // Back button
+            button(
+                text("\u{2190} Back")
+                    .size(13)
+                    .color(Color::from_rgb8(0x89, 0xb4, 0xfa))
+            )
+            .on_press(Message::BackToServerList)
+            .padding([4, 8])
+            .style(styles::ghost_button_style),
+            Space::new().height(8),
+            text(title).size(20).color(text_color),
+            Space::new().height(12),
+            column![text("Name").size(12).color(label_color), name_field].spacing(4),
+            column![text("Host").size(12).color(label_color), host_field].spacing(4),
+            row![
+                column![text("Username").size(12).color(label_color), user_field]
+                    .spacing(4)
+                    .width(Length::Fill),
+                column![text("Port").size(12).color(label_color), port_field]
+                    .spacing(4)
+                    .width(80),
+            ]
+            .spacing(8),
+            column![
+                text("Identity file").size(12).color(label_color),
+                identity_field
+            ]
+            .spacing(4),
+            Space::new().height(16),
+            row![save_btn, connect_btn].spacing(8),
+        ]
+        .spacing(8)
+        .padding(24)
+        .max_width(420);
+
+        scrollable(center(form).width(Length::Fill)).into()
+    }
+
+    /// Phase 6: forget-server confirmation dialog.
+    fn view_forget_server_dialog(&self, label: &str) -> Element<'_, Message> {
+        use iced::widget::container;
+        container(
+            column![
+                text("Forget server?")
+                    .size(18)
+                    .color(Color::from_rgb8(0xcd, 0xd6, 0xf4)),
+                text(format!("Remove \"{label}\" from saved servers?"))
+                    .size(13)
+                    .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
+                text("This does not affect sessions on the server.")
+                    .size(12)
+                    .color(Color::from_rgb8(0x6c, 0x70, 0x86)),
+                Space::new().height(12),
+                row![
+                    button(text("Cancel").size(13))
+                        .on_press(Message::CancelForgetServer)
+                        .padding([8, 16])
+                        .style(styles::secondary_button_style),
+                    Space::new().width(Length::Fill),
+                    button(
+                        text("Forget")
+                            .size(13)
+                            .color(Color::from_rgb8(0x1e, 0x1e, 0x2e))
+                    )
+                    .on_press(Message::ConfirmForgetServer)
+                    .padding([8, 16])
+                    .style(styles::danger_button_style),
+                ]
+                .width(Length::Fill),
+            ]
+            .spacing(8)
+            .padding(24)
+            .width(360),
+        )
+        .style(styles::dialog_container_style)
+        .into()
+    }
+
+    /// Phase 6: new workspace dialog.
+    fn view_new_workspace_dialog(&self, input: &str) -> Element<'_, Message> {
+        use iced::widget::container;
+        container(
+            column![
+                text("New workspace")
+                    .size(18)
+                    .color(Color::from_rgb8(0xcd, 0xd6, 0xf4)),
+                text("Create a new workspace environment on this server.")
+                    .size(13)
+                    .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
+                text_input("Workspace name", input)
+                    .on_input(Message::NewWorkspaceInputChanged)
+                    .on_submit(Message::ConfirmNewWorkspace)
+                    .size(13)
+                    .padding(8),
+                Space::new().height(8),
+                row![
+                    button(text("Cancel").size(13))
+                        .on_press(Message::CancelNewWorkspace)
+                        .padding([8, 16])
+                        .style(styles::secondary_button_style),
+                    Space::new().width(Length::Fill),
+                    button(text("Create").size(13))
+                        .on_press(Message::ConfirmNewWorkspace)
+                        .padding([8, 16])
+                        .style(styles::primary_button_style),
+                ]
+                .width(Length::Fill),
+            ]
+            .spacing(8)
+            .padding(24)
+            .width(360),
+        )
+        .style(styles::dialog_container_style)
+        .into()
+    }
+
+    /// Phase 6: rename workspace dialog.
+    fn view_workspace_rename_dialog(&self, env: &str, input: &str) -> Element<'_, Message> {
+        use iced::widget::container;
+        container(
+            column![
+                text("Rename workspace")
+                    .size(18)
+                    .color(Color::from_rgb8(0xcd, 0xd6, 0xf4)),
+                text(format!("Renaming \"{env}\""))
+                    .size(13)
+                    .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
+                text_input("New name", input)
+                    .on_input(Message::RenameWorkspaceInputChanged)
+                    .on_submit(Message::ConfirmRenameWorkspace)
+                    .size(13)
+                    .padding(8),
+                Space::new().height(8),
+                row![
+                    button(text("Cancel").size(13))
+                        .on_press(Message::CancelRenameWorkspace)
+                        .padding([8, 16])
+                        .style(styles::secondary_button_style),
+                    Space::new().width(Length::Fill),
+                    button(text("Rename").size(13))
+                        .on_press(Message::ConfirmRenameWorkspace)
+                        .padding([8, 16])
+                        .style(styles::primary_button_style),
+                ]
+                .width(Length::Fill),
+            ]
+            .spacing(8)
+            .padding(24)
+            .width(360),
+        )
+        .style(styles::dialog_container_style)
+        .into()
+    }
+
+    /// Phase 6: delete workspace confirmation dialog.
+    fn view_workspace_delete_dialog(&self, env: &str) -> Element<'_, Message> {
+        use iced::widget::container;
+        container(
+            column![
+                text("Delete workspace?")
+                    .size(18)
+                    .color(Color::from_rgb8(0xcd, 0xd6, 0xf4)),
+                text(format!("Delete workspace \"{env}\"?"))
+                    .size(13)
+                    .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
+                text("Sessions in this workspace will be terminated.")
+                    .size(12)
+                    .color(Color::from_rgb8(0xf9, 0xe2, 0xaf)),
+                Space::new().height(8),
+                row![
+                    button(text("Cancel").size(13))
+                        .on_press(Message::CancelDeleteWorkspace)
+                        .padding([8, 16])
+                        .style(styles::secondary_button_style),
+                    Space::new().width(Length::Fill),
+                    button(text("Delete").size(13))
+                        .on_press(Message::ConfirmDeleteWorkspace)
+                        .padding([8, 16])
+                        .style(styles::danger_button_style),
+                ]
+                .width(Length::Fill),
+            ]
+            .spacing(8)
+            .padding(24)
+            .width(360),
+        )
+        .style(styles::dialog_container_style)
+        .into()
     }
 }

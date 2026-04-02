@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 
 const MAX_RECENT: usize = 50;
 
+#[deprecated(since = "0.3.0", note = "Use state::server::SavedServers instead")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecentConnection {
     pub label: String,
@@ -31,11 +32,14 @@ pub struct RecentConnection {
     pub host_key_fingerprint: Option<String>,
 }
 
+#[deprecated(since = "0.3.0", note = "Use state::server::SavedServers instead")]
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RecentConnections {
+    #[allow(deprecated)]
     pub connections: Vec<RecentConnection>,
 }
 
+#[allow(deprecated)] // impl on deprecated type, needed for migration
 impl RecentConnections {
     /// Load recent connections from disk.
     pub fn load() -> Self {
@@ -89,6 +93,7 @@ impl RecentConnections {
 }
 
 #[cfg(test)]
+#[allow(deprecated)] // tests exercise deprecated types kept for migration
 mod tests {
     use super::*;
 

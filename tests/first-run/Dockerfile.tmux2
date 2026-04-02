@@ -38,9 +38,9 @@ RUN mv /usr/bin/tmux /usr/bin/tmux.real && \
     chmod +x /usr/bin/tmux
 
 # Create state directory.
-RUN mkdir -p /home/testuser/.terminal-state && \
-    chown -R testuser:testuser /home/testuser/.terminal-state && \
-    chmod 700 /home/testuser/.terminal-state
+RUN mkdir -p /home/testuser/.shellkeep && \
+    chown -R testuser:testuser /home/testuser/.shellkeep && \
+    chmod 700 /home/testuser/.shellkeep
 
 EXPOSE 22
 CMD ["/usr/sbin/sshd", "-D", "-e"]

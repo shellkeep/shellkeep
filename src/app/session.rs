@@ -132,6 +132,8 @@ pub(crate) struct EstablishParams {
     pub password: Option<String>,
     /// If true, release the lock before acquiring it (lock takeover).
     pub force_lock: bool,
+    /// Workspace (environment) name for per-workspace lock.
+    pub workspace: String,
 }
 
 /// Establish an SSH session: connect, acquire lock, create tmux session, open PTY channel.
@@ -231,12 +233,13 @@ pub(crate) async fn establish_ssh_session(
     // If force_lock, release the existing lock first (lock takeover)
     if params.force_lock {
         let h = handle_arc.lock().await;
-        ssh::lock::release_lock(&h).await?;
+        ssh::lock::release_lock(&h, &params.workspace).await?;
     }
 
     {
         let h = handle_arc.lock().await;
-        ssh::lock::acquire_lock(&h, &params.client_id, keepalive_timeout).await?;
+        ssh::lock::acquire_lock(&h, &params.client_id, keepalive_timeout, &params.workspace)
+            .await?;
     }
 
     // FR-RECONNECT-03: verify tmux session exists before reattaching, create if needed

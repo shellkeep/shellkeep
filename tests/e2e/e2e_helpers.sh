@@ -37,7 +37,7 @@ E2E_SSH_PASS="${E2E_SSH_PASS:-testpass}"
 E2E_SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
 
 # State directory on the remote server.
-E2E_REMOTE_STATE_DIR="/home/testuser/.terminal-state"
+E2E_REMOTE_STATE_DIR="/home/testuser/.shellkeep"
 
 # ---- Logging -------------------------------------------------------------- #
 

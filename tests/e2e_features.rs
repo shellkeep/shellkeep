@@ -71,18 +71,24 @@ async fn test_lock_acquire_release() {
     let handle = connect().await;
     let client_id = "e2e-lock-test";
 
+    let workspace = "Default";
+
     // Clean up any existing lock
-    let _ = exec(&handle, "tmux kill-session -t shellkeep-lock 2>/dev/null").await;
+    let _ = exec(
+        &handle,
+        "tmux kill-session -t shellkeep-lock-Default 2>/dev/null",
+    )
+    .await;
 
     // Acquire lock
-    shellkeep::ssh::lock::acquire_lock(&handle, client_id, Some(15))
+    shellkeep::ssh::lock::acquire_lock(&handle, client_id, Some(15), workspace)
         .await
         .expect("failed to acquire lock");
 
     // Verify lock session exists
     let check = exec(
         &handle,
-        "tmux has-session -t shellkeep-lock 2>/dev/null && echo EXISTS",
+        "tmux has-session -t shellkeep-lock-Default 2>/dev/null && echo EXISTS",
     )
     .await;
     assert!(check.contains("EXISTS"), "lock session not found");
@@ -90,7 +96,7 @@ async fn test_lock_acquire_release() {
     // Verify env vars
     let env = exec(
         &handle,
-        "tmux show-environment -t shellkeep-lock 2>/dev/null",
+        "tmux show-environment -t shellkeep-lock-Default 2>/dev/null",
     )
     .await;
     assert!(
@@ -99,14 +105,14 @@ async fn test_lock_acquire_release() {
     );
 
     // Release lock
-    shellkeep::ssh::lock::release_lock(&handle)
+    shellkeep::ssh::lock::release_lock(&handle, workspace)
         .await
         .expect("failed to release lock");
 
     // Verify gone
     let check = exec(
         &handle,
-        "tmux has-session -t shellkeep-lock 2>/dev/null && echo EXISTS || echo GONE",
+        "tmux has-session -t shellkeep-lock-Default 2>/dev/null && echo EXISTS || echo GONE",
     )
     .await;
     assert!(
@@ -121,19 +127,27 @@ async fn test_lock_heartbeat() {
     let handle = connect().await;
     let client_id = "e2e-heartbeat-test";
 
-    let _ = exec(&handle, "tmux kill-session -t shellkeep-lock 2>/dev/null").await;
+    let workspace = "Default";
 
-    shellkeep::ssh::lock::acquire_lock(&handle, client_id, Some(15))
+    let _ = exec(
+        &handle,
+        "tmux kill-session -t shellkeep-lock-Default 2>/dev/null",
+    )
+    .await;
+
+    shellkeep::ssh::lock::acquire_lock(&handle, client_id, Some(15), workspace)
         .await
         .expect("acquire failed");
 
     // Heartbeat should succeed
-    shellkeep::ssh::lock::heartbeat(&handle)
+    shellkeep::ssh::lock::heartbeat(&handle, workspace)
         .await
         .expect("heartbeat failed");
 
     // Cleanup
-    shellkeep::ssh::lock::release_lock(&handle).await.ok();
+    shellkeep::ssh::lock::release_lock(&handle, workspace)
+        .await
+        .ok();
 }
 
 // =========================================================================

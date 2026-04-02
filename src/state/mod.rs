@@ -8,4 +8,5 @@ pub mod environment;
 pub mod history;
 pub mod permissions;
 pub mod recent;
+pub mod server;
 pub mod state_file;

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 shellkeep contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! FR-ENV-01: environment management — CRUD operations for named session groupings.
+//! FR-ENV-01: workspace management — CRUD operations for named groups of windows/sessions per server.
 
 use super::state_file::{Environment, SharedState};
 use crate::error::StateError;

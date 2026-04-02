@@ -4,11 +4,11 @@
 //! State file: persisted window/tab layout, split into shared and per-device.
 //!
 //! Shared state (environments, tabs) is stored on server at
-//! `~/.terminal-state/shared.json` and locally at
+//! `~/.shellkeep/shared.json` and locally at
 //! `$XDG_DATA_HOME/shellkeep/cache/servers/<fingerprint>/shared.json`.
 //!
 //! Per-device state (geometry, hidden sessions) is stored on server at
-//! `~/.terminal-state/clients/<client-id>.json` and locally at
+//! `~/.shellkeep/clients/<client-id>.json` and locally at
 //! `$XDG_DATA_HOME/shellkeep/cache/servers/<fingerprint>/<client-id>.json`.
 
 use std::collections::{HashMap, HashSet};

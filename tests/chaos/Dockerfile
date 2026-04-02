@@ -51,11 +51,11 @@ RUN sed -i 's/^#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh
 RUN useradd -m -s /bin/bash testuser && \
     echo 'testuser:testpass' | chpasswd
 
-# Create .terminal-state directory structure for the test user.
-RUN mkdir -p /home/testuser/.terminal-state/history && \
-    mkdir -p /home/testuser/.terminal-state/state && \
-    chown -R testuser:testuser /home/testuser/.terminal-state && \
-    chmod 700 /home/testuser/.terminal-state
+# Create .shellkeep directory structure for the test user.
+RUN mkdir -p /home/testuser/.shellkeep/history && \
+    mkdir -p /home/testuser/.shellkeep/state && \
+    chown -R testuser:testuser /home/testuser/.shellkeep && \
+    chmod 700 /home/testuser/.shellkeep
 
 # Verify tmux and tc are installed.
 RUN tmux -V && tc -Version && iptables --version
