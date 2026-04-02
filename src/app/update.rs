@@ -663,7 +663,10 @@ impl ShellKeep {
     /// Try to run reconciliation if both server sessions and server state are available.
     fn try_reconcile_pending(&mut self) -> Task<Message> {
         if let Some(sessions) = self.pending_server_sessions.take() {
-            tracing::info!("running deferred reconciliation with {} server sessions", sessions.len());
+            tracing::info!(
+                "running deferred reconciliation with {} server sessions",
+                sessions.len()
+            );
             return self.reconcile_sessions(sessions);
         }
         Task::none()
@@ -2779,8 +2782,11 @@ impl ShellKeep {
                     Err(e) => {
                         tracing::warn!("failed to read server state: {e}");
                         // Set empty state so reconciliation can still proceed
-                        self.cached_shared_state =
-                            Some(self.cached_shared_state.take().unwrap_or_else(SharedState::new));
+                        self.cached_shared_state = Some(
+                            self.cached_shared_state
+                                .take()
+                                .unwrap_or_else(SharedState::new),
+                        );
                     }
                 }
                 self.server_state_loaded = true;

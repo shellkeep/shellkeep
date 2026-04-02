@@ -284,7 +284,6 @@ impl StateSyncer {
     }
 
     async fn write_remote_file(&self, path: &str, content: &str) -> Result<(), SshError> {
-
         match &self.transport {
             Transport::Sftp(sftp) => write_file_atomic(sftp, path, content.as_bytes()).await,
             Transport::Shell => {
@@ -308,5 +307,4 @@ mod tests {
     fn remote_clients_dir_constant() {
         assert_eq!(REMOTE_CLIENTS_DIR, "clients");
     }
-
 }
