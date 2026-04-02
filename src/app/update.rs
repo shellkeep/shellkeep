@@ -429,6 +429,25 @@ impl ShellKeep {
             tracing::warn!("failed to list existing sessions: {e}");
         }
         if let Ok(server_sessions) = result {
+            // If server state hasn't been loaded yet, stash the session list
+            // and wait — reconciliation runs when ServerStateLoaded arrives.
+            // This covers both cases: syncer not ready yet, or syncer ready but
+            // state read still in flight.
+            if !self.server_state_loaded {
+                tracing::info!(
+                    "server sessions found but state not loaded yet, deferring reconciliation ({} sessions)",
+                    server_sessions.len()
+                );
+                self.pending_server_sessions = Some(server_sessions);
+                return Task::none();
+            }
+            return self.reconcile_sessions(server_sessions);
+        }
+        Task::none()
+    }
+
+    fn reconcile_sessions(&mut self, server_sessions: Vec<String>) -> Task<Message> {
+        {
             let shared_opt = self.cached_shared_state.clone();
             let device_opt = self.cached_device_state.clone();
             let saved_state = shared_opt;
@@ -637,6 +656,15 @@ impl ShellKeep {
             if !tasks.is_empty() {
                 return Task::batch(tasks);
             }
+        }
+        Task::none()
+    }
+
+    /// Try to run reconciliation if both server sessions and server state are available.
+    fn try_reconcile_pending(&mut self) -> Task<Message> {
+        if let Some(sessions) = self.pending_server_sessions.take() {
+            tracing::info!("running deferred reconciliation with {} server sessions", sessions.len());
+            return self.reconcile_sessions(sessions);
         }
         Task::none()
     }
@@ -2724,10 +2752,16 @@ impl ShellKeep {
                                     );
                                     self.cached_shared_state = Some(state);
                                 }
-                                Err(e) => tracing::warn!("corrupt server shared state: {e}"),
+                                Err(e) => {
+                                    tracing::warn!("corrupt server shared state: {e}");
+                                    // Set empty state so reconciliation can proceed
+                                    self.cached_shared_state = Some(SharedState::new());
+                                }
                             }
                         } else {
-                            tracing::debug!("no server shared state found");
+                            tracing::info!("no server shared state found (first connection)");
+                            // First connection — set empty state so reconciliation proceeds
+                            self.cached_shared_state = Some(SharedState::new());
                         }
                         if let Some(json) = device_json {
                             match serde_json::from_str::<DeviceState>(&json) {
@@ -2742,13 +2776,22 @@ impl ShellKeep {
                             }
                         }
                     }
-                    Err(e) => tracing::warn!("failed to read server state: {e}"),
+                    Err(e) => {
+                        tracing::warn!("failed to read server state: {e}");
+                        // Set empty state so reconciliation can still proceed
+                        self.cached_shared_state =
+                            Some(self.cached_shared_state.take().unwrap_or_else(SharedState::new));
+                    }
                 }
-                // Flush current state to server — any tabs created before the
-                // syncer was ready now get persisted for the first time.
+                self.server_state_loaded = true;
+                // Run deferred reconciliation FIRST (before flush_state, which
+                // would overwrite cached_shared_state with current tabs).
+                let reconcile_task = self.try_reconcile_pending();
+                // Now flush — after reconciliation, the tab list reflects the
+                // restored sessions and gets written to server correctly.
                 self.state_dirty = true;
                 self.flush_state();
-                Task::none()
+                reconcile_task
             }
 
             _ => Task::none(),

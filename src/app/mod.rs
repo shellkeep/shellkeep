@@ -214,6 +214,11 @@ pub(crate) struct ShellKeep {
     pub(crate) conn_manager: Arc<Mutex<ConnectionManager>>,
     /// Whether we've already listed existing sessions after first connect
     pub(crate) sessions_listed: bool,
+    /// Tmux sessions found on server, waiting for server state to be loaded
+    /// before reconciliation can run.
+    pub(crate) pending_server_sessions: Option<Vec<String>>,
+    /// Whether server state has been loaded at least once this session.
+    pub(crate) server_state_loaded: bool,
     /// Debounce: time of last state flush
     pub(crate) last_state_save: Option<std::time::Instant>,
     /// Debounce: state has unsaved changes
@@ -318,6 +323,8 @@ impl ShellKeep {
             window_counter: 0,
             conn_manager: Arc::new(Mutex::new(ConnectionManager::new())),
             sessions_listed: false,
+            pending_server_sessions: None,
+            server_state_loaded: false,
             last_state_save: None,
             state_dirty: false,
             welcome: WelcomeState {
