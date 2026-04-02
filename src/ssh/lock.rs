@@ -113,13 +113,19 @@ pub async fn acquire_lock(
 
     // Check if lock already exists
     if let Some(existing) = check_lock(handle, client_id, workspace).await? {
-        // FR-LOCK-06: same host + PID → renew silently
-        if existing.hostname == hostname && existing.pid == pid {
+        // FR-LOCK-06: same client_id → take over silently (same device reconnecting)
+        if existing.client_id == client_id {
+            tracing::info!(
+                "lock held by same client_id ({}), taking over (pid {} → {})",
+                client_id,
+                existing.pid,
+                pid
+            );
             return set_lock_env(handle, &lock_name, client_id, &hostname, pid, version, &now)
                 .await;
         }
 
-        // FR-LOCK-07: orphan detection
+        // FR-LOCK-07: orphan detection (different client)
         let timeout = keepalive_timeout.unwrap_or(DEFAULT_KEEPALIVE_TIMEOUT);
         if is_orphaned(&existing, timeout) {
             tracing::info!(
