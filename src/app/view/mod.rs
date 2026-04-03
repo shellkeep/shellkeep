@@ -371,12 +371,14 @@ impl ShellKeep {
             stack![
                 column![tab_bar, content, status_bar],
                 dismiss,
-                container(tab_menu).padding(iced::Padding {
-                    top: 28.0,
-                    right: 0.0,
-                    bottom: 0.0,
-                    left: ctx_x,
-                }),
+                container(container(tab_menu).width(Length::Shrink))
+                    .width(Length::Fill)
+                    .padding(iced::Padding {
+                        top: 28.0,
+                        right: 0.0,
+                        bottom: 0.0,
+                        left: ctx_x,
+                    }),
             ]
             .into()
         } else if let Some((x, y)) = win.context_menu {
