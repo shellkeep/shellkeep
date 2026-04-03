@@ -45,10 +45,10 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
             libxkbcommon-dev libwayland-dev libvulkan-dev \
-            libfontconfig1-dev
+            libfontconfig1-dev libayatana-appindicator3-dev
 
       - name: Build
-        run: cargo build --release
+        run: cargo build --release --features tray
 
       - name: Package (Unix)
         if: runner.os != 'Windows'
