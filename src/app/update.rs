@@ -1782,15 +1782,25 @@ impl ShellKeep {
                     && !new_name.is_empty()
                     && new_name != *old_name
                 {
-                    if let Some(entry) = self.dialogs.env_list.iter_mut().find(|e| *e == old_name) {
+                    let old_name = old_name.clone();
+                    // Rename in the display list
+                    if let Some(entry) = self.dialogs.env_list.iter_mut().find(|e| **e == old_name)
+                    {
                         *entry = new_name.clone();
                     }
                     self.dialogs.env_list.sort();
-                    if self.current_environment == *old_name {
+                    // Rename in cached shared state (the authoritative source)
+                    if let Some(ref mut state) = self.cached_shared_state {
+                        if let Some(mut env) = state.environments.remove(&old_name) {
+                            env.name = new_name.clone();
+                            state.environments.insert(new_name.clone(), env);
+                        }
+                    }
+                    if self.current_environment == old_name {
                         self.current_environment = new_name.clone();
                     }
                     self.toast = Some((
-                        format!("Environment renamed to \"{new_name}\""),
+                        format!("Workspace renamed to \"{new_name}\""),
                         std::time::Instant::now(),
                     ));
                     self.state_dirty = true;
