@@ -1666,10 +1666,6 @@ impl ShellKeep {
                             name: win.name,
                             server_uuid: win.server_uuid,
                             workspace_env: win.workspace_env,
-                            width: win.window_width,
-                            height: win.window_height,
-                            x: win.window_x,
-                            y: win.window_y,
                             tabs: hidden_tabs,
                         });
                     }
@@ -3665,14 +3661,26 @@ impl ShellKeep {
                         self.hidden_sessions.retain(|u| u != &ht.session_uuid);
                     }
 
-                    // Open a new OS window with saved geometry
+                    // FR-SESSION-13a: geometry comes from per-device window_geometry
+                    let geo = self
+                        .cached_device_state
+                        .as_ref()
+                        .and_then(|d| d.window_geometry.get(&hw.server_window_id));
+                    let size = geo
+                        .map(|g| iced::Size::new(g.width as f32, g.height as f32))
+                        .unwrap_or(iced::Size::new(900.0, 600.0));
+                    let position = geo
+                        .and_then(|g| match (g.x, g.y) {
+                            (Some(x), Some(y)) => Some(window::Position::Specific(
+                                iced::Point::new(x as f32, y as f32),
+                            )),
+                            _ => None,
+                        })
+                        .unwrap_or(window::Position::Default);
+
                     let (new_id, open_task) = window::open(window::Settings {
-                        size: iced::Size::new(hw.width as f32, hw.height as f32),
-                        position: if let (Some(x), Some(y)) = (hw.x, hw.y) {
-                            window::Position::Specific(iced::Point::new(x as f32, y as f32))
-                        } else {
-                            window::Position::Default
-                        },
+                        size,
+                        position,
                         ..window::Settings::default()
                     });
 
@@ -3682,10 +3690,12 @@ impl ShellKeep {
                     new_win.name = hw.name;
                     new_win.server_uuid = hw.server_uuid;
                     new_win.workspace_env = hw.workspace_env;
-                    new_win.window_width = hw.width;
-                    new_win.window_height = hw.height;
-                    new_win.window_x = hw.x;
-                    new_win.window_y = hw.y;
+                    if let Some(geo) = geo {
+                        new_win.window_width = geo.width;
+                        new_win.window_height = geo.height;
+                        new_win.window_x = geo.x;
+                        new_win.window_y = geo.y;
+                    }
 
                     self.windows.insert(new_id, new_win);
                     self.window_order.push(new_id);

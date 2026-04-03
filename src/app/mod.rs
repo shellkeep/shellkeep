@@ -120,10 +120,6 @@ pub(crate) struct HiddenWindow {
     pub(crate) name: String,
     pub(crate) server_uuid: Option<String>,
     pub(crate) workspace_env: Option<String>,
-    pub(crate) width: u32,
-    pub(crate) height: u32,
-    pub(crate) x: Option<i32>,
-    pub(crate) y: Option<i32>,
     pub(crate) tabs: Vec<HiddenTab>,
 }
 

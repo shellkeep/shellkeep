@@ -22,9 +22,6 @@ use crate::error::SshError;
 /// Remote state directory under the user's home.
 const REMOTE_STATE_DIR: &str = ".shellkeep";
 
-/// Legacy remote state directory (pre-v0.3). Used for auto-migration.
-const LEGACY_REMOTE_STATE_DIR: &str = ".terminal-state";
-
 /// Subdirectory for per-device state files.
 const REMOTE_CLIENTS_DIR: &str = "clients";
 
@@ -163,58 +160,6 @@ pub async fn ensure_state_dir_shell(
     })
 }
 
-// ---------------------------------------------------------------------------
-// FR-STATE-19: auto-migrate ~/.terminal-state/ → ~/.shellkeep/
-// ---------------------------------------------------------------------------
-
-/// Migrate legacy remote state directory via SFTP.
-/// If `~/.shellkeep/` is absent but `~/.terminal-state/` exists, rename it.
-async fn migrate_remote_dir_sftp(sftp: &SftpSession) {
-    let home = match sftp.canonicalize(".").await {
-        Ok(h) => h,
-        Err(_) => return,
-    };
-    let new_dir = format!("{home}/{REMOTE_STATE_DIR}");
-    let legacy_dir = format!("{home}/{LEGACY_REMOTE_STATE_DIR}");
-
-    // If new dir already exists, nothing to migrate.
-    if sftp.canonicalize(&new_dir).await.is_ok() {
-        return;
-    }
-    // If legacy dir doesn't exist, nothing to migrate.
-    if sftp.canonicalize(&legacy_dir).await.is_err() {
-        return;
-    }
-    // Rename legacy → new
-    match sftp.rename(&legacy_dir, &new_dir).await {
-        Ok(()) => tracing::info!("migrated remote state directory: {legacy_dir} → {new_dir}"),
-        Err(e) => {
-            tracing::warn!("failed to migrate remote state directory {legacy_dir} → {new_dir}: {e}")
-        }
-    }
-}
-
-/// Migrate legacy remote state directory via shell commands.
-/// If `~/.shellkeep/` is absent but `~/.terminal-state/` exists, rename it.
-async fn migrate_remote_dir_shell(handle: &russh::client::Handle<SshHandler>) {
-    let cmd = format!(
-        "if [ ! -d ~/{REMOTE_STATE_DIR} ] && [ -d ~/{LEGACY_REMOTE_STATE_DIR} ]; then \
-         mv ~/{LEGACY_REMOTE_STATE_DIR} ~/{REMOTE_STATE_DIR} && \
-         echo MIGRATED; fi"
-    );
-    match super::connection::exec_command(handle, &cmd).await {
-        Ok(output) if output.contains("MIGRATED") => {
-            tracing::info!(
-                "migrated remote state directory via shell: ~/.terminal-state → ~/.shellkeep"
-            );
-        }
-        Ok(_) => {} // no migration needed
-        Err(e) => {
-            tracing::warn!("failed to check/migrate remote state directory: {e}");
-        }
-    }
-}
-
 /// Transport method for remote file I/O.
 enum Transport {
     Sftp(SftpSession),
@@ -246,13 +191,11 @@ impl std::fmt::Debug for StateSyncer {
 
 impl StateSyncer {
     /// Create a new StateSyncer. Tries SFTP first, falls back to shell.
-    /// FR-STATE-19: auto-migrates `~/.terminal-state/` → `~/.shellkeep/` on first connect.
     pub async fn new(handle: HandleArc, client_id: &str) -> Result<Self, SshError> {
         let guard = handle.lock().await;
         // Try SFTP first
         match open_sftp(&guard).await {
             Ok(sftp) => {
-                migrate_remote_dir_sftp(&sftp).await;
                 let paths = ensure_state_dir(&sftp, client_id).await?;
                 drop(guard);
                 tracing::info!("sftp: state sync via SFTP at {:?}", paths);
@@ -265,7 +208,6 @@ impl StateSyncer {
             Err(e) => {
                 // E-CONN-8: SFTP unavailable, use shell fallback
                 tracing::warn!("sftp unavailable ({e}), using shell fallback");
-                migrate_remote_dir_shell(&guard).await;
                 let paths = ensure_state_dir_shell(&guard, client_id).await?;
                 drop(guard);
                 tracing::info!("sftp: state sync via shell at {:?}", paths);
@@ -361,11 +303,6 @@ mod tests {
     #[test]
     fn remote_state_dir_constant() {
         assert_eq!(REMOTE_STATE_DIR, ".shellkeep");
-    }
-
-    #[test]
-    fn legacy_remote_state_dir_constant() {
-        assert_eq!(LEGACY_REMOTE_STATE_DIR, ".terminal-state");
     }
 
     #[test]
