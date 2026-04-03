@@ -84,14 +84,15 @@ impl ConnectionManager {
         // Duplicate server detection: same user + same host key = same server
         if let Some(ref fp) = result.fingerprint {
             let identity = (key.username.clone(), fp.clone());
-            if let Some(existing) = self.fingerprint_to_key.get(&identity) {
-                if existing != key && self.handles.contains_key(existing) {
-                    return Err(SshError::DuplicateServer {
-                        fingerprint: fp.clone(),
-                        existing_host: existing.host.clone(),
-                        existing_port: existing.port,
-                    });
-                }
+            if let Some(existing) = self.fingerprint_to_key.get(&identity)
+                && existing != key
+                && self.handles.contains_key(existing)
+            {
+                return Err(SshError::DuplicateServer {
+                    fingerprint: fp.clone(),
+                    existing_host: existing.host.clone(),
+                    existing_port: existing.port,
+                });
             }
             self.fingerprint_to_key.insert(identity, key.clone());
         }
