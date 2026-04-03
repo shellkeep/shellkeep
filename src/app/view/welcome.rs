@@ -501,7 +501,7 @@ impl ShellKeep {
                 ];
                 if visible_windows > 0 {
                     btn_row_items.push(
-                        button(text("Close all windows").size(11).color(label_color))
+                        button(text("Terminate all sessions").size(11).color(label_color))
                             .on_press(Message::CloseServer)
                             .padding([4, 8])
                             .style(styles::ghost_button_style)

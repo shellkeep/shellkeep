@@ -647,10 +647,13 @@ impl ShellKeep {
     /// Get environments discovered for a connected server (from cached_shared_state).
     #[allow(dead_code)]
     pub(crate) fn server_environments(&self, _server_uuid: &str) -> Vec<String> {
-        self.cached_shared_state
+        let mut envs: Vec<String> = self
+            .cached_shared_state
             .as_ref()
             .map(|s| s.environments.keys().cloned().collect())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        envs.sort();
+        envs
     }
 
     /// Check if a server has any active workspaces.
