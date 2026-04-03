@@ -725,6 +725,16 @@ impl ShellKeep {
     /// Open a tab using russh SSH. Returns a Task that establishes the connection.
     /// The tab is added to the currently focused window.
     pub(crate) fn open_tab_russh(&mut self, label: &str, tmux_session: &str) -> Task<Message> {
+        self.open_tab_russh_in_window(label, tmux_session, None)
+    }
+
+    /// Open a tab targeting a specific window, or the active window if `None`.
+    pub(crate) fn open_tab_russh_in_window(
+        &mut self,
+        label: &str,
+        tmux_session: &str,
+        target: Option<window::Id>,
+    ) -> Task<Message> {
         let conn = match &self.current_conn {
             Some(c) => c.clone(),
             None => {
@@ -797,8 +807,12 @@ impl ShellKeep {
             needs_initial_resize: true,
         };
 
-        // Add tab to the active window
-        if let Some(win) = self.active_window_mut() {
+        // Add tab to the target window, or the active window
+        let win = match target {
+            Some(id) => self.windows.get_mut(&id),
+            None => self.active_window_mut(),
+        };
+        if let Some(win) = win {
             win.tabs.push(new_tab);
             win.active_tab = win.tabs.len() - 1;
             win.update_title();
@@ -1194,6 +1208,7 @@ impl ShellKeep {
                         tmux_session_name: tab.tmux_session.clone(),
                         title: tab.label.clone(),
                         position: pos,
+                        server_window_id: Some(win.server_window_id.clone()),
                     });
                     pos += 1;
                 }

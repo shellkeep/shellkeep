@@ -158,6 +158,9 @@ pub struct TabState {
     pub tmux_session_name: String,
     pub title: String,
     pub position: usize,
+    /// FR-SESSION-10: which window this tab belongs to (for multi-window restore)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_window_id: Option<String>,
 }
 
 impl StateFile {

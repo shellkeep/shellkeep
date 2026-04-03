@@ -437,29 +437,38 @@ impl ShellKeep {
             let device_opt = self.cached_device_state.clone();
             let saved_state = shared_opt;
 
-            // FR-STATE-14: restore window geometry from device state
-            // Try last_active_window first, then "main", then any entry
+            // FR-STATE-14: restore window geometry from device state per window
             if let Some(ref device) = device_opt {
-                let geo = device
-                    .last_active_window
-                    .as_ref()
-                    .and_then(|k| device.window_geometry.get(k))
-                    .or_else(|| device.window_geometry.get("main"))
-                    .or_else(|| device.window_geometry.values().next());
-                if let Some(geo) = geo
-                    && let Some(win) = self.active_window_mut()
-                {
-                    win.window_x = geo.x;
-                    win.window_y = geo.y;
-                    win.window_width = geo.width;
-                    win.window_height = geo.height;
-                    tracing::info!(
-                        "restored window geometry: {}x{} at ({:?},{:?})",
-                        geo.width,
-                        geo.height,
-                        geo.x,
-                        geo.y
-                    );
+                for win in self.windows.values_mut() {
+                    if win.kind == super::WindowKind::Control {
+                        continue;
+                    }
+                    let geo = device
+                        .window_geometry
+                        .get(&win.server_window_id)
+                        .or_else(|| {
+                            // Fallback for old state: try last_active, "main", or any
+                            device
+                                .last_active_window
+                                .as_ref()
+                                .and_then(|k| device.window_geometry.get(k))
+                                .or_else(|| device.window_geometry.get("main"))
+                                .or_else(|| device.window_geometry.values().next())
+                        });
+                    if let Some(geo) = geo {
+                        win.window_x = geo.x;
+                        win.window_y = geo.y;
+                        win.window_width = geo.width;
+                        win.window_height = geo.height;
+                        tracing::info!(
+                            "restored window geometry for {}: {}x{} at ({:?},{:?})",
+                            win.server_window_id,
+                            geo.width,
+                            geo.height,
+                            geo.x,
+                            geo.y
+                        );
+                    }
                 }
             }
 
@@ -542,7 +551,7 @@ impl ShellKeep {
             let existing_tmux: Vec<String> =
                 self.all_tabs().map(|t| t.tmux_session.clone()).collect();
 
-            let mut restorable: Vec<(&str, &str)> = Vec::new();
+            let mut restorable: Vec<(&str, &str, Option<&str>)> = Vec::new();
             let mut stale: Vec<String> = Vec::new();
 
             for session in &server_sessions {
@@ -563,7 +572,11 @@ impl ShellKeep {
                         continue;
                     }
                     // In saved state — restore it
-                    restorable.push((saved.title.as_str(), session.as_str()));
+                    restorable.push((
+                        saved.title.as_str(),
+                        session.as_str(),
+                        saved.server_window_id.as_deref(),
+                    ));
                 } else if session.starts_with(&format!("{}--shellkeep-", self.current_environment))
                 {
                     // Shellkeep session in OUR environment but NOT in saved state —
@@ -663,8 +676,15 @@ impl ShellKeep {
                     }
                 }
 
-                for (label, session_name) in &restorable {
-                    tasks.push(self.open_tab_russh(label, session_name));
+                for (label, session_name, swid) in &restorable {
+                    // Route tab to the window matching its server_window_id
+                    let target = swid.and_then(|swid| {
+                        self.windows
+                            .iter()
+                            .find(|(_, w)| w.server_window_id == swid)
+                            .map(|(id, _)| *id)
+                    });
+                    tasks.push(self.open_tab_russh_in_window(label, session_name, target));
                 }
             }
 
@@ -3146,39 +3166,106 @@ impl ShellKeep {
                         .map(|c| format!("{}@{}", c.key.username, c.key.host))
                         .unwrap_or_else(|| "shellkeep".to_string());
 
-                    // Open session window BEFORE reconciliation so tabs land in it
+                    // Open session window(s) BEFORE reconciliation so tabs land in them.
+                    // Multi-window restore: create one window per distinct server_window_id
+                    // from saved state, or one default window if no saved state.
                     let has_session_windows = self
                         .windows
                         .values()
                         .any(|w| w.kind == super::WindowKind::Session);
-                    let new_session_win_id = if !has_session_windows {
-                        let (session_win_id, task) = window::open(window::Settings {
-                            size: iced::Size::new(900.0, 600.0),
-                            ..window::Settings::default()
-                        });
-                        let mut session_win = super::AppWindow::new(session_win_id);
-                        session_win.server_window_id = uuid::Uuid::new_v4().to_string();
-                        // Link window to server + workspace
-                        session_win.server_uuid = self.current_conn.as_ref().and_then(|c| {
+
+                    let mut window_open_tasks: Vec<Task<Message>> = Vec::new();
+                    if !has_session_windows {
+                        let saved_env_tabs = self
+                            .cached_shared_state
+                            .as_ref()
+                            .map(|s| s.env_tabs(&self.current_environment))
+                            .unwrap_or_default();
+
+                        // Collect distinct server_window_ids (preserving order)
+                        let mut saved_window_ids: Vec<String> = Vec::new();
+                        for tab in &saved_env_tabs {
+                            if let Some(ref swid) = tab.server_window_id {
+                                if !saved_window_ids.contains(swid) {
+                                    saved_window_ids.push(swid.clone());
+                                }
+                            }
+                        }
+                        // Old state or no tabs: create one default window
+                        if saved_window_ids.is_empty() {
+                            saved_window_ids.push(uuid::Uuid::new_v4().to_string());
+                        }
+
+                        let device_state = self.cached_device_state.clone();
+                        let last_active = device_state
+                            .as_ref()
+                            .and_then(|d| d.last_active_window.clone());
+                        let server_uuid = self.current_conn.as_ref().and_then(|c| {
                             self.saved_servers
                                 .servers
                                 .iter()
                                 .find(|s| s.host == c.key.host)
                                 .map(|s| s.uuid.clone())
                         });
-                        session_win.workspace_env = Some(self.current_environment.clone());
-                        self.window_counter += 1;
-                        session_win.name = format!("{} - Window {}", label, self.window_counter);
-                        self.windows.insert(session_win_id, session_win);
-                        self.window_order.push(session_win_id);
-                        self.focused_window = Some(session_win_id);
-                        Some((session_win_id, task.map(|_| Message::Noop)))
-                    } else {
-                        None
-                    };
 
-                    // Run reconciliation — tabs will be added to the session window
-                    // (also restores geometry to internal state)
+                        for swid in &saved_window_ids {
+                            let geo = device_state
+                                .as_ref()
+                                .and_then(|d| d.window_geometry.get(swid));
+                            let size = geo
+                                .map(|g| iced::Size::new(g.width as f32, g.height as f32))
+                                .unwrap_or(iced::Size::new(900.0, 600.0));
+
+                            let (win_id, open_task) = window::open(window::Settings {
+                                size,
+                                ..window::Settings::default()
+                            });
+
+                            let mut session_win = super::AppWindow::new(win_id);
+                            session_win.server_window_id = swid.clone();
+                            session_win.server_uuid = server_uuid.clone();
+                            session_win.workspace_env = Some(self.current_environment.clone());
+                            self.window_counter += 1;
+                            session_win.name =
+                                format!("{} - Window {}", label, self.window_counter);
+
+                            if let Some(geo) = geo {
+                                session_win.window_x = geo.x;
+                                session_win.window_y = geo.y;
+                                session_win.window_width = geo.width;
+                                session_win.window_height = geo.height;
+                            }
+
+                            self.windows.insert(win_id, session_win);
+                            self.window_order.push(win_id);
+
+                            if last_active.as_deref() == Some(swid.as_str())
+                                || self.focused_window.is_none()
+                            {
+                                self.focused_window = Some(win_id);
+                            }
+
+                            window_open_tasks.push(open_task.map(|_| Message::Noop));
+
+                            // Apply position after window opens
+                            if let Some(geo) = geo {
+                                let w = geo.width as f32;
+                                let h = geo.height as f32;
+                                if w > 0.0 && h > 0.0 {
+                                    window_open_tasks
+                                        .push(window::resize(win_id, iced::Size::new(w, h)));
+                                }
+                                if let (Some(x), Some(y)) = (geo.x, geo.y) {
+                                    window_open_tasks.push(window::move_to(
+                                        win_id,
+                                        iced::Point::new(x as f32, y as f32),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+
+                    // Run reconciliation — tabs will be routed to their original windows
                     let reconcile_task = self.reconcile_sessions(result.sessions);
 
                     // If reconciliation didn't restore any tabs, create a fresh one
@@ -3193,23 +3280,7 @@ impl ShellKeep {
                     self.flush_state();
 
                     let mut tasks = vec![reconcile_task];
-                    if let Some((win_id, open_task)) = new_session_win_id {
-                        tasks.push(open_task);
-                        // FR-STATE-14: apply restored geometry to the actual window
-                        if let Some(win) = self.windows.get(&win_id) {
-                            let w = win.window_width as f32;
-                            let h = win.window_height as f32;
-                            if w > 0.0 && h > 0.0 {
-                                tasks.push(window::resize(win_id, iced::Size::new(w, h)));
-                            }
-                            if let (Some(x), Some(y)) = (win.window_x, win.window_y) {
-                                tasks.push(window::move_to(
-                                    win_id,
-                                    iced::Point::new(x as f32, y as f32),
-                                ));
-                            }
-                        }
-                    }
+                    tasks.extend(window_open_tasks);
                     if let Some(t) = fresh_tab_task {
                         tasks.push(t);
                     }
