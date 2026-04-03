@@ -261,6 +261,7 @@ mod tests {
                     tmux_session_name: "shellkeep-0".into(),
                     title: "Session 1".into(),
                     position: 0,
+                    server_window_id: None,
                 }],
             },
         );
@@ -325,6 +326,7 @@ mod tests {
                     tmux_session_name: "shellkeep-0".into(),
                     title: "Session 1".into(),
                     position: 0,
+                    server_window_id: None,
                 }],
             },
         );
@@ -352,6 +354,7 @@ mod tests {
                     tmux_session_name: "shellkeep-0".into(),
                     title: "Tab 1".into(),
                     position: 0,
+                    server_window_id: None,
                 }],
             },
         );
@@ -415,6 +418,7 @@ mod tests {
                     tmux_session_name: "sk-0".into(),
                     title: "T1".into(),
                     position: 0,
+                    server_window_id: None,
                 }],
             },
         );
