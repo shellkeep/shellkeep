@@ -3066,6 +3066,10 @@ impl ShellKeep {
                         self.dialogs.password_input.clear();
                         self.dialogs.password_target_tab = None;
                         self.dialogs.password_conn_params = self.current_conn.clone();
+                    } else if el.contains("already connected to this server") {
+                        self.error = Some(format!(
+                            "Duplicate connection — {e}\nUse the existing entry or disconnect it first."
+                        ));
                     } else {
                         self.error = Some(format!("Connection failed: {e}"));
                     }

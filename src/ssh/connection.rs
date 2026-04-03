@@ -39,6 +39,8 @@ pub struct SshHandler {
     pub strict_host_key_checking: String,
     /// Shared slot for deferred host key prompt (phase-2 UI dialog)
     pub pending_host_key: Arc<std::sync::Mutex<Option<HostKeyPrompt>>>,
+    /// Shared slot for the server's host key fingerprint (always captured)
+    pub fingerprint: Arc<std::sync::Mutex<Option<String>>>,
 }
 
 impl russh::client::Handler for SshHandler {
@@ -50,6 +52,11 @@ impl russh::client::Handler for SshHandler {
     ) -> Result<bool, Self::Error> {
         let fingerprint = server_public_key.fingerprint(ssh_key::HashAlg::Sha256);
         tracing::info!("host key fingerprint: {fingerprint}");
+
+        // Always capture fingerprint for duplicate server detection
+        if let Ok(mut fp) = self.fingerprint.lock() {
+            *fp = Some(fingerprint.to_string());
+        }
 
         if self.auto_accept_hosts {
             return Ok(true);
@@ -185,6 +192,8 @@ pub struct ConnectResult {
     pub handle: russh::client::Handle<SshHandler>,
     /// If set, the UI should show a host key dialog before using this connection.
     pub host_key_prompt: Option<HostKeyPrompt>,
+    /// Server host key fingerprint (always set after successful handshake).
+    pub fingerprint: Option<String>,
 }
 
 /// Connect to an SSH server and authenticate.
@@ -244,12 +253,14 @@ pub async fn connect(
     }
 
     let pending_host_key = Arc::new(std::sync::Mutex::new(None));
+    let pending_fingerprint = Arc::new(std::sync::Mutex::new(None));
     let handler = SshHandler {
         auto_accept_hosts: false,
         host: effective_host.to_string(),
         port: effective_port,
         strict_host_key_checking: strict_mode,
         pending_host_key: pending_host_key.clone(),
+        fingerprint: pending_fingerprint.clone(),
     };
 
     let addr = format!("{effective_host}:{effective_port}");
@@ -293,9 +304,15 @@ pub async fn connect(
         .ok()
         .and_then(|mut slot| slot.take());
 
+    let fp = pending_fingerprint
+        .lock()
+        .ok()
+        .and_then(|mut slot| slot.take());
+
     Ok(ConnectResult {
         handle,
         host_key_prompt: prompt,
+        fingerprint: fp,
     })
 }
 

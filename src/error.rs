@@ -23,6 +23,14 @@ pub enum SshError {
     Sftp(String),
     #[error("{0}")]
     Proxy(#[from] crate::ssh::proxy::ProxyError),
+    #[error(
+        "already connected to this server as {existing_host}:{existing_port} (fingerprint {fingerprint})"
+    )]
+    DuplicateServer {
+        fingerprint: String,
+        existing_host: String,
+        existing_port: u16,
+    },
 }
 
 impl SshError {

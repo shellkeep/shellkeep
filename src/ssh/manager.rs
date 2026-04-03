@@ -24,6 +24,8 @@ pub struct ManagedConnectResult {
     pub handle: Arc<Mutex<russh::client::Handle<SshHandler>>>,
     /// Set on first connection if the host key was unknown (TOFU).
     pub host_key_prompt: Option<HostKeyPrompt>,
+    /// Server host key fingerprint (always set after successful handshake).
+    pub fingerprint: Option<String>,
 }
 
 /// Manages shared russh connection handles.
@@ -32,6 +34,8 @@ pub struct ManagedConnectResult {
 /// channels over a single connection). Each tab opens its own channel.
 pub struct ConnectionManager {
     handles: HashMap<ConnKey, Arc<Mutex<russh::client::Handle<SshHandler>>>>,
+    /// Maps (username, host key fingerprint) → ConnKey for duplicate server detection.
+    fingerprint_to_key: HashMap<(String, String), ConnKey>,
 }
 
 impl Default for ConnectionManager {
@@ -44,6 +48,7 @@ impl ConnectionManager {
     pub fn new() -> Self {
         Self {
             handles: HashMap::new(),
+            fingerprint_to_key: HashMap::new(),
         }
     }
 
@@ -62,6 +67,7 @@ impl ConnectionManager {
             return Ok(ManagedConnectResult {
                 handle: handle.clone(),
                 host_key_prompt: None,
+                fingerprint: None,
             });
         }
 
@@ -74,11 +80,28 @@ impl ConnectionManager {
             keepalive_interval_secs,
         )
         .await?;
+
+        // Duplicate server detection: same user + same host key = same server
+        if let Some(ref fp) = result.fingerprint {
+            let identity = (key.username.clone(), fp.clone());
+            if let Some(existing) = self.fingerprint_to_key.get(&identity) {
+                if existing != key && self.handles.contains_key(existing) {
+                    return Err(SshError::DuplicateServer {
+                        fingerprint: fp.clone(),
+                        existing_host: existing.host.clone(),
+                        existing_port: existing.port,
+                    });
+                }
+            }
+            self.fingerprint_to_key.insert(identity, key.clone());
+        }
+
         let arc = Arc::new(Mutex::new(result.handle));
         self.handles.insert(key.clone(), arc.clone());
         Ok(ManagedConnectResult {
             handle: arc,
             host_key_prompt: result.host_key_prompt,
+            fingerprint: result.fingerprint,
         })
     }
 
@@ -93,5 +116,6 @@ impl ConnectionManager {
     /// Remove a cached handle (e.g. after connection failure).
     pub fn remove(&mut self, key: &ConnKey) {
         self.handles.remove(key);
+        self.fingerprint_to_key.retain(|_, v| v != key);
     }
 }
