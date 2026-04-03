@@ -3389,10 +3389,10 @@ impl ShellKeep {
 
                 // Remove hidden sessions for this workspace
                 self.hidden_sessions.retain(|uuid| {
-                    if let Some(ref state) = self.cached_shared_state {
-                        if let Some(env) = state.environments.get(&env_name) {
-                            return !env.tabs.iter().any(|t| t.session_uuid == *uuid);
-                        }
+                    if let Some(ref state) = self.cached_shared_state
+                        && let Some(env) = state.environments.get(&env_name)
+                    {
+                        return !env.tabs.iter().any(|t| t.session_uuid == *uuid);
                     }
                     true
                 });
