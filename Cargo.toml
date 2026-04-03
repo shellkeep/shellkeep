@@ -58,8 +58,8 @@ chrono = "0.4"
 notify = "7"
 
 # System tray (optional — requires GTK3/libappindicator on Linux)
-tray-icon = { version = "0.19", optional = true }
-muda = { version = "0.16", optional = true }
+tray-icon = { version = "0.22", optional = true }
+muda = { version = "0.17", optional = true }
 russh-sftp = "2"
 regex = "1.12.3"
 
