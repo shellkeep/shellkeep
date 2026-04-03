@@ -64,12 +64,18 @@ pub async fn write_file_atomic(
     let tmp_path = format!("{path}.tmp");
     // Use create() not write() — write() only opens existing files,
     // create() uses CREATE|TRUNCATE|WRITE flags.
-    sftp.create(&tmp_path)
+    let mut file = sftp
+        .create(&tmp_path)
         .await
-        .map_err(|e| SshError::Sftp(format!("sftp create {tmp_path}: {e}")))?
-        .write_all(data)
+        .map_err(|e| SshError::Sftp(format!("sftp create {tmp_path}: {e}")))?;
+    file.write_all(data)
         .await
         .map_err(|e| SshError::Sftp(format!("sftp write {tmp_path}: {e}")))?;
+    // Flush and close the file handle before renaming — SFTP requires the
+    // handle to be closed (SSH_FXP_CLOSE) before the data is visible on disk.
+    file.shutdown()
+        .await
+        .map_err(|e| SshError::Sftp(format!("sftp close {tmp_path}: {e}")))?;
     // Try rename (posix-rename@openssh.com does atomic overwrite)
     match sftp.rename(&tmp_path, path).await {
         Ok(()) => Ok(()),
