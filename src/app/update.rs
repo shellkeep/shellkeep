@@ -1660,8 +1660,12 @@ impl ShellKeep {
                 }
                 self.state_dirty = true;
                 self.flush_state();
-                // If only control window remains, don't exit — user can still manage from control window
-                window::close(win_id)
+                // Show control window so user sees updated visible/hidden counts
+                let mut tasks = vec![window::close(win_id)];
+                if self.windows.contains_key(&self.control_window_id) {
+                    tasks.push(window::gain_focus(self.control_window_id));
+                }
+                Task::batch(tasks)
             }
 
             Message::CloseDialogClose => {

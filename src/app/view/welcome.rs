@@ -341,7 +341,10 @@ impl ShellKeep {
                         .filter(|hw| hw.workspace_env.as_deref() == Some(env.as_str()))
                         .count();
 
-                    let visible_text = format!("{visible_count} visible",);
+                    let visible_text = format!(
+                        "{visible_count} visible window{}",
+                        if visible_count == 1 { "" } else { "s" }
+                    );
 
                     let uuid_focus = uuid.clone();
                     let env_focus = env.clone();
@@ -363,7 +366,10 @@ impl ShellKeep {
                     .width(Length::Fill);
 
                     if hidden_win_count > 0 {
-                        let hidden_text = format!("{hidden_win_count} hidden",);
+                        let hidden_text = format!(
+                            "{hidden_win_count} hidden window{}",
+                            if hidden_win_count == 1 { "" } else { "s" }
+                        );
                         let env_restore = env.clone();
                         info_col = info_col.push(
                             button(
