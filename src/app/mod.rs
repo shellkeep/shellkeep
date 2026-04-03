@@ -1497,6 +1497,7 @@ impl ShellKeep {
             window::Event::Moved(pos) => Message::WindowMoved(id, pos),
             window::Event::Resized(size) => Message::WindowResized(id, size),
             window::Event::Focused => Message::WindowFocused(id),
+            window::Event::Closed => Message::WindowCloseRequested(id),
             _ => Message::Noop,
         }));
 
