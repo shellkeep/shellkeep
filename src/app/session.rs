@@ -191,6 +191,12 @@ impl std::fmt::Debug for ServerConnectResult {
 /// Connect to a server: SSH connect, health check, tmux version check, lock acquire.
 /// Does NOT create tmux sessions or open PTY channels (control-plane only).
 pub(crate) async fn connect_server(params: ConnectServerParams) -> Result<(), SshError> {
+    tracing::info!(
+        "connect_server: {}:{} as {}",
+        params.conn.key.host,
+        params.conn.key.port,
+        params.conn.key.username
+    );
     let conn_key = params.conn.key.clone();
 
     // SAFETY: mutex is never held across a panic path
@@ -300,6 +306,7 @@ pub(crate) async fn connect_server(params: ConnectServerParams) -> Result<(), Ss
 pub(crate) async fn open_tab_channel(
     params: OpenTabParams,
 ) -> Result<russh::Channel<russh::client::Msg>, SshError> {
+    tracing::info!("open_tab_channel: tmux={}", params.tmux_session);
     let conn_key = params.conn.key.clone();
 
     // FR-RECONNECT-03: verify tmux session exists before reattaching, create if needed

@@ -677,6 +677,7 @@ impl ShellKeep {
     fn handle_tab_message(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::SelectTab(index) => {
+                tracing::debug!("select tab: {index}");
                 if let Some(win) = self.active_window_mut()
                     && index < win.tabs.len()
                 {
@@ -691,6 +692,7 @@ impl ShellKeep {
 
             // FR-SESSION-10a: close tab with confirmation for active sessions
             Message::CloseTab(index) => {
+                tracing::info!("close tab requested: index {index}");
                 if let Some(win) = self.active_window_mut() {
                     win.tab_context_menu = None;
                 }
@@ -708,6 +710,7 @@ impl ShellKeep {
             }
 
             Message::ConfirmCloseTabs => {
+                tracing::info!("confirm close tabs");
                 if let Some(indices) = self.dialogs.pending_close_tabs.take() {
                     let mut tasks = Vec::new();
                     // Close from end to avoid index shifting
@@ -720,11 +723,13 @@ impl ShellKeep {
             }
 
             Message::CancelCloseTabs => {
+                tracing::debug!("cancel close tabs");
                 self.dialogs.pending_close_tabs = None;
                 Task::none()
             }
 
             Message::NewTab => {
+                tracing::info!("new tab requested");
                 // Phase 5: if active window is control, find or create a session window
                 let is_control = self
                     .active_window()
@@ -768,6 +773,7 @@ impl ShellKeep {
             }
 
             Message::ReconnectTab(index) => {
+                tracing::info!("reconnect tab: index {index}");
                 // Manual reconnect: reset state before calling reconnect_tab
                 // which will set up Connecting state
                 if let Some(win) = self.active_window_mut()
@@ -780,6 +786,7 @@ impl ShellKeep {
 
             // FR-UI-07: create a fresh session replacing a dead tab
             Message::CreateNewSession(index) => {
+                tracing::info!("create new session for tab {index}");
                 let can_create = self.active_window().is_some_and(|w| index < w.tabs.len())
                     && self.current_conn.is_some();
                 if can_create {
@@ -816,6 +823,7 @@ impl ShellKeep {
             }
 
             Message::HideTab(index) => {
+                tracing::info!("hide tab: index {index}");
                 self.hide_tab(index);
                 // P9: dismiss close dialog if it was open
                 self.dialogs.pending_close_tabs = None;
@@ -835,6 +843,7 @@ impl ShellKeep {
             }
 
             Message::CloseOtherTabs(keep_index) => {
+                tracing::info!("close other tabs, keeping index {keep_index}");
                 if let Some(win) = self.active_window_mut() {
                     win.tab_context_menu = None;
                 }
@@ -870,6 +879,7 @@ impl ShellKeep {
             }
 
             Message::CloseTabsToRight(index) => {
+                tracing::info!("close tabs to right of index {index}");
                 if let Some(win) = self.active_window_mut() {
                     win.tab_context_menu = None;
                 }
@@ -899,6 +909,7 @@ impl ShellKeep {
             }
 
             Message::StartRename(index) => {
+                tracing::debug!("start rename tab {index}");
                 let label = self
                     .active_window()
                     .and_then(|w| w.tabs.get(index))
@@ -926,6 +937,7 @@ impl ShellKeep {
             }
 
             Message::FinishRename => {
+                tracing::debug!("finish rename tab");
                 let mut rename_task = Task::none();
                 let renaming_tab = self.active_window().and_then(|w| w.renaming_tab);
                 if let Some(index) = renaming_tab {
@@ -996,6 +1008,7 @@ impl ShellKeep {
             }
 
             Message::TabMoveLeft(index) => {
+                tracing::debug!("move tab left: {index}");
                 if let Some(win) = self.active_window_mut() {
                     win.tab_context_menu = None;
                     if index > 0 && index < win.tabs.len() {
@@ -1011,6 +1024,7 @@ impl ShellKeep {
             }
 
             Message::TabMoveRight(index) => {
+                tracing::debug!("move tab right: {index}");
                 if let Some(win) = self.active_window_mut() {
                     win.tab_context_menu = None;
                     if index + 1 < win.tabs.len() {
@@ -1050,6 +1064,7 @@ impl ShellKeep {
             }
 
             Message::ShowRestoreDropdown => {
+                tracing::debug!("show restore dropdown");
                 if let Some(win) = self.active_window_mut() {
                     win.show_restore_dropdown = !win.show_restore_dropdown;
                 }
@@ -1057,6 +1072,7 @@ impl ShellKeep {
             }
 
             Message::DismissRestoreDropdown => {
+                tracing::debug!("dismiss restore dropdown");
                 if let Some(win) = self.active_window_mut() {
                     win.show_restore_dropdown = false;
                 }
@@ -1105,6 +1121,7 @@ impl ShellKeep {
 
             // Item 2: disconnect server (keep tmux sessions alive)
             Message::DisconnectServer => {
+                tracing::info!("disconnect server: hiding all sessions");
                 // Hide all tabs in all session windows
                 let mut session_win_ids: Vec<window::Id> = Vec::new();
                 for (&win_id, win) in &self.windows {
@@ -1145,11 +1162,13 @@ impl ShellKeep {
 
             // Item 2: close all sessions (destructive) — show confirmation
             Message::CloseServer => {
+                tracing::info!("close server: terminate all sessions");
                 self.confirm_close_server = true;
                 Task::none()
             }
 
             Message::ConfirmCloseServer => {
+                tracing::info!("confirm close server: terminating all tmux sessions");
                 self.confirm_close_server = false;
                 // Close all tabs in all session windows (kills tmux sessions)
                 let mut tasks = Vec::new();
@@ -1179,12 +1198,14 @@ impl ShellKeep {
             }
 
             Message::CancelCloseServer => {
+                tracing::debug!("cancel close server");
                 self.confirm_close_server = false;
                 Task::none()
             }
 
             // Item 5: rename window
             Message::RenameWindow => {
+                tracing::info!("rename window started");
                 // Dismiss the dropdown first
                 if let Some(win) = self.active_window_mut() {
                     win.show_restore_dropdown = false;
@@ -1204,6 +1225,7 @@ impl ShellKeep {
             }
 
             Message::FinishWindowRename => {
+                tracing::info!("window renamed to: {}", self.window_rename_input);
                 if let Some(win_id) = self.renaming_window.take() {
                     let new_name = self.window_rename_input.trim().to_string();
                     if let Some(win) = self.windows.get_mut(&win_id) {
@@ -1219,6 +1241,7 @@ impl ShellKeep {
             }
 
             Message::CancelWindowRename => {
+                tracing::debug!("window rename cancelled");
                 self.renaming_window = None;
                 self.window_rename_input.clear();
                 Task::none()
@@ -1299,6 +1322,7 @@ impl ShellKeep {
             }
 
             Message::Connect => {
+                tracing::info!("connect: initiating SSH to {}", self.welcome.host_input);
                 if self.welcome.host_input.trim().is_empty() {
                     return Task::none();
                 }
@@ -1553,6 +1577,7 @@ impl ShellKeep {
         match message {
             // FR-TABS-17: window close requested by window manager
             Message::WindowCloseRequested(win_id) => {
+                tracing::info!("window close requested: {win_id:?}");
                 // Phase 5: closing the control window just hides it (stays in tray)
                 let is_control = self
                     .windows
@@ -1626,6 +1651,7 @@ impl ShellKeep {
 
             // FR-ENV-03: environment selection dialog
             Message::ShowEnvDialog => {
+                tracing::debug!("show env dialog");
                 // FR-ENV-04: if only one environment, select it directly
                 if self.dialogs.env_list.len() == 1 {
                     let env_name = self.dialogs.env_list[0].clone();
@@ -1652,6 +1678,7 @@ impl ShellKeep {
             }
 
             Message::ConfirmEnv => {
+                tracing::debug!("confirm env selection");
                 if let Some(ref env_name) = self.dialogs.selected_env {
                     let env_name = env_name.clone();
                     self.dialogs.show_env_dialog = false;
@@ -1671,6 +1698,7 @@ impl ShellKeep {
             }
 
             Message::CancelEnvDialog => {
+                tracing::debug!("cancel env dialog");
                 self.dialogs.show_env_dialog = false;
                 Task::none()
             }
@@ -1819,10 +1847,12 @@ impl ShellKeep {
 
             // FR-CONN-03: host key TOFU — accept and save to known_hosts
             Message::HostKeyAcceptSave => {
+                tracing::info!("host key accepted and saved");
                 self.dialogs.pending_host_key_prompt = None;
                 Task::none()
             }
             Message::HostKeyConnectOnce => {
+                tracing::info!("host key accepted for this session only");
                 if let Some(ref prompt) = self.dialogs.pending_host_key_prompt {
                     let _ = ssh::known_hosts::remove_host_key(&prompt.host, prompt.port);
                 }
@@ -1830,6 +1860,7 @@ impl ShellKeep {
                 Task::none()
             }
             Message::HostKeyReject => {
+                tracing::info!("host key rejected");
                 if let Some(ref prompt) = self.dialogs.pending_host_key_prompt {
                     let _ = ssh::known_hosts::remove_host_key(&prompt.host, prompt.port);
                 }
@@ -1841,6 +1872,7 @@ impl ShellKeep {
                 Task::none()
             }
             Message::HostKeyChangedDismiss => {
+                tracing::info!("host key changed warning dismissed");
                 self.dialogs.pending_host_key_prompt = None;
                 Task::none()
             }
@@ -1850,8 +1882,12 @@ impl ShellKeep {
                 self.dialogs.password_input = val;
                 Task::none()
             }
-            Message::PasswordSubmit => self.handle_password_submit(),
+            Message::PasswordSubmit => {
+                tracing::info!("password submitted");
+                self.handle_password_submit()
+            }
             Message::PasswordCancel => {
+                tracing::info!("password prompt cancelled");
                 self.dialogs.show_password_dialog = false;
                 self.dialogs.password_input.clear();
                 if let Some(tab_id) = self.dialogs.password_target_tab.take()
@@ -1864,8 +1900,12 @@ impl ShellKeep {
             }
 
             // FR-LOCK-05: lock conflict — take over
-            Message::LockTakeOver => self.handle_lock_takeover(),
+            Message::LockTakeOver => {
+                tracing::info!("lock takeover requested");
+                self.handle_lock_takeover()
+            }
             Message::LockCancel => {
+                tracing::info!("lock takeover cancelled");
                 self.dialogs.show_lock_dialog = false;
                 if let Some(tab_id) = self.dialogs.lock_target_tab.take()
                     && let Some(tab) = self.find_tab_mut(tab_id)
@@ -1877,10 +1917,12 @@ impl ShellKeep {
 
             // P18-20: keyboard shortcuts dialog
             Message::ShowShortcutsDialog => {
+                tracing::debug!("show shortcuts dialog");
                 self.dialogs.show_shortcuts_dialog = true;
                 Task::none()
             }
             Message::DismissShortcutsDialog => {
+                tracing::debug!("dismiss shortcuts dialog");
                 self.dialogs.show_shortcuts_dialog = false;
                 Task::none()
             }
@@ -1940,6 +1982,7 @@ impl ShellKeep {
     }
 
     fn handle_lock_takeover(&mut self) -> Task<Message> {
+        tracing::info!("handle_lock_takeover: force acquiring lock");
         self.dialogs.show_lock_dialog = false;
         self.sessions_listed = false;
 
@@ -2094,6 +2137,7 @@ impl ShellKeep {
             }
 
             Message::FlushState => {
+                tracing::debug!("flush state triggered");
                 self.flush_state();
                 Task::none()
             }
@@ -2472,6 +2516,7 @@ impl ShellKeep {
             // Bug 7 fix: track OS-level window focus changes so that
             // NewTab always targets the window the user is interacting with.
             Message::WindowFocused(win_id) => {
+                tracing::debug!("window focused: {win_id:?}");
                 if self.windows.contains_key(&win_id) {
                     self.focused_window = Some(win_id);
                 }
@@ -2482,6 +2527,7 @@ impl ShellKeep {
             // Bug 7 fix: if connected to a server, auto-create a session tab
             // in the new window so it's immediately useful.
             Message::NewWindow => {
+                tracing::info!("new window requested");
                 let (new_id, open_task) = window::open(window::Settings {
                     size: iced::Size::new(900.0, 600.0),
                     ..window::Settings::default()
@@ -2527,6 +2573,7 @@ impl ShellKeep {
 
             // Phase 4: window opened callback
             Message::WindowOpened(win_id) => {
+                tracing::debug!("window opened: {win_id:?}");
                 self.focused_window = Some(win_id);
                 // Bug 3 fix: focus the terminal widget in the new window so
                 // keyboard input goes to it without requiring a mouse click.
@@ -2547,6 +2594,7 @@ impl ShellKeep {
 
             // Phase 5: show (focus) the control window
             Message::ShowControlWindow => {
+                tracing::info!("show control window");
                 let control_id = self.control_window_id;
                 if self.windows.contains_key(&control_id) {
                     // Control window still open, just focus it
@@ -2753,6 +2801,7 @@ impl ShellKeep {
 
             // FR-TERMINAL-18: export scrollback to text file
             Message::ExportScrollback => {
+                tracing::info!("export scrollback");
                 if let Some(win) = self.active_window()
                     && let Some(tab) = win.tabs.get(win.active_tab)
                     && let Some(ref terminal) = tab.terminal
@@ -2782,6 +2831,7 @@ impl ShellKeep {
 
             // FR-TABS-12: copy entire scrollback to clipboard
             Message::CopyScrollback => {
+                tracing::info!("copy scrollback to clipboard");
                 if let Some(win) = self.active_window()
                     && let Some(tab) = win.tabs.get(win.active_tab)
                     && let Some(ref terminal) = tab.terminal
@@ -3038,6 +3088,7 @@ impl ShellKeep {
     fn handle_workspace_message(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::ConnectServer(uuid) => {
+                tracing::info!("connect server: {uuid}");
                 if let Some(server) = self.saved_servers.find_by_uuid(&uuid).cloned() {
                     // Populate welcome fields from saved server
                     self.welcome.host_input = server.host.clone();
@@ -3056,18 +3107,24 @@ impl ShellKeep {
             }
 
             Message::DisconnectAllWorkspaces(_uuid) => {
+                tracing::info!("disconnect all workspaces");
                 // Delegate to existing DisconnectServer logic
                 self.update(Message::DisconnectServer)
             }
 
-            Message::EditServer(uuid) => self.update(Message::ShowServerForm(Some(uuid))),
+            Message::EditServer(uuid) => {
+                tracing::info!("edit server: {uuid}");
+                self.update(Message::ShowServerForm(Some(uuid)))
+            }
 
             Message::ForgetServer(uuid) => {
+                tracing::info!("forget server requested: {uuid}");
                 self.dialogs.show_forget_server = Some(uuid);
                 Task::none()
             }
 
             Message::ConfirmForgetServer => {
+                tracing::info!("forget server confirmed");
                 if let Some(uuid) = self.dialogs.show_forget_server.take() {
                     self.saved_servers.remove_by_uuid(&uuid);
                     self.saved_servers.save();
@@ -3076,11 +3133,13 @@ impl ShellKeep {
             }
 
             Message::CancelForgetServer => {
+                tracing::debug!("forget server cancelled");
                 self.dialogs.show_forget_server = None;
                 Task::none()
             }
 
             Message::ShowServerForm(opt_uuid) => {
+                tracing::info!("show server form, edit={}", opt_uuid.is_some());
                 if let Some(ref uuid) = opt_uuid {
                     // Editing: populate form from saved server
                     if let Some(server) = self.saved_servers.find_by_uuid(uuid) {
@@ -3104,11 +3163,13 @@ impl ShellKeep {
             }
 
             Message::BackToServerList => {
+                tracing::debug!("back to server list");
                 self.dialogs.show_server_form = None;
                 Task::none()
             }
 
             Message::SaveServer => {
+                tracing::info!("save server");
                 let server = self.build_server_from_form();
                 self.saved_servers.push(server);
                 self.saved_servers.save();
@@ -3117,6 +3178,7 @@ impl ShellKeep {
             }
 
             Message::SaveAndConnectServer => {
+                tracing::info!("save and connect server");
                 let server = self.build_server_from_form();
                 let uuid = server.uuid.clone();
                 self.saved_servers.push(server);
@@ -3147,15 +3209,18 @@ impl ShellKeep {
             }
 
             Message::ConnectWorkspace(_server_uuid, env) => {
+                tracing::info!("connect workspace: {_server_uuid}/{env}");
                 // Delegate to existing SwitchEnvironment logic
                 self.update(Message::SwitchEnvironment(env))
             }
 
             Message::DisconnectWorkspace(_server_uuid, _env) => {
+                tracing::info!("disconnect workspace: {_server_uuid}/{_env}");
                 self.update(Message::DisconnectServer)
             }
 
             Message::OpenWorkspace(_server_uuid, _env) => {
+                tracing::info!("open workspace: {_server_uuid}/{_env}");
                 // Focus first session window
                 if let Some((&id, _)) = self
                     .windows
@@ -3168,6 +3233,7 @@ impl ShellKeep {
             }
 
             Message::ShowNewWorkspace(server_uuid) => {
+                tracing::info!("show new workspace dialog for server {server_uuid}");
                 self.dialogs.show_new_workspace = Some(server_uuid);
                 self.dialogs.new_workspace_input.clear();
                 Task::none()
@@ -3179,6 +3245,10 @@ impl ShellKeep {
             }
 
             Message::ConfirmNewWorkspace => {
+                tracing::info!(
+                    "confirm new workspace: {}",
+                    self.dialogs.new_workspace_input
+                );
                 self.dialogs.show_new_workspace = None;
                 let name = std::mem::take(&mut self.dialogs.new_workspace_input);
                 if !name.trim().is_empty() {
@@ -3189,11 +3259,13 @@ impl ShellKeep {
             }
 
             Message::CancelNewWorkspace => {
+                tracing::debug!("cancel new workspace");
                 self.dialogs.show_new_workspace = None;
                 Task::none()
             }
 
             Message::ShowRenameWorkspace(_server_uuid, env) => {
+                tracing::info!("show rename workspace: {env}");
                 self.dialogs.show_workspace_rename = Some((_server_uuid, env.clone()));
                 self.dialogs.workspace_rename_input = env;
                 Task::none()
@@ -3205,6 +3277,7 @@ impl ShellKeep {
             }
 
             Message::ConfirmRenameWorkspace => {
+                tracing::info!("confirm rename workspace");
                 if let Some((_server_uuid, old_name)) = self.dialogs.show_workspace_rename.take() {
                     let new_name = std::mem::take(&mut self.dialogs.workspace_rename_input);
                     if !new_name.trim().is_empty() {
@@ -3217,22 +3290,26 @@ impl ShellKeep {
             }
 
             Message::CancelRenameWorkspace => {
+                tracing::debug!("cancel rename workspace");
                 self.dialogs.show_workspace_rename = None;
                 Task::none()
             }
 
             Message::ShowDeleteWorkspace(_server_uuid, env) => {
+                tracing::info!("show delete workspace: {env}");
                 self.dialogs.show_workspace_delete = Some((_server_uuid, env.clone()));
                 self.dialogs.delete_env_target = Some(env);
                 Task::none()
             }
 
             Message::ConfirmDeleteWorkspace => {
+                tracing::info!("confirm delete workspace");
                 self.dialogs.show_workspace_delete = None;
                 self.update(Message::ConfirmDeleteEnv)
             }
 
             Message::CancelDeleteWorkspace => {
+                tracing::debug!("cancel delete workspace");
                 self.dialogs.show_workspace_delete = None;
                 self.dialogs.delete_env_target = None;
                 Task::none()
@@ -3244,6 +3321,7 @@ impl ShellKeep {
             }
 
             Message::ToggleHiddenSessionsDropdown => {
+                tracing::debug!("toggle hidden sessions dropdown");
                 self.show_hidden_sessions_dropdown = !self.show_hidden_sessions_dropdown;
                 Task::none()
             }
