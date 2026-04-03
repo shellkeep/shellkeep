@@ -149,6 +149,8 @@ impl ShellKeep {
             | Message::WindowResized(..)
             | Message::WindowFocused(..)
             | Message::NewWindow
+            | Message::NewWindowForWorkspace(..)
+            | Message::FocusWorkspaceWindows(..)
             | Message::WindowOpened(..)
             | Message::ShowControlWindow
             | Message::CopyToClipboard(..) => self.handle_terminal_message(message),
@@ -1790,11 +1792,11 @@ impl ShellKeep {
                     }
                     self.dialogs.env_list.sort();
                     // Rename in cached shared state (the authoritative source)
-                    if let Some(ref mut state) = self.cached_shared_state {
-                        if let Some(mut env) = state.environments.remove(&old_name) {
-                            env.name = new_name.clone();
-                            state.environments.insert(new_name.clone(), env);
-                        }
+                    if let Some(ref mut state) = self.cached_shared_state
+                        && let Some(mut env) = state.environments.remove(&old_name)
+                    {
+                        env.name = new_name.clone();
+                        state.environments.insert(new_name.clone(), env);
                     }
                     if self.current_environment == old_name {
                         self.current_environment = new_name.clone();
@@ -2603,6 +2605,68 @@ impl ShellKeep {
                     win.show_welcome = true;
                 }
                 open_task.map(|_| Message::Noop)
+            }
+
+            // Open a new window for a specific workspace
+            Message::NewWindowForWorkspace(server_uuid, env) => {
+                tracing::info!("new window for workspace: {server_uuid} / {env}");
+                let prev_env = self.current_environment.clone();
+                self.current_environment = env.clone();
+
+                let (new_id, open_task) = window::open(window::Settings {
+                    size: iced::Size::new(900.0, 600.0),
+                    ..window::Settings::default()
+                });
+                let mut new_win = super::AppWindow::new(new_id);
+                new_win.server_window_id = uuid::Uuid::new_v4().to_string();
+                new_win.server_uuid = Some(server_uuid);
+                new_win.workspace_env = Some(env);
+                self.window_counter += 1;
+                if let Some(ref conn) = self.current_conn {
+                    new_win.name = format!(
+                        "{}@{} - Window {}",
+                        conn.key.username, conn.key.host, self.window_counter
+                    );
+                } else {
+                    new_win.name = format!("shellkeep - Window {}", self.window_counter);
+                }
+                self.windows.insert(new_id, new_win);
+                self.window_order.push(new_id);
+                self.focused_window = Some(new_id);
+
+                let result = if self.current_conn.is_some() {
+                    let tmux_session = self.next_tmux_session();
+                    let label = format!("Session {}", self.all_tabs().count() + 1);
+                    let tab_task = self.open_tab_russh(&label, &tmux_session);
+                    Task::batch([open_task.map(Message::WindowOpened), tab_task])
+                } else {
+                    if let Some(win) = self.windows.get_mut(&new_id) {
+                        win.show_welcome = true;
+                    }
+                    open_task.map(|_| Message::Noop)
+                };
+
+                self.current_environment = prev_env;
+                result
+            }
+
+            // Focus all windows belonging to a workspace
+            Message::FocusWorkspaceWindows(server_uuid, env) => {
+                let win_ids: Vec<_> = self
+                    .windows
+                    .iter()
+                    .filter(|(_, w)| {
+                        w.kind == super::WindowKind::Session
+                            && w.server_uuid.as_deref() == Some(server_uuid.as_str())
+                            && w.workspace_env.as_deref() == Some(env.as_str())
+                    })
+                    .map(|(id, _)| *id)
+                    .collect();
+                if win_ids.is_empty() {
+                    return Task::none();
+                }
+                let tasks: Vec<_> = win_ids.iter().map(|id| window::gain_focus(*id)).collect();
+                Task::batch(tasks)
             }
 
             // Phase 4: window opened callback

@@ -83,6 +83,10 @@ pub(crate) enum Message {
     WindowResized(window::Id, Size),
     /// Phase 4: open a new window for the current server
     NewWindow,
+    /// Open a new window for a specific workspace (server_uuid, environment)
+    NewWindowForWorkspace(String, String),
+    /// Focus all windows belonging to a workspace (server_uuid, environment)
+    FocusWorkspaceWindows(String, String),
     /// Phase 4: a new window has been opened (iced assigned ID)
     WindowOpened(window::Id),
     /// FR-TERMINAL-18: export scrollback to file

@@ -326,7 +326,6 @@ impl ShellKeep {
                 let envs = self.server_environments(&uuid);
                 let hidden_count = self.hidden_sessions.len();
                 for env in &envs {
-                    let session_count = self.workspace_session_count(&uuid, env);
                     let window_count = self
                         .windows
                         .values()
@@ -336,23 +335,15 @@ impl ShellKeep {
                         })
                         .count();
 
-                    // Build detail text: "1 session, 1 window" or "0 sessions, 2 hidden"
-                    let mut details = Vec::new();
-                    details.push(format!(
-                        "{session_count} session{}",
-                        if session_count == 1 { "" } else { "s" }
-                    ));
-                    if window_count > 0 {
-                        details.push(format!(
-                            "{window_count} window{}",
-                            if window_count == 1 { "" } else { "s" }
-                        ));
-                    }
-                    if hidden_count > 0 {
-                        details.push(format!("{hidden_count} hidden"));
-                    }
-                    let detail_text = details.join(", ");
+                    let detail_text = format!(
+                        "{window_count} window{}",
+                        if window_count == 1 { "" } else { "s" }
+                    );
 
+                    let uuid_focus = uuid.clone();
+                    let env_focus = env.clone();
+                    let uuid_new_win = uuid.clone();
+                    let env_new_win = env.clone();
                     let uuid_rename = uuid.clone();
                     let env_rename = env.clone();
                     let uuid_delete = uuid.clone();
@@ -362,10 +353,21 @@ impl ShellKeep {
                         row![
                             column![
                                 text(env.clone()).size(12).color(text_color),
-                                text(detail_text).size(10).color(label_color),
+                                button(text(detail_text).size(10).color(label_color))
+                                    .on_press(
+                                        Message::FocusWorkspaceWindows(uuid_focus, env_focus,)
+                                    )
+                                    .padding(0)
+                                    .style(styles::ghost_button_style),
                             ]
                             .spacing(2)
                             .width(Length::Fill),
+                            button(text("+").size(12).color(text_color))
+                                .on_press(
+                                    Message::NewWindowForWorkspace(uuid_new_win, env_new_win,)
+                                )
+                                .padding([3, 6])
+                                .style(styles::ghost_button_style),
                             button(text("Rename").size(10).color(label_color))
                                 .on_press(Message::ShowRenameWorkspace(uuid_rename, env_rename,))
                                 .padding([3, 6])
