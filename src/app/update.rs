@@ -13,7 +13,7 @@
 //! - `handle_ssh_message` — SSH data, connect/disconnect, session discovery
 //! - `handle_tab_message` — tab open/close/move/rename, recent connections
 //! - `handle_input_message` — welcome screen form, keyboard shortcuts
-//! - `handle_dialog_message` — close, env, host-key, password, lock dialogs
+//! - `handle_dialog_message` — close, workspace, host-key, password, lock dialogs
 //! - `handle_timer_message` — reconnect backoff, spinner, heartbeat, latency
 //! - `handle_terminal_message` — terminal I/O, context menu, window geometry
 //! - `handle_search_message` — scrollback search, export, clipboard
@@ -96,24 +96,24 @@ impl ShellKeep {
             Message::WindowCloseRequested(..)
             | Message::CloseDialogClose
             | Message::CloseDialogCancel
-            | Message::ShowEnvDialog
-            | Message::EnvFilterChanged(..)
-            | Message::SelectEnv(..)
-            | Message::ConfirmEnv
-            | Message::NewEnvFromDialog
-            | Message::CancelEnvDialog
-            | Message::ShowNewEnvDialog
-            | Message::NewEnvInputChanged(..)
-            | Message::ConfirmNewEnv
-            | Message::CancelNewEnv
-            | Message::ShowRenameEnvDialog(..)
-            | Message::RenameEnvInputChanged(..)
-            | Message::ConfirmRenameEnv
-            | Message::CancelRenameEnv
-            | Message::ShowDeleteEnvDialog(..)
-            | Message::ConfirmDeleteEnv
-            | Message::CancelDeleteEnv
-            | Message::SwitchEnvironment(..)
+            | Message::ShowWorkspaceDialog
+            | Message::WorkspaceFilterChanged(..)
+            | Message::SelectWorkspace(..)
+            | Message::ConfirmWorkspaceSelection
+            | Message::NewWorkspaceFromDialog
+            | Message::CancelWorkspaceDialog
+            | Message::ShowNewWorkspaceDialog
+            | Message::NewWorkspaceDialogInput(..)
+            | Message::ConfirmNewWorkspaceDialog
+            | Message::CancelNewWorkspaceDialog
+            | Message::ShowRenameWorkspaceDialog(..)
+            | Message::RenameWorkspaceDialogInput(..)
+            | Message::ConfirmRenameWorkspaceDialog
+            | Message::CancelRenameWorkspaceDialog
+            | Message::ShowDeleteWorkspaceDialog(..)
+            | Message::ConfirmDeleteWorkspaceDialog
+            | Message::CancelDeleteWorkspaceDialog
+            | Message::SwitchWorkspace(..)
             | Message::HostKeyAcceptSave
             | Message::HostKeyConnectOnce
             | Message::HostKeyReject
@@ -477,28 +477,28 @@ impl ShellKeep {
                 self.hidden_sessions = device.hidden_sessions.clone();
             }
 
-            // FR-ENV-05: restore last environment from saved state
+            // FR-ENV-05: restore last workspace from saved state
             if let Some(ref saved) = saved_state
-                && let Some(ref env_name) = saved.last_environment
+                && let Some(ref workspace_name) = saved.last_workspace
             {
-                self.current_environment = env_name.clone();
+                self.current_workspace = workspace_name.clone();
             }
 
-            // FR-ENV-04: populate env_list from saved state
+            // FR-ENV-04: populate workspace_list from saved state
             if let Some(ref saved) = saved_state {
-                self.dialogs.env_list = saved.environments.keys().cloned().collect();
-                self.dialogs.env_list.sort();
+                self.dialogs.workspace_list = saved.workspaces.keys().cloned().collect();
+                self.dialogs.workspace_list.sort();
             }
 
             // FR-SESSION-08: reconcile by UUID — match saved tabs to server sessions
-            let saved_env_tabs = saved_state
+            let saved_ws_tabs = saved_state
                 .as_ref()
-                .map(|s| s.env_tabs(&self.current_environment))
+                .map(|s| s.workspace_tabs(&self.current_workspace))
                 .unwrap_or_default();
 
             // Prune hidden_sessions: remove UUIDs that no longer exist in server state
-            if !saved_env_tabs.is_empty() {
-                let known_uuids: Vec<&str> = saved_env_tabs
+            if !saved_ws_tabs.is_empty() {
+                let known_uuids: Vec<&str> = saved_ws_tabs
                     .iter()
                     .map(|t| t.session_uuid.as_str())
                     .collect();
@@ -510,10 +510,10 @@ impl ShellKeep {
                     tracing::info!("pruned {pruned} stale hidden session UUIDs");
                 }
             }
-            if !saved_env_tabs.is_empty() {
+            if !saved_ws_tabs.is_empty() {
                 for tab in self.all_tabs_mut() {
                     // Find saved tab entry by UUID
-                    if let Some(saved_tab) = saved_env_tabs
+                    if let Some(saved_tab) = saved_ws_tabs
                         .iter()
                         .find(|st| st.session_uuid == tab.session_uuid)
                     {
@@ -558,7 +558,7 @@ impl ShellKeep {
                 if existing_tmux.contains(session) {
                     continue; // Already open in a tab
                 }
-                if let Some(saved) = saved_env_tabs
+                if let Some(saved) = saved_ws_tabs
                     .iter()
                     .find(|t| t.tmux_session_name == *session)
                 {
@@ -577,11 +577,10 @@ impl ShellKeep {
                         session.as_str(),
                         saved.server_window_id.as_deref(),
                     ));
-                } else if session.starts_with(&format!("{}--shellkeep-", self.current_environment))
-                {
-                    // Shellkeep session in OUR environment but NOT in saved state —
+                } else if session.starts_with(&format!("{}--shellkeep-", self.current_workspace)) {
+                    // Shellkeep session in OUR workspace but NOT in saved state —
                     // orphan from a failed kill. Only clean up sessions in the current
-                    // environment to avoid touching other environments' sessions.
+                    // workspace to avoid touching other workspaces' sessions.
                     stale.push(session.clone());
                 }
             }
@@ -625,7 +624,7 @@ impl ShellKeep {
 
                 // Remove the auto-created initial tab whose tmux session is not in
                 // saved state — it was a placeholder that is now redundant.
-                let saved_tmux_names: Vec<&str> = saved_env_tabs
+                let saved_tmux_names: Vec<&str> = saved_ws_tabs
                     .iter()
                     .map(|t| t.tmux_session_name.as_str())
                     .collect();
@@ -1013,7 +1012,7 @@ impl ShellKeep {
                                 })
                                 .collect();
                             let new_tmux =
-                                format!("{}--shellkeep-{}", self.current_environment, sanitized);
+                                format!("{}--shellkeep-{}", self.current_workspace, sanitized);
                             if let Some(win) = self.active_window_mut() {
                                 win.tabs[index].tmux_session = new_tmux.clone();
                             }
@@ -1123,12 +1122,12 @@ impl ShellKeep {
 
                 // Find the hidden session in saved state to get its tmux name and title
                 let saved_state = self.cached_shared_state.clone();
-                let saved_env_tabs = saved_state
+                let saved_ws_tabs = saved_state
                     .as_ref()
-                    .map(|s| s.env_tabs(&self.current_environment))
+                    .map(|s| s.workspace_tabs(&self.current_workspace))
                     .unwrap_or_default();
 
-                if let Some(saved_tab) = saved_env_tabs
+                if let Some(saved_tab) = saved_ws_tabs
                     .iter()
                     .find(|t| t.session_uuid == session_uuid)
                 {
@@ -1599,9 +1598,9 @@ impl ShellKeep {
                 .is_some_and(|w| w.renaming_tab.is_some());
             if key == keyboard::Key::Named(keyboard::key::Named::Tab)
                 && (show_welcome
-                    || self.dialogs.show_env_dialog
-                    || self.dialogs.show_new_env_dialog
-                    || self.dialogs.show_rename_env_dialog
+                    || self.dialogs.show_workspace_dialog
+                    || self.dialogs.show_new_workspace_dialog
+                    || self.dialogs.show_rename_workspace_dialog
                     || self.search.active
                     || is_renaming)
             {
@@ -1718,131 +1717,140 @@ impl ShellKeep {
                 Task::none()
             }
 
-            // FR-ENV-03: environment selection dialog
-            Message::ShowEnvDialog => {
-                tracing::debug!("show env dialog");
-                // FR-ENV-04: if only one environment, select it directly
-                if self.dialogs.env_list.len() == 1 {
-                    let env_name = self.dialogs.env_list[0].clone();
-                    if env_name != self.current_environment {
-                        return self.update(Message::SwitchEnvironment(env_name));
+            // FR-ENV-03: workspace selection dialog
+            Message::ShowWorkspaceDialog => {
+                tracing::debug!("show workspace dialog");
+                // FR-ENV-04: if only one workspace, select it directly
+                if self.dialogs.workspace_list.len() == 1 {
+                    let workspace_name = self.dialogs.workspace_list[0].clone();
+                    if workspace_name != self.current_workspace {
+                        return self.update(Message::SwitchWorkspace(workspace_name));
                     }
                     return Task::none();
                 }
-                self.dialogs.show_env_dialog = true;
-                self.dialogs.env_filter.clear();
-                // Pre-select current environment
-                self.dialogs.selected_env = Some(self.current_environment.clone());
+                self.dialogs.show_workspace_dialog = true;
+                self.dialogs.workspace_filter.clear();
+                // Pre-select current workspace
+                self.dialogs.selected_workspace = Some(self.current_workspace.clone());
                 Task::none()
             }
 
-            Message::EnvFilterChanged(filter) => {
-                self.dialogs.env_filter = filter;
+            Message::WorkspaceFilterChanged(filter) => {
+                self.dialogs.workspace_filter = filter;
+
                 Task::none()
             }
 
-            Message::SelectEnv(name) => {
-                self.dialogs.selected_env = Some(name);
+            Message::SelectWorkspace(name) => {
+                self.dialogs.selected_workspace = Some(name);
                 Task::none()
             }
 
-            Message::ConfirmEnv => {
-                tracing::debug!("confirm env selection");
-                if let Some(ref env_name) = self.dialogs.selected_env {
-                    let env_name = env_name.clone();
-                    self.dialogs.show_env_dialog = false;
-                    if env_name != self.current_environment {
-                        return self.update(Message::SwitchEnvironment(env_name));
+            Message::ConfirmWorkspaceSelection => {
+                tracing::debug!("confirm workspace selection");
+                if let Some(ref workspace_name) = self.dialogs.selected_workspace {
+                    let workspace_name = workspace_name.clone();
+                    self.dialogs.show_workspace_dialog = false;
+                    if workspace_name != self.current_workspace {
+                        return self.update(Message::SwitchWorkspace(workspace_name));
                     }
                 }
                 Task::none()
             }
 
-            Message::NewEnvFromDialog => {
-                // Close env selection, open new-env creation
-                self.dialogs.show_env_dialog = false;
-                self.dialogs.new_env_input.clear();
-                self.dialogs.show_new_env_dialog = true;
+            Message::NewWorkspaceFromDialog => {
+                // Close workspace selection, open new workspace creation
+                self.dialogs.show_workspace_dialog = false;
+                self.dialogs.new_workspace_dialog_input.clear();
+                self.dialogs.show_new_workspace_dialog = true;
                 Task::none()
             }
 
-            Message::CancelEnvDialog => {
-                tracing::debug!("cancel env dialog");
-                self.dialogs.show_env_dialog = false;
+            Message::CancelWorkspaceDialog => {
+                tracing::debug!("cancel workspace dialog");
+                self.dialogs.show_workspace_dialog = false;
                 Task::none()
             }
 
-            // FR-ENV-07: create new environment
-            Message::ShowNewEnvDialog => {
-                self.dialogs.new_env_input.clear();
-                self.dialogs.show_new_env_dialog = true;
+            // FR-ENV-07: create new workspace
+            Message::ShowNewWorkspaceDialog => {
+                self.dialogs.new_workspace_dialog_input.clear();
+                self.dialogs.show_new_workspace_dialog = true;
                 Task::none()
             }
 
-            Message::NewEnvInputChanged(input) => {
-                self.dialogs.new_env_input = input;
+            Message::NewWorkspaceDialogInput(input) => {
+                self.dialogs.new_workspace_dialog_input = input;
                 Task::none()
             }
 
-            Message::ConfirmNewEnv => {
-                let name = self.dialogs.new_env_input.trim().to_string();
-                if !name.is_empty() && !self.dialogs.env_list.contains(&name) {
-                    self.dialogs.env_list.push(name.clone());
-                    self.dialogs.env_list.sort();
-                    self.current_environment = name;
+            Message::ConfirmNewWorkspaceDialog => {
+                let name = self.dialogs.new_workspace_dialog_input.trim().to_string();
+                if !name.is_empty() && !self.dialogs.workspace_list.contains(&name) {
+                    self.dialogs.workspace_list.push(name.clone());
+                    self.dialogs.workspace_list.sort();
+                    self.current_workspace = name;
                     self.toast = Some((
-                        format!("Environment \"{}\" created", self.current_environment),
+                        format!("Workspace \"{}\" created", self.current_workspace),
                         std::time::Instant::now(),
                     ));
                     self.state_dirty = true;
                     self.flush_state();
                 }
-                self.dialogs.show_new_env_dialog = false;
-                self.dialogs.new_env_input.clear();
+                self.dialogs.show_new_workspace_dialog = false;
+                self.dialogs.new_workspace_dialog_input.clear();
                 Task::none()
             }
 
-            Message::CancelNewEnv => {
-                self.dialogs.show_new_env_dialog = false;
-                self.dialogs.new_env_input.clear();
+            Message::CancelNewWorkspaceDialog => {
+                self.dialogs.show_new_workspace_dialog = false;
+                self.dialogs.new_workspace_dialog_input.clear();
                 Task::none()
             }
 
-            // FR-ENV-08: rename environment
-            Message::ShowRenameEnvDialog(name) => {
-                self.dialogs.rename_env_target = Some(name.clone());
-                self.dialogs.rename_env_input = name;
-                self.dialogs.show_rename_env_dialog = true;
+            // FR-ENV-08: rename workspace
+            Message::ShowRenameWorkspaceDialog(name) => {
+                self.dialogs.rename_workspace_target = Some(name.clone());
+                self.dialogs.rename_workspace_dialog_input = name;
+                self.dialogs.show_rename_workspace_dialog = true;
                 Task::none()
             }
 
-            Message::RenameEnvInputChanged(input) => {
-                self.dialogs.rename_env_input = input;
+            Message::RenameWorkspaceDialogInput(input) => {
+                self.dialogs.rename_workspace_dialog_input = input;
                 Task::none()
             }
 
-            Message::ConfirmRenameEnv => {
-                let new_name = self.dialogs.rename_env_input.trim().to_string();
-                if let Some(ref old_name) = self.dialogs.rename_env_target
+            Message::ConfirmRenameWorkspaceDialog => {
+                let new_name = self
+                    .dialogs
+                    .rename_workspace_dialog_input
+                    .trim()
+                    .to_string();
+                if let Some(ref old_name) = self.dialogs.rename_workspace_target
                     && !new_name.is_empty()
                     && new_name != *old_name
                 {
                     let old_name = old_name.clone();
                     // Rename in the display list
-                    if let Some(entry) = self.dialogs.env_list.iter_mut().find(|e| **e == old_name)
+                    if let Some(entry) = self
+                        .dialogs
+                        .workspace_list
+                        .iter_mut()
+                        .find(|e| **e == old_name)
                     {
                         *entry = new_name.clone();
                     }
-                    self.dialogs.env_list.sort();
+                    self.dialogs.workspace_list.sort();
                     // Rename in cached shared state (the authoritative source)
                     if let Some(ref mut state) = self.cached_shared_state
-                        && let Some(mut env) = state.environments.remove(&old_name)
+                        && let Some(mut ws) = state.workspaces.remove(&old_name)
                     {
-                        env.name = new_name.clone();
-                        state.environments.insert(new_name.clone(), env);
+                        ws.name = new_name.clone();
+                        state.workspaces.insert(new_name.clone(), ws);
                     }
-                    if self.current_environment == old_name {
-                        self.current_environment = new_name.clone();
+                    if self.current_workspace == old_name {
+                        self.current_workspace = new_name.clone();
                     }
                     self.toast = Some((
                         format!("Workspace renamed to \"{new_name}\""),
@@ -1851,73 +1859,73 @@ impl ShellKeep {
                     self.state_dirty = true;
                     self.flush_state();
                 }
-                self.dialogs.show_rename_env_dialog = false;
-                self.dialogs.rename_env_input.clear();
-                self.dialogs.rename_env_target = None;
+                self.dialogs.show_rename_workspace_dialog = false;
+                self.dialogs.rename_workspace_dialog_input.clear();
+                self.dialogs.rename_workspace_target = None;
                 Task::none()
             }
 
-            Message::CancelRenameEnv => {
-                self.dialogs.show_rename_env_dialog = false;
-                self.dialogs.rename_env_input.clear();
-                self.dialogs.rename_env_target = None;
+            Message::CancelRenameWorkspaceDialog => {
+                self.dialogs.show_rename_workspace_dialog = false;
+                self.dialogs.rename_workspace_dialog_input.clear();
+                self.dialogs.rename_workspace_target = None;
                 Task::none()
             }
 
-            // FR-ENV-09: delete environment
-            Message::ShowDeleteEnvDialog(name) => {
-                self.dialogs.delete_env_target = Some(name);
-                self.dialogs.show_delete_env_dialog = true;
+            // FR-ENV-09: delete workspace
+            Message::ShowDeleteWorkspaceDialog(name) => {
+                self.dialogs.delete_workspace_target = Some(name);
+                self.dialogs.show_delete_workspace_dialog = true;
                 Task::none()
             }
 
-            Message::ConfirmDeleteEnv => {
-                if let Some(ref name) = self.dialogs.delete_env_target {
+            Message::ConfirmDeleteWorkspaceDialog => {
+                if let Some(ref name) = self.dialogs.delete_workspace_target {
                     let name = name.clone();
-                    self.dialogs.env_list.retain(|e| *e != name);
-                    if self.current_environment == name {
-                        self.current_environment = self
+                    self.dialogs.workspace_list.retain(|e| *e != name);
+                    if self.current_workspace == name {
+                        self.current_workspace = self
                             .dialogs
-                            .env_list
+                            .workspace_list
                             .first()
                             .cloned()
                             .unwrap_or_else(|| "default".to_string());
                     }
                     self.toast = Some((
-                        format!("Environment \"{name}\" deleted"),
+                        format!("Workspace \"{name}\" deleted"),
                         std::time::Instant::now(),
                     ));
                     self.state_dirty = true;
                     self.flush_state();
                 }
-                self.dialogs.show_delete_env_dialog = false;
-                self.dialogs.delete_env_target = None;
+                self.dialogs.show_delete_workspace_dialog = false;
+                self.dialogs.delete_workspace_target = None;
                 Task::none()
             }
 
-            Message::CancelDeleteEnv => {
-                self.dialogs.show_delete_env_dialog = false;
-                self.dialogs.delete_env_target = None;
+            Message::CancelDeleteWorkspaceDialog => {
+                self.dialogs.show_delete_workspace_dialog = false;
+                self.dialogs.delete_workspace_target = None;
                 Task::none()
             }
 
-            // FR-ENV-10: switch active environment
-            Message::SwitchEnvironment(name) => {
-                if name != self.current_environment {
+            // FR-ENV-10: switch active workspace
+            Message::SwitchWorkspace(name) => {
+                if name != self.current_workspace {
                     tracing::info!(
-                        "switching environment: {} -> {}",
-                        self.current_environment,
+                        "switching workspace: {} -> {}",
+                        self.current_workspace,
                         name
                     );
-                    // Save current tabs for the current environment
+                    // Save current tabs for the current workspace
                     self.flush_state();
-                    // Switch to the new environment
-                    self.current_environment = name;
-                    // TODO: load tabs for the new environment from state
+                    // Switch to the new workspace
+                    self.current_workspace = name;
+                    // TODO: load tabs for the new workspace from state
                     self.state_dirty = true;
                     self.update_title();
                     self.toast = Some((
-                        format!("Switched to \"{}\" environment", self.current_environment),
+                        format!("Switched to \"{}\" workspace", self.current_workspace),
                         std::time::Instant::now(),
                     ));
                 }
@@ -2115,7 +2123,7 @@ impl ShellKeep {
         let mgr = self.conn_manager.clone();
         let conn_key = conn.key.clone();
         let client_id = self.client_id.clone();
-        let workspace = self.current_environment.clone();
+        let workspace = self.current_workspace.clone();
         let keepalive = self.config.ssh.keepalive_interval;
         let phase = Arc::new(std::sync::Mutex::new(i18n::t(i18n::CONNECTING).to_string()));
 
@@ -2234,7 +2242,7 @@ impl ShellKeep {
                     None => return Task::none(),
                 };
                 let conn_key = conn.key.clone();
-                let workspace = self.current_environment.clone();
+                let workspace = self.current_workspace.clone();
                 Task::perform(
                     async move {
                         let mgr = mgr.lock().await;
@@ -2620,7 +2628,7 @@ impl ShellKeep {
                         .find(|s| s.host == c.key.host)
                         .map(|s| s.uuid.clone())
                 });
-                new_win.workspace_env = Some(self.current_environment.clone());
+                new_win.workspace_env = Some(self.current_workspace.clone());
                 // Item 8: default window name
                 self.window_counter += 1;
                 if let Some(ref conn) = self.current_conn {
@@ -2653,8 +2661,8 @@ impl ShellKeep {
             // Open a new window for a specific workspace
             Message::NewWindowForWorkspace(server_uuid, env) => {
                 tracing::info!("new window for workspace: {server_uuid} / {env}");
-                let prev_env = self.current_environment.clone();
-                self.current_environment = env.clone();
+                let prev_env = self.current_workspace.clone();
+                self.current_workspace = env.clone();
 
                 let (new_id, open_task) = window::open(window::Settings {
                     size: iced::Size::new(900.0, 600.0),
@@ -2689,7 +2697,7 @@ impl ShellKeep {
                     open_task.map(|_| Message::Noop)
                 };
 
-                self.current_environment = prev_env;
+                self.current_workspace = prev_env;
                 result
             }
 
@@ -3038,8 +3046,8 @@ impl ShellKeep {
                             match serde_json::from_str::<SharedState>(&json) {
                                 Ok(state) => {
                                     tracing::info!(
-                                        "loaded server shared state: {} environments",
-                                        state.environments.len()
+                                        "loaded server shared state: {} workspaces",
+                                        state.workspaces.len()
                                     );
                                     self.cached_shared_state = Some(state);
                                 }
@@ -3127,8 +3135,8 @@ impl ShellKeep {
                         match serde_json::from_str::<SharedState>(&json) {
                             Ok(state) => {
                                 tracing::info!(
-                                    "loaded server shared state: {} environments",
-                                    state.environments.len()
+                                    "loaded server shared state: {} workspaces",
+                                    state.workspaces.len()
                                 );
                                 self.cached_shared_state = Some(state);
                             }
@@ -3176,15 +3184,15 @@ impl ShellKeep {
 
                     let mut window_open_tasks: Vec<Task<Message>> = Vec::new();
                     if !has_session_windows {
-                        let saved_env_tabs = self
+                        let saved_ws_tabs = self
                             .cached_shared_state
                             .as_ref()
-                            .map(|s| s.env_tabs(&self.current_environment))
+                            .map(|s| s.workspace_tabs(&self.current_workspace))
                             .unwrap_or_default();
 
                         // Collect distinct server_window_ids (preserving order)
                         let mut saved_window_ids: Vec<String> = Vec::new();
-                        for tab in &saved_env_tabs {
+                        for tab in &saved_ws_tabs {
                             if let Some(ref swid) = tab.server_window_id
                                 && !saved_window_ids.contains(swid)
                             {
@@ -3225,7 +3233,7 @@ impl ShellKeep {
                             let mut session_win = super::AppWindow::new(win_id);
                             session_win.server_window_id = swid.clone();
                             session_win.server_uuid = server_uuid.clone();
-                            session_win.workspace_env = Some(self.current_environment.clone());
+                            session_win.workspace_env = Some(self.current_workspace.clone());
                             self.window_counter += 1;
                             session_win.name =
                                 format!("{} - Window {}", label, self.window_counter);
@@ -3422,8 +3430,8 @@ impl ShellKeep {
 
             Message::ConnectWorkspace(_server_uuid, env) => {
                 tracing::info!("connect workspace: {_server_uuid}/{env}");
-                // Delegate to existing SwitchEnvironment logic
-                self.update(Message::SwitchEnvironment(env))
+                // Delegate to existing SwitchWorkspace logic
+                self.update(Message::SwitchWorkspace(env))
             }
 
             Message::DisconnectWorkspace(_server_uuid, _env) => {
@@ -3464,8 +3472,8 @@ impl ShellKeep {
                 self.dialogs.show_new_workspace = None;
                 let name = std::mem::take(&mut self.dialogs.new_workspace_input);
                 if !name.trim().is_empty() {
-                    self.dialogs.new_env_input = name;
-                    return self.update(Message::ConfirmNewEnv);
+                    self.dialogs.new_workspace_dialog_input = name;
+                    return self.update(Message::ConfirmNewWorkspaceDialog);
                 }
                 Task::none()
             }
@@ -3493,9 +3501,9 @@ impl ShellKeep {
                 if let Some((_server_uuid, old_name)) = self.dialogs.show_workspace_rename.take() {
                     let new_name = std::mem::take(&mut self.dialogs.workspace_rename_input);
                     if !new_name.trim().is_empty() {
-                        self.dialogs.rename_env_target = Some(old_name);
-                        self.dialogs.rename_env_input = new_name;
-                        return self.update(Message::ConfirmRenameEnv);
+                        self.dialogs.rename_workspace_target = Some(old_name);
+                        self.dialogs.rename_workspace_dialog_input = new_name;
+                        return self.update(Message::ConfirmRenameWorkspaceDialog);
                     }
                 }
                 Task::none()
@@ -3510,25 +3518,28 @@ impl ShellKeep {
             Message::ShowDeleteWorkspace(_server_uuid, env) => {
                 tracing::info!("show delete workspace: {env}");
                 self.dialogs.show_workspace_delete = Some((_server_uuid, env.clone()));
-                self.dialogs.delete_env_target = Some(env);
+                self.dialogs.delete_workspace_target = Some(env);
                 Task::none()
             }
 
             Message::ConfirmDeleteWorkspace => {
-                let (server_uuid, env_name) = match self.dialogs.show_workspace_delete.take() {
+                let (server_uuid, workspace_name) = match self.dialogs.show_workspace_delete.take()
+                {
                     Some(pair) => pair,
                     None => return Task::none(),
                 };
-                tracing::info!("confirm delete workspace: {env_name} on server {server_uuid}");
+                tracing::info!(
+                    "confirm delete workspace: {workspace_name} on server {server_uuid}"
+                );
 
                 // 1. Find tmux sessions belonging to this workspace
-                let prefix = format!("{env_name}--shellkeep-");
+                let prefix = format!("{workspace_name}--shellkeep-");
                 let sessions_to_kill: Vec<String> = self
                     .cached_shared_state
                     .as_ref()
-                    .and_then(|s| s.environments.get(&env_name))
-                    .map(|env| {
-                        env.tabs
+                    .and_then(|s| s.workspaces.get(&workspace_name))
+                    .map(|ws| {
+                        ws.tabs
                             .iter()
                             .map(|t| t.tmux_session_name.clone())
                             .collect()
@@ -3563,22 +3574,22 @@ impl ShellKeep {
                 // Remove hidden sessions for this workspace
                 self.hidden_sessions.retain(|uuid| {
                     if let Some(ref state) = self.cached_shared_state
-                        && let Some(env) = state.environments.get(&env_name)
+                        && let Some(ws) = state.workspaces.get(&workspace_name)
                     {
-                        return !env.tabs.iter().any(|t| t.session_uuid == *uuid);
+                        return !ws.tabs.iter().any(|t| t.session_uuid == *uuid);
                     }
                     true
                 });
 
                 // 3. Remove workspace from cached shared state
                 if let Some(ref mut state) = self.cached_shared_state {
-                    state.environments.remove(&env_name);
+                    state.workspaces.remove(&workspace_name);
                 }
-                self.dialogs.env_list.retain(|e| *e != env_name);
-                if self.current_environment == env_name {
-                    self.current_environment = self
+                self.dialogs.workspace_list.retain(|e| *e != workspace_name);
+                if self.current_workspace == workspace_name {
+                    self.current_workspace = self
                         .dialogs
-                        .env_list
+                        .workspace_list
                         .first()
                         .cloned()
                         .unwrap_or_else(|| "Default".to_string());
@@ -3611,7 +3622,7 @@ impl ShellKeep {
                 self.state_dirty = true;
                 self.flush_state();
                 self.toast = Some((
-                    format!("Workspace \"{env_name}\" removed"),
+                    format!("Workspace \"{workspace_name}\" removed"),
                     std::time::Instant::now(),
                 ));
 
@@ -3625,7 +3636,7 @@ impl ShellKeep {
             Message::CancelDeleteWorkspace => {
                 tracing::debug!("cancel delete workspace");
                 self.dialogs.show_workspace_delete = None;
-                self.dialogs.delete_env_target = None;
+                self.dialogs.delete_workspace_target = None;
                 Task::none()
             }
 
@@ -3683,12 +3694,12 @@ impl ShellKeep {
                     tasks.push(open_task.map(Message::WindowOpened));
 
                     // Restore each tab by reattaching to existing tmux session
-                    let prev_env = self.current_environment.clone();
-                    self.current_environment = env.clone();
+                    let prev_env = self.current_workspace.clone();
+                    self.current_workspace = env.clone();
                     for ht in hw.tabs {
                         tasks.push(self.open_tab_russh(&ht.label, &ht.tmux_session_name));
                     }
-                    self.current_environment = prev_env;
+                    self.current_workspace = prev_env;
                 }
 
                 self.save_state();

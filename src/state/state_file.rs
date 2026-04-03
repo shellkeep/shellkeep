@@ -3,7 +3,7 @@
 
 //! State file: persisted window/tab layout, split into shared and per-device.
 //!
-//! Shared state (environments, tabs) is stored on server at
+//! Shared state (workspaces, tabs) is stored on server at
 //! `~/.shellkeep/shared.json` and locally at
 //! `$XDG_DATA_HOME/shellkeep/cache/servers/<fingerprint>/shared.json`.
 //!
@@ -28,17 +28,21 @@ static TMUX_NAME_RE: LazyLock<regex::Regex> =
 // Shared state — same for all devices connecting to a server
 // ---------------------------------------------------------------------------
 
-/// Shared state: environments with windows/tabs, last active environment.
+/// Shared state: workspaces with windows/tabs, last active workspace.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SharedState {
     pub schema_version: u32,
     pub last_modified: String,
-    /// FR-ENV-01: named environment groupings
-    #[serde(default)]
-    pub environments: HashMap<String, Environment>,
-    /// FR-ENV-04: last active environment
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_environment: Option<String>,
+    /// FR-ENV-01: named workspace groupings
+    #[serde(default, alias = "environments")]
+    pub workspaces: HashMap<String, Workspace>,
+    /// FR-ENV-04: last active workspace
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "last_environment"
+    )]
+    pub last_workspace: Option<String>,
 }
 
 impl SharedState {
@@ -46,15 +50,15 @@ impl SharedState {
         Self {
             schema_version: SCHEMA_VERSION,
             last_modified: chrono_now(),
-            environments: HashMap::new(),
-            last_environment: None,
+            workspaces: HashMap::new(),
+            last_workspace: None,
         }
     }
 
-    /// Get tabs for an environment.
-    pub fn env_tabs(&self, env_name: &str) -> Vec<TabState> {
-        self.environments
-            .get(env_name)
+    /// Get tabs for a workspace.
+    pub fn workspace_tabs(&self, workspace_name: &str) -> Vec<TabState> {
+        self.workspaces
+            .get(workspace_name)
             .map(|e| e.tabs.clone())
             .unwrap_or_default()
     }
@@ -120,13 +124,17 @@ pub struct StateFile {
     pub schema_version: u32,
     pub last_modified: String,
     pub client_id: String,
-    /// FR-ENV-01: named environment groupings
-    #[serde(default)]
-    pub environments: HashMap<String, Environment>,
-    /// FR-ENV-04: last active environment
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_environment: Option<String>,
-    /// Legacy v1 field — migrated to "Default" environment on load
+    /// FR-ENV-01: named workspace groupings
+    #[serde(default, alias = "environments")]
+    pub workspaces: HashMap<String, Workspace>,
+    /// FR-ENV-04: last active workspace
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "last_environment"
+    )]
+    pub last_workspace: Option<String>,
+    /// Legacy v1 field — migrated to "Default" workspace on load
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tabs: Vec<TabState>,
     /// FR-STATE-14: persisted window geometry (v2 format)
@@ -136,7 +144,7 @@ pub struct StateFile {
 
 /// FR-ENV-01: a named grouping of sessions within a server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Environment {
+pub struct Workspace {
     pub name: String,
     pub tabs: Vec<TabState>,
 }
@@ -169,8 +177,8 @@ impl StateFile {
             schema_version: 2,
             last_modified: chrono_now(),
             client_id: client_id.to_string(),
-            environments: HashMap::new(),
-            last_environment: None,
+            workspaces: HashMap::new(),
+            last_workspace: None,
             tabs: Vec::new(),
             window: None,
         }
@@ -181,10 +189,10 @@ impl StateFile {
         let mut shared = SharedState {
             schema_version: SCHEMA_VERSION,
             last_modified: chrono_now(),
-            environments: self.environments,
-            last_environment: self.last_environment,
+            workspaces: self.workspaces,
+            last_workspace: self.last_workspace,
         };
-        validate_environments(&mut shared.environments);
+        validate_workspaces(&mut shared.workspaces);
 
         let mut device = DeviceState::new(&self.client_id);
         if let Some(w) = self.window {
@@ -202,10 +210,10 @@ impl StateFile {
         (shared, device)
     }
 
-    /// Get tabs for an environment.
-    pub fn env_tabs(&self, env_name: &str) -> Vec<TabState> {
-        self.environments
-            .get(env_name)
+    /// Get tabs for a workspace.
+    pub fn workspace_tabs(&self, workspace_name: &str) -> Vec<TabState> {
+        self.workspaces
+            .get(workspace_name)
             .map(|e| e.tabs.clone())
             .unwrap_or_default()
     }
@@ -219,10 +227,10 @@ fn chrono_now() -> String {
     chrono::Utc::now().to_rfc3339()
 }
 
-/// Validate and deduplicate tabs in all environments.
-fn validate_environments(environments: &mut HashMap<String, Environment>) {
-    for env in environments.values_mut() {
-        for tab in &env.tabs {
+/// Validate and deduplicate tabs in all workspaces.
+fn validate_workspaces(workspaces: &mut HashMap<String, Workspace>) {
+    for ws in workspaces.values_mut() {
+        for tab in &ws.tabs {
             if !TMUX_NAME_RE.is_match(&tab.tmux_session_name) {
                 tracing::warn!(
                     "tab {} has invalid tmux_session_name: {:?}",
@@ -231,15 +239,15 @@ fn validate_environments(environments: &mut HashMap<String, Environment>) {
                 );
             }
         }
-        let orig_len = env.tabs.len();
+        let orig_len = ws.tabs.len();
         let mut seen_uuids = HashSet::new();
-        env.tabs
+        ws.tabs
             .retain(|t| seen_uuids.insert(t.session_uuid.clone()));
-        if env.tabs.len() < orig_len {
+        if ws.tabs.len() < orig_len {
             tracing::warn!(
-                "removed {} duplicate session UUID(s) from environment '{}'",
-                orig_len - env.tabs.len(),
-                env.name
+                "removed {} duplicate session UUID(s) from workspace '{}'",
+                orig_len - ws.tabs.len(),
+                ws.name
             );
         }
     }
@@ -252,9 +260,9 @@ mod tests {
     #[test]
     fn shared_state_roundtrip() {
         let mut state = SharedState::new();
-        state.environments.insert(
+        state.workspaces.insert(
             "Default".to_string(),
-            Environment {
+            Workspace {
                 name: "Default".to_string(),
                 tabs: vec![TabState {
                     session_uuid: "uuid-1".into(),
@@ -270,10 +278,10 @@ mod tests {
         let loaded: SharedState = serde_json::from_str(&json).unwrap();
 
         assert_eq!(loaded.schema_version, 3);
-        assert_eq!(loaded.environments.len(), 1);
-        let env = loaded.environments.get("Default").unwrap();
-        assert_eq!(env.tabs.len(), 1);
-        assert_eq!(env.tabs[0].tmux_session_name, "shellkeep-0");
+        assert_eq!(loaded.workspaces.len(), 1);
+        let ws = loaded.workspaces.get("Default").unwrap();
+        assert_eq!(ws.tabs.len(), 1);
+        assert_eq!(ws.tabs[0].tmux_session_name, "shellkeep-0");
     }
 
     #[test]
@@ -310,16 +318,16 @@ mod tests {
     #[test]
     fn shared_state_empty() {
         let state = SharedState::new();
-        assert!(state.environments.is_empty());
+        assert!(state.workspaces.is_empty());
         assert_eq!(state.schema_version, 3);
     }
 
     #[test]
     fn legacy_state_roundtrip() {
         let mut state = StateFile::new("test-client");
-        state.environments.insert(
+        state.workspaces.insert(
             "Default".to_string(),
-            Environment {
+            Workspace {
                 name: "Default".to_string(),
                 tabs: vec![TabState {
                     session_uuid: "uuid-1".into(),
@@ -336,18 +344,18 @@ mod tests {
 
         assert_eq!(loaded.schema_version, 2);
         assert_eq!(loaded.client_id, "test-client");
-        assert_eq!(loaded.environments.len(), 1);
-        let env = loaded.environments.get("Default").unwrap();
-        assert_eq!(env.tabs.len(), 1);
-        assert_eq!(env.tabs[0].tmux_session_name, "shellkeep-0");
+        assert_eq!(loaded.workspaces.len(), 1);
+        let ws = loaded.workspaces.get("Default").unwrap();
+        assert_eq!(ws.tabs.len(), 1);
+        assert_eq!(ws.tabs[0].tmux_session_name, "shellkeep-0");
     }
 
     #[test]
     fn legacy_to_split_migration() {
         let mut legacy = StateFile::new("migrate-test");
-        legacy.environments.insert(
+        legacy.workspaces.insert(
             "Default".to_string(),
-            Environment {
+            Workspace {
                 name: "Default".to_string(),
                 tabs: vec![TabState {
                     session_uuid: "uuid-1".into(),
@@ -358,7 +366,7 @@ mod tests {
                 }],
             },
         );
-        legacy.last_environment = Some("Default".to_string());
+        legacy.last_workspace = Some("Default".to_string());
         legacy.window = Some(WindowState {
             x: Some(50),
             y: Some(100),
@@ -369,10 +377,10 @@ mod tests {
         let (shared, device) = legacy.into_split();
 
         assert_eq!(shared.schema_version, 3);
-        assert_eq!(shared.environments.len(), 1);
-        assert_eq!(shared.last_environment, Some("Default".to_string()));
-        let env = shared.environments.get("Default").unwrap();
-        assert_eq!(env.tabs.len(), 1);
+        assert_eq!(shared.workspaces.len(), 1);
+        assert_eq!(shared.last_workspace, Some("Default".to_string()));
+        let ws = shared.workspaces.get("Default").unwrap();
+        assert_eq!(ws.tabs.len(), 1);
 
         assert_eq!(device.schema_version, 3);
         assert_eq!(device.client_id, "migrate-test");
@@ -388,7 +396,7 @@ mod tests {
     fn shared_state_window_geometry_absent() {
         let json = r#"{"schema_version":3,"last_modified":"0Z"}"#;
         let loaded: SharedState = serde_json::from_str(json).unwrap();
-        assert!(loaded.environments.is_empty());
+        assert!(loaded.workspaces.is_empty());
     }
 
     #[test]
@@ -409,9 +417,9 @@ mod tests {
         // We need to use a unique client_id and set up the directory structure.
         // Since local_cache_path uses dirs::data_dir(), we test into_split directly.
         let mut legacy = StateFile::new("split-test");
-        legacy.environments.insert(
+        legacy.workspaces.insert(
             "Default".to_string(),
-            Environment {
+            Workspace {
                 name: "Default".to_string(),
                 tabs: vec![TabState {
                     session_uuid: "u1".into(),
@@ -430,7 +438,7 @@ mod tests {
         });
 
         let (shared, device) = legacy.into_split();
-        assert_eq!(shared.environments.len(), 1);
+        assert_eq!(shared.workspaces.len(), 1);
         assert_eq!(device.client_id, "split-test");
         let geo = device.window_geometry.get("main").unwrap();
         assert_eq!(geo.width, 1280);

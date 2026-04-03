@@ -93,29 +93,29 @@ pub(crate) enum Message {
     ExportScrollback,
     /// FR-TABS-12: copy entire scrollback to clipboard
     CopyScrollback,
-    // FR-ENV-03: environment selection dialog
-    ShowEnvDialog,
-    EnvFilterChanged(String),
-    SelectEnv(String),
-    ConfirmEnv,
-    NewEnvFromDialog,
-    // FR-ENV-07..09: environment management
-    ShowNewEnvDialog,
-    NewEnvInputChanged(String),
-    ConfirmNewEnv,
-    CancelNewEnv,
-    ShowRenameEnvDialog(String),
-    RenameEnvInputChanged(String),
-    ConfirmRenameEnv,
-    CancelRenameEnv,
-    ShowDeleteEnvDialog(String),
-    ConfirmDeleteEnv,
-    CancelDeleteEnv,
-    CancelEnvDialog,
+    // FR-ENV-03: workspace selection dialog
+    ShowWorkspaceDialog,
+    WorkspaceFilterChanged(String),
+    SelectWorkspace(String),
+    ConfirmWorkspaceSelection,
+    NewWorkspaceFromDialog,
+    // FR-ENV-07..09: workspace management (legacy dialog)
+    ShowNewWorkspaceDialog,
+    NewWorkspaceDialogInput(String),
+    ConfirmNewWorkspaceDialog,
+    CancelNewWorkspaceDialog,
+    ShowRenameWorkspaceDialog(String),
+    RenameWorkspaceDialogInput(String),
+    ConfirmRenameWorkspaceDialog,
+    CancelRenameWorkspaceDialog,
+    ShowDeleteWorkspaceDialog(String),
+    ConfirmDeleteWorkspaceDialog,
+    CancelDeleteWorkspaceDialog,
+    CancelWorkspaceDialog,
     /// FR-RECONNECT-08: network change detected (Linux)
     NetworkChanged,
-    /// FR-ENV-10: switch to a different environment
-    SwitchEnvironment(String),
+    /// FR-ENV-10: switch to a different workspace
+    SwitchWorkspace(String),
     /// FR-CONN-20: remote state syncer initialized
     StateSyncerReady(Result<Arc<ssh::sftp::StateSyncer>, String>),
     /// FR-STATE-02: server state loaded (shared + device from server)

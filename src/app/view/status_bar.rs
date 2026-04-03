@@ -45,12 +45,12 @@ impl ShellKeep {
             String::new()
         };
 
-        // FR-ENV-01: environment indicator (hidden when only "default" env)
-        // Phase 6: prefer workspace_env from window, fall back to current_environment
+        // FR-ENV-01: workspace indicator (hidden when only "default" workspace)
+        // Phase 6: prefer workspace_env from window, fall back to current_workspace
         let env_label = win
             .workspace_env
             .as_deref()
-            .unwrap_or(&self.current_environment);
+            .unwrap_or(&self.current_workspace);
         let show_env = !env_label.eq_ignore_ascii_case("default");
 
         let shortcuts_btn = button(text("\u{2328}").size(12))

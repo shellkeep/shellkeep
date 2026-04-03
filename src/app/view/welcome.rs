@@ -324,8 +324,8 @@ impl ShellKeep {
                         .into(),
                 );
             } else if is_connected {
-                // Show workspace sub-cards for each environment
-                let envs = self.server_environments(&uuid);
+                // Show workspace sub-cards for each workspace
+                let envs = self.server_workspaces(&uuid);
                 for env in &envs {
                     let visible_count = self
                         .windows
@@ -427,7 +427,7 @@ impl ShellKeep {
                     card_items.push(workspace_card.into());
                 }
 
-                // If no environments listed yet, show status
+                // If no workspaces listed yet, show status
                 if envs.is_empty() {
                     let active_sessions = self
                         .windows
@@ -800,7 +800,7 @@ impl ShellKeep {
                 text("New workspace")
                     .size(18)
                     .color(Color::from_rgb8(0xcd, 0xd6, 0xf4)),
-                text("Create a new workspace environment on this server.")
+                text("Create a new workspace on this server.")
                     .size(13)
                     .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
                 text_input("Workspace name", input)

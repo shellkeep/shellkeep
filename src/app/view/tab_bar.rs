@@ -169,7 +169,7 @@ impl ShellKeep {
         let saved_state = self.cached_shared_state.as_ref().cloned();
         let saved_env_tabs = saved_state
             .as_ref()
-            .map(|s| s.env_tabs(&self.current_environment))
+            .map(|s| s.workspace_tabs(&self.current_workspace))
             .unwrap_or_default();
 
         let mut items: Vec<Element<'_, Message>> = Vec::new();

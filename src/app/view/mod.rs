@@ -6,7 +6,7 @@
 //! The view is composed of stacked layers (bottom to top):
 //! 1. Tab bar + terminal content + status bar (the main layout)
 //! 2. Close-tab confirmation dialog overlay
-//! 3. Environment selection/management dialog overlay
+//! 3. Workspace selection/management dialog overlay
 //! 4. Host key verification dialog overlay
 //! 5. Password prompt dialog overlay
 //! 6. Lock conflict dialog overlay
@@ -16,7 +16,7 @@
 //! - `tab_bar` — tab strip with context menus
 //! - `dead_tab` — disconnected session view with reconnect options
 //! - `status_bar` — bottom bar with connection info and latency
-//! - `dialogs` — environment CRUD dialogs
+//! - `dialogs` — workspace CRUD dialogs
 //! - `styles` — iced style functions (buttons, containers, scrim)
 
 mod dead_tab;
@@ -649,14 +649,14 @@ impl ShellKeep {
             main_view
         };
 
-        // P21: unified environment dialog — new env is inline, rename/delete are sub-dialogs
+        // P21: unified workspace dialog — new workspace is inline, rename/delete are sub-dialogs
         let main_view: Element<'_, Message> =
-            if self.dialogs.show_env_dialog || self.dialogs.show_new_env_dialog {
-                stack![main_view, self.view_env_dialog()].into()
-            } else if self.dialogs.show_rename_env_dialog {
-                stack![main_view, self.view_rename_env_dialog()].into()
-            } else if self.dialogs.show_delete_env_dialog {
-                stack![main_view, self.view_delete_env_dialog()].into()
+            if self.dialogs.show_workspace_dialog || self.dialogs.show_new_workspace_dialog {
+                stack![main_view, self.view_workspace_dialog()].into()
+            } else if self.dialogs.show_rename_workspace_dialog {
+                stack![main_view, self.view_rename_workspace_dialog()].into()
+            } else if self.dialogs.show_delete_workspace_dialog {
+                stack![main_view, self.view_delete_workspace_dialog()].into()
             } else {
                 main_view
             };

@@ -3,25 +3,25 @@
 
 //! FR-ENV-01: workspace management — CRUD operations for named groups of windows/sessions per server.
 
-use super::state_file::{Environment, SharedState};
+use super::state_file::{SharedState, Workspace};
 use crate::error::StateError;
 
-/// FR-ENV-01: create a new empty environment.
-pub fn create_environment(state: &mut SharedState, name: &str) -> Result<(), StateError> {
+/// FR-ENV-01: create a new empty workspace.
+pub fn create_workspace(state: &mut SharedState, name: &str) -> Result<(), StateError> {
     let name = name.trim();
     if name.is_empty() {
         return Err(StateError::Validation(
-            "environment name cannot be empty".to_string(),
+            "workspace name cannot be empty".to_string(),
         ));
     }
-    if state.environments.contains_key(name) {
+    if state.workspaces.contains_key(name) {
         return Err(StateError::Validation(format!(
-            "environment '{name}' already exists"
+            "workspace '{name}' already exists"
         )));
     }
-    state.environments.insert(
+    state.workspaces.insert(
         name.to_string(),
-        Environment {
+        Workspace {
             name: name.to_string(),
             tabs: Vec::new(),
         },
@@ -29,57 +29,57 @@ pub fn create_environment(state: &mut SharedState, name: &str) -> Result<(), Sta
     Ok(())
 }
 
-/// FR-ENV-01: delete an environment. Cannot delete the last remaining environment.
-pub fn delete_environment(state: &mut SharedState, name: &str) -> Result<(), StateError> {
-    if !state.environments.contains_key(name) {
+/// FR-ENV-01: delete a workspace. Cannot delete the last remaining workspace.
+pub fn delete_workspace(state: &mut SharedState, name: &str) -> Result<(), StateError> {
+    if !state.workspaces.contains_key(name) {
         return Err(StateError::Validation(format!(
-            "environment '{name}' does not exist"
+            "workspace '{name}' does not exist"
         )));
     }
-    if state.environments.len() <= 1 {
+    if state.workspaces.len() <= 1 {
         return Err(StateError::Validation(
-            "cannot delete the last environment".to_string(),
+            "cannot delete the last workspace".to_string(),
         ));
     }
-    state.environments.remove(name);
-    // If the deleted environment was the last active, switch to another
-    if state.last_environment.as_deref() == Some(name) {
-        state.last_environment = state.environments.keys().next().cloned();
+    state.workspaces.remove(name);
+    // If the deleted workspace was the last active, switch to another
+    if state.last_workspace.as_deref() == Some(name) {
+        state.last_workspace = state.workspaces.keys().next().cloned();
     }
     Ok(())
 }
 
-/// FR-ENV-01: rename an environment.
-pub fn rename_environment(state: &mut SharedState, old: &str, new: &str) -> Result<(), StateError> {
+/// FR-ENV-01: rename a workspace.
+pub fn rename_workspace(state: &mut SharedState, old: &str, new: &str) -> Result<(), StateError> {
     let new = new.trim();
     if new.is_empty() {
         return Err(StateError::Validation(
-            "environment name cannot be empty".to_string(),
+            "workspace name cannot be empty".to_string(),
         ));
     }
-    if !state.environments.contains_key(old) {
+    if !state.workspaces.contains_key(old) {
         return Err(StateError::Validation(format!(
-            "environment '{old}' does not exist"
+            "workspace '{old}' does not exist"
         )));
     }
-    if old != new && state.environments.contains_key(new) {
+    if old != new && state.workspaces.contains_key(new) {
         return Err(StateError::Validation(format!(
-            "environment '{new}' already exists"
+            "workspace '{new}' already exists"
         )));
     }
-    if let Some(mut env) = state.environments.remove(old) {
-        env.name = new.to_string();
-        state.environments.insert(new.to_string(), env);
-        if state.last_environment.as_deref() == Some(old) {
-            state.last_environment = Some(new.to_string());
+    if let Some(mut ws) = state.workspaces.remove(old) {
+        ws.name = new.to_string();
+        state.workspaces.insert(new.to_string(), ws);
+        if state.last_workspace.as_deref() == Some(old) {
+            state.last_workspace = Some(new.to_string());
         }
     }
     Ok(())
 }
 
-/// FR-ENV-01: list all environment names, sorted alphabetically.
-pub fn list_environments(state: &SharedState) -> Vec<String> {
-    let mut names: Vec<String> = state.environments.keys().cloned().collect();
+/// FR-ENV-01: list all workspace names, sorted alphabetically.
+pub fn list_workspaces(state: &SharedState) -> Vec<String> {
+    let mut names: Vec<String> = state.workspaces.keys().cloned().collect();
     names.sort();
     names
 }
@@ -90,17 +90,17 @@ mod tests {
 
     fn make_state() -> SharedState {
         let mut state = SharedState::new();
-        create_environment(&mut state, "Default").unwrap();
+        create_workspace(&mut state, "Default").unwrap();
         state
     }
 
     #[test]
     fn create_and_list() {
         let mut state = make_state();
-        create_environment(&mut state, "Project A").unwrap();
-        create_environment(&mut state, "Project B").unwrap();
+        create_workspace(&mut state, "Project A").unwrap();
+        create_workspace(&mut state, "Project B").unwrap();
         assert_eq!(
-            list_environments(&state),
+            list_workspaces(&state),
             vec!["Default", "Project A", "Project B"]
         );
     }
@@ -108,77 +108,77 @@ mod tests {
     #[test]
     fn create_duplicate_fails() {
         let mut state = make_state();
-        let err = create_environment(&mut state, "Default").unwrap_err();
+        let err = create_workspace(&mut state, "Default").unwrap_err();
         assert!(err.to_string().contains("already exists"));
     }
 
     #[test]
     fn create_empty_name_fails() {
         let mut state = make_state();
-        let err = create_environment(&mut state, "  ").unwrap_err();
+        let err = create_workspace(&mut state, "  ").unwrap_err();
         assert!(err.to_string().contains("cannot be empty"));
     }
 
     #[test]
-    fn delete_environment_works() {
+    fn delete_workspace_works() {
         let mut state = make_state();
-        create_environment(&mut state, "Temp").unwrap();
-        delete_environment(&mut state, "Temp").unwrap();
-        assert_eq!(list_environments(&state), vec!["Default"]);
+        create_workspace(&mut state, "Temp").unwrap();
+        delete_workspace(&mut state, "Temp").unwrap();
+        assert_eq!(list_workspaces(&state), vec!["Default"]);
     }
 
     #[test]
-    fn delete_last_environment_fails() {
+    fn delete_last_workspace_fails() {
         let mut state = make_state();
-        let err = delete_environment(&mut state, "Default").unwrap_err();
+        let err = delete_workspace(&mut state, "Default").unwrap_err();
         assert!(err.to_string().contains("cannot delete the last"));
     }
 
     #[test]
     fn delete_nonexistent_fails() {
         let mut state = make_state();
-        let err = delete_environment(&mut state, "nope").unwrap_err();
+        let err = delete_workspace(&mut state, "nope").unwrap_err();
         assert!(err.to_string().contains("does not exist"));
     }
 
     #[test]
     fn delete_active_switches() {
         let mut state = make_state();
-        state.last_environment = Some("Default".to_string());
-        create_environment(&mut state, "Other").unwrap();
-        delete_environment(&mut state, "Default").unwrap();
-        assert!(state.last_environment.is_some());
-        assert_ne!(state.last_environment.as_deref(), Some("Default"));
+        state.last_workspace = Some("Default".to_string());
+        create_workspace(&mut state, "Other").unwrap();
+        delete_workspace(&mut state, "Default").unwrap();
+        assert!(state.last_workspace.is_some());
+        assert_ne!(state.last_workspace.as_deref(), Some("Default"));
     }
 
     #[test]
-    fn rename_environment_works() {
+    fn rename_workspace_works() {
         let mut state = make_state();
-        state.last_environment = Some("Default".to_string());
-        rename_environment(&mut state, "Default", "Main").unwrap();
-        assert_eq!(list_environments(&state), vec!["Main"]);
-        assert_eq!(state.last_environment, Some("Main".to_string()));
+        state.last_workspace = Some("Default".to_string());
+        rename_workspace(&mut state, "Default", "Main").unwrap();
+        assert_eq!(list_workspaces(&state), vec!["Main"]);
+        assert_eq!(state.last_workspace, Some("Main".to_string()));
     }
 
     #[test]
     fn rename_to_existing_fails() {
         let mut state = make_state();
-        create_environment(&mut state, "Other").unwrap();
-        let err = rename_environment(&mut state, "Default", "Other").unwrap_err();
+        create_workspace(&mut state, "Other").unwrap();
+        let err = rename_workspace(&mut state, "Default", "Other").unwrap_err();
         assert!(err.to_string().contains("already exists"));
     }
 
     #[test]
     fn rename_nonexistent_fails() {
         let mut state = make_state();
-        let err = rename_environment(&mut state, "nope", "new").unwrap_err();
+        let err = rename_workspace(&mut state, "nope", "new").unwrap_err();
         assert!(err.to_string().contains("does not exist"));
     }
 
     #[test]
     fn rename_same_name_is_noop() {
         let mut state = make_state();
-        rename_environment(&mut state, "Default", "Default").unwrap();
-        assert_eq!(list_environments(&state), vec!["Default"]);
+        rename_workspace(&mut state, "Default", "Default").unwrap();
+        assert_eq!(list_workspaces(&state), vec!["Default"]);
     }
 }

@@ -26,9 +26,7 @@ use shellkeep::state::history;
 #[allow(deprecated)] // legacy type kept for migration
 use shellkeep::state::recent::RecentConnections;
 use shellkeep::state::server::SavedServers;
-use shellkeep::state::state_file::{
-    DeviceState, Environment, SharedState, TabState, WindowGeometry,
-};
+use shellkeep::state::state_file::{DeviceState, SharedState, TabState, WindowGeometry, Workspace};
 use shellkeep::tray::Tray;
 use shellkeep::{i18n, ssh};
 use std::collections::HashMap;
@@ -57,21 +55,21 @@ pub(crate) struct SearchState {
     pub(crate) last_match: Option<SearchMatch>,
 }
 
-/// All dialog-related state (env, host key, password, lock, close).
+/// All dialog-related state (workspace, host key, password, lock, close).
 pub(crate) struct DialogState {
     pub(crate) show_close_dialog: bool,
     pub(crate) close_window_id: Option<window::Id>,
-    pub(crate) show_env_dialog: bool,
-    pub(crate) env_list: Vec<String>,
-    pub(crate) env_filter: String,
-    pub(crate) selected_env: Option<String>,
-    pub(crate) show_new_env_dialog: bool,
-    pub(crate) new_env_input: String,
-    pub(crate) show_rename_env_dialog: bool,
-    pub(crate) rename_env_input: String,
-    pub(crate) rename_env_target: Option<String>,
-    pub(crate) show_delete_env_dialog: bool,
-    pub(crate) delete_env_target: Option<String>,
+    pub(crate) show_workspace_dialog: bool,
+    pub(crate) workspace_list: Vec<String>,
+    pub(crate) workspace_filter: String,
+    pub(crate) selected_workspace: Option<String>,
+    pub(crate) show_new_workspace_dialog: bool,
+    pub(crate) new_workspace_dialog_input: String,
+    pub(crate) show_rename_workspace_dialog: bool,
+    pub(crate) rename_workspace_dialog_input: String,
+    pub(crate) rename_workspace_target: Option<String>,
+    pub(crate) show_delete_workspace_dialog: bool,
+    pub(crate) delete_workspace_target: Option<String>,
     pub(crate) pending_host_key_prompt: Option<ssh::connection::HostKeyPrompt>,
     pub(crate) show_password_dialog: bool,
     pub(crate) password_input: String,
@@ -105,7 +103,7 @@ pub(crate) struct DialogState {
 #[allow(dead_code)]
 pub(crate) struct ActiveWorkspace {
     pub(crate) server_uuid: String,
-    pub(crate) environment: String,
+    pub(crate) workspace_name: String,
     pub(crate) conn_params: ConnParams,
     pub(crate) sessions_listed: bool,
     pub(crate) server_state_loaded: bool,
@@ -300,13 +298,13 @@ pub(crate) struct ShellKeep {
     /// FR-CONFIG-04: config hot reload receiver
     pub(crate) config_reload_rx: Option<std::sync::mpsc::Receiver<()>>,
 
-    // Dialog state (close, env, host key, password, lock)
+    // Dialog state (close, workspace, host key, password, lock)
     pub(crate) dialogs: DialogState,
     /// FR-CONN-20: remote state syncer (SFTP or shell fallback)
     pub(crate) state_syncer: Option<Arc<ssh::sftp::StateSyncer>>,
 
-    /// FR-ENV-06: one environment active per instance
-    pub(crate) current_environment: String,
+    /// FR-ENV-06: one workspace active per instance
+    pub(crate) current_workspace: String,
 
     /// Hidden session UUIDs (per-device, not restored as tabs on connect)
     pub(crate) hidden_sessions: Vec<String>,
@@ -387,7 +385,7 @@ impl ShellKeep {
             toast: None,
             current_conn: None,
             client_id: shellkeep::state::client_id::resolve(config.general.client_id.as_deref()),
-            current_environment: "Default".to_string(),
+            current_workspace: "Default".to_string(),
             hidden_sessions: Vec::new(),
             active_workspaces: Vec::new(),
             state_syncers: HashMap::new(),
@@ -426,17 +424,17 @@ impl ShellKeep {
             dialogs: DialogState {
                 show_close_dialog: false,
                 close_window_id: None,
-                show_env_dialog: false,
-                env_list: Vec::new(),
-                env_filter: String::new(),
-                selected_env: None,
-                show_new_env_dialog: false,
-                new_env_input: String::new(),
-                show_rename_env_dialog: false,
-                rename_env_input: String::new(),
-                rename_env_target: None,
-                show_delete_env_dialog: false,
-                delete_env_target: None,
+                show_workspace_dialog: false,
+                workspace_list: Vec::new(),
+                workspace_filter: String::new(),
+                selected_workspace: None,
+                show_new_workspace_dialog: false,
+                new_workspace_dialog_input: String::new(),
+                show_rename_workspace_dialog: false,
+                rename_workspace_dialog_input: String::new(),
+                rename_workspace_target: None,
+                show_delete_workspace_dialog: false,
+                delete_workspace_target: None,
                 pending_host_key_prompt: None,
                 show_password_dialog: false,
                 password_input: String::new(),
@@ -628,15 +626,15 @@ impl ShellKeep {
     // Multi-workspace helpers
     // -----------------------------------------------------------------------
 
-    /// Find the active workspace for a server + environment.
+    /// Find the active workspace for a server + workspace name.
     #[allow(dead_code)]
     pub(crate) fn find_workspace(&self, server_uuid: &str, env: &str) -> Option<&ActiveWorkspace> {
         self.active_workspaces
             .iter()
-            .find(|w| w.server_uuid == server_uuid && w.environment == env)
+            .find(|w| w.server_uuid == server_uuid && w.workspace_name == env)
     }
 
-    /// Find the active workspace for a server + environment (mutable).
+    /// Find the active workspace for a server + workspace name (mutable).
     #[allow(dead_code)]
     pub(crate) fn find_workspace_mut(
         &mut self,
@@ -645,7 +643,7 @@ impl ShellKeep {
     ) -> Option<&mut ActiveWorkspace> {
         self.active_workspaces
             .iter_mut()
-            .find(|w| w.server_uuid == server_uuid && w.environment == env)
+            .find(|w| w.server_uuid == server_uuid && w.workspace_name == env)
     }
 
     /// Get the workspace for the currently focused window.
@@ -664,13 +662,13 @@ impl ShellKeep {
         self.state_syncers.get(key)
     }
 
-    /// Get environments discovered for a connected server (from cached_shared_state).
+    /// Get workspaces discovered for a connected server (from cached_shared_state).
     #[allow(dead_code)]
-    pub(crate) fn server_environments(&self, _server_uuid: &str) -> Vec<String> {
+    pub(crate) fn server_workspaces(&self, _server_uuid: &str) -> Vec<String> {
         let mut envs: Vec<String> = self
             .cached_shared_state
             .as_ref()
-            .map(|s| s.environments.keys().cloned().collect())
+            .map(|s| s.workspaces.keys().cloned().collect())
             .unwrap_or_default();
         envs.sort();
         envs
@@ -699,9 +697,9 @@ impl ShellKeep {
         // Count from cached shared state (server's view of sessions per environment)
         // rather than from windows (which may not have workspace_env set correctly).
         if let Some(ref state) = self.cached_shared_state
-            && let Some(environment) = state.environments.get(env)
+            && let Some(ws) = state.workspaces.get(env)
         {
-            return environment.tabs.len();
+            return ws.tabs.len();
         }
         // Fallback: count tabs across all session windows
         self.windows
@@ -717,9 +715,9 @@ impl ShellKeep {
 
     /// Open a new tab, assigning it the next unused tmux session name.
     /// FR-SESSION-04, FR-SESSION-05, FR-ENV-02: generate tmux session name with
-    /// environment and timestamp.
+    /// workspace and timestamp.
     pub(crate) fn next_tmux_session(&self) -> String {
-        shellkeep::ssh::tmux::env_tmux_session_name(&self.current_environment)
+        shellkeep::ssh::tmux::workspace_tmux_session_name(&self.current_workspace)
     }
 
     /// Open a tab using russh SSH. Returns a Task that establishes the connection.
@@ -1153,7 +1151,7 @@ impl ShellKeep {
             phase,
             password,
             force_lock,
-            workspace: self.current_environment.clone(),
+            workspace: self.current_workspace.clone(),
         };
         Task::perform(
             async move {
@@ -1214,19 +1212,19 @@ impl ShellKeep {
                 }
             }
         }
-        shared.environments.insert(
-            self.current_environment.clone(),
-            Environment {
-                name: self.current_environment.clone(),
+        shared.workspaces.insert(
+            self.current_workspace.clone(),
+            Workspace {
+                name: self.current_workspace.clone(),
                 tabs: env_tabs,
             },
         );
-        shared.last_environment = Some(self.current_environment.clone());
-        // Preserve other environments from the previously loaded shared state
+        shared.last_workspace = Some(self.current_workspace.clone());
+        // Preserve other workspaces from the previously loaded shared state
         if let Some(ref prev) = self.cached_shared_state {
-            for (name, env) in &prev.environments {
-                if name != &self.current_environment {
-                    shared.environments.insert(name.clone(), env.clone());
+            for (name, ws) in &prev.workspaces {
+                if name != &self.current_workspace {
+                    shared.workspaces.insert(name.clone(), ws.clone());
                 }
             }
         }
