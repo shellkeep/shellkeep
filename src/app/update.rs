@@ -3342,9 +3342,111 @@ impl ShellKeep {
             }
 
             Message::ConfirmDeleteWorkspace => {
-                tracing::info!("confirm delete workspace");
-                self.dialogs.show_workspace_delete = None;
-                self.update(Message::ConfirmDeleteEnv)
+                let (server_uuid, env_name) = match self.dialogs.show_workspace_delete.take() {
+                    Some(pair) => pair,
+                    None => return Task::none(),
+                };
+                tracing::info!("confirm delete workspace: {env_name} on server {server_uuid}");
+
+                // 1. Find tmux sessions belonging to this workspace
+                let prefix = format!("{env_name}--shellkeep-");
+                let sessions_to_kill: Vec<String> = self
+                    .cached_shared_state
+                    .as_ref()
+                    .and_then(|s| s.environments.get(&env_name))
+                    .map(|env| {
+                        env.tabs
+                            .iter()
+                            .map(|t| t.tmux_session_name.clone())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                // 2. Close all session windows and remove hidden sessions for this workspace
+                let mut close_tasks: Vec<Task<Message>> = Vec::new();
+                let mut win_ids_to_remove: Vec<window::Id> = Vec::new();
+                for (&win_id, win) in &self.windows {
+                    if win.kind == super::WindowKind::Session {
+                        // Remove tabs that belong to this workspace
+                        let has_workspace_tabs =
+                            win.tabs.iter().any(|t| t.tmux_session.starts_with(&prefix));
+                        if has_workspace_tabs {
+                            win_ids_to_remove.push(win_id);
+                            close_tasks.push(window::close(win_id));
+                        }
+                    }
+                }
+                for win_id in &win_ids_to_remove {
+                    self.windows.remove(win_id);
+                    self.window_order.retain(|id| id != win_id);
+                }
+                if self
+                    .focused_window
+                    .is_some_and(|id| win_ids_to_remove.contains(&id))
+                {
+                    self.focused_window = self.window_order.first().copied();
+                }
+
+                // Remove hidden sessions for this workspace
+                self.hidden_sessions.retain(|uuid| {
+                    if let Some(ref state) = self.cached_shared_state {
+                        if let Some(env) = state.environments.get(&env_name) {
+                            return !env.tabs.iter().any(|t| t.session_uuid == *uuid);
+                        }
+                    }
+                    true
+                });
+
+                // 3. Remove workspace from cached shared state
+                if let Some(ref mut state) = self.cached_shared_state {
+                    state.environments.remove(&env_name);
+                }
+                self.dialogs.env_list.retain(|e| *e != env_name);
+                if self.current_environment == env_name {
+                    self.current_environment = self
+                        .dialogs
+                        .env_list
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| "Default".to_string());
+                }
+
+                // 4. Kill tmux sessions on server
+                if !sessions_to_kill.is_empty() {
+                    let mgr = self.conn_manager.clone();
+                    if let Some(ref conn) = self.current_conn {
+                        let conn_key = conn.key.clone();
+                        let sessions = sessions_to_kill.clone();
+                        close_tasks.push(Task::perform(
+                            async move {
+                                let mgr_guard = mgr.lock().await;
+                                if let Some(handle_arc) = mgr_guard.get_cached(&conn_key) {
+                                    let handle = handle_arc.lock().await;
+                                    for name in &sessions {
+                                        let cmd =
+                                            format!("tmux kill-session -t {name} 2>/dev/null");
+                                        let _ = ssh::connection::exec_command(&handle, &cmd).await;
+                                        tracing::info!("killed tmux session: {name}");
+                                    }
+                                }
+                            },
+                            |_| Message::Noop,
+                        ));
+                    }
+                }
+
+                self.state_dirty = true;
+                self.flush_state();
+                self.toast = Some((
+                    format!("Workspace \"{env_name}\" removed"),
+                    std::time::Instant::now(),
+                ));
+
+                if close_tasks.is_empty() {
+                    Task::none()
+                } else {
+                    Task::batch(close_tasks)
+                }
             }
 
             Message::CancelDeleteWorkspace => {

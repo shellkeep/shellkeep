@@ -353,8 +353,10 @@ impl ShellKeep {
                     }
                     let detail_text = details.join(", ");
 
-                    let env_clone = env.clone();
-                    let uuid_clone = uuid.clone();
+                    let uuid_rename = uuid.clone();
+                    let env_rename = env.clone();
+                    let uuid_delete = uuid.clone();
+                    let env_delete = env.clone();
 
                     let workspace_card = container(
                         row![
@@ -364,12 +366,20 @@ impl ShellKeep {
                             ]
                             .spacing(2)
                             .width(Length::Fill),
-                            button(text("Open").size(11).color(text_color))
-                                .on_press(Message::OpenWorkspace(uuid_clone, env_clone))
-                                .padding([4, 8])
-                                .style(styles::secondary_button_style),
+                            button(text("Rename").size(10).color(label_color))
+                                .on_press(Message::ShowRenameWorkspace(uuid_rename, env_rename,))
+                                .padding([3, 6])
+                                .style(styles::ghost_button_style),
+                            button(
+                                text("Remove")
+                                    .size(10)
+                                    .color(Color::from_rgb8(0xf3, 0x8b, 0xa8)),
+                            )
+                            .on_press(Message::ShowDeleteWorkspace(uuid_delete, env_delete,))
+                            .padding([3, 6])
+                            .style(styles::ghost_button_style),
                         ]
-                        .spacing(6)
+                        .spacing(4)
                         .align_y(iced::Alignment::Center)
                         .padding([6, 8]),
                     )
@@ -903,18 +913,18 @@ impl ShellKeep {
         .into()
     }
 
-    /// Phase 6: delete workspace confirmation dialog.
+    /// Phase 6: remove workspace confirmation dialog.
     fn view_workspace_delete_dialog(&self, env: &str) -> Element<'_, Message> {
         use iced::widget::container;
         container(
             column![
-                text("Delete workspace?")
+                text("Remove workspace?")
                     .size(18)
                     .color(Color::from_rgb8(0xcd, 0xd6, 0xf4)),
-                text(format!("Delete workspace \"{env}\"?"))
+                text(format!("Remove workspace \"{env}\"?"))
                     .size(13)
                     .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
-                text("Sessions in this workspace will be terminated.")
+                text("All sessions will be terminated and windows closed.")
                     .size(12)
                     .color(Color::from_rgb8(0xf9, 0xe2, 0xaf)),
                 Space::new().height(8),
@@ -924,7 +934,7 @@ impl ShellKeep {
                         .padding([8, 16])
                         .style(styles::secondary_button_style),
                     Space::new().width(Length::Fill),
-                    button(text("Delete").size(13))
+                    button(text("Remove").size(13))
                         .on_press(Message::ConfirmDeleteWorkspace)
                         .padding([8, 16])
                         .style(styles::danger_button_style),
