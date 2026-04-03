@@ -1136,29 +1136,34 @@ impl ShellKeep {
 
             // Item 2: disconnect server (keep tmux sessions alive)
             Message::DisconnectServer => {
-                tracing::info!("disconnect server: hiding all sessions");
-                // Hide all tabs in all session windows
+                tracing::info!("disconnect server: hiding all sessions, closing windows");
+                // Hide all tabs and close all session windows
                 let mut session_win_ids: Vec<window::Id> = Vec::new();
                 for (&win_id, win) in &self.windows {
                     if win.kind == super::WindowKind::Session {
+                        // Move all session UUIDs to hidden
+                        for tab in &win.tabs {
+                            if !tab.session_uuid.is_empty()
+                                && !self.hidden_sessions.contains(&tab.session_uuid)
+                            {
+                                self.hidden_sessions.push(tab.session_uuid.clone());
+                            }
+                        }
                         session_win_ids.push(win_id);
                     }
                 }
-                for win_id in session_win_ids {
-                    if let Some(win) = self.windows.get(&win_id) {
-                        let tab_count = win.tabs.len();
-                        for i in (0..tab_count).rev() {
-                            let uuid = win.tabs[i].session_uuid.clone();
-                            if !self.hidden_sessions.contains(&uuid) {
-                                self.hidden_sessions.push(uuid);
-                            }
-                        }
-                    }
-                    if let Some(win) = self.windows.get_mut(&win_id) {
-                        win.tabs.clear();
-                        win.active_tab = 0;
-                        win.update_title();
-                    }
+                // Remove and close all session windows
+                let mut close_tasks: Vec<Task<Message>> = Vec::new();
+                for win_id in &session_win_ids {
+                    self.windows.remove(win_id);
+                    self.window_order.retain(|id| id != win_id);
+                    close_tasks.push(window::close(*win_id));
+                }
+                if self
+                    .focused_window
+                    .is_some_and(|id| session_win_ids.contains(&id))
+                {
+                    self.focused_window = self.window_order.first().copied();
                 }
                 self.current_conn = None;
                 self.sessions_listed = false;
@@ -1172,7 +1177,11 @@ impl ShellKeep {
                     "Disconnected. Sessions kept on server.".into(),
                     std::time::Instant::now(),
                 ));
-                Task::none()
+                if close_tasks.is_empty() {
+                    Task::none()
+                } else {
+                    Task::batch(close_tasks)
+                }
             }
 
             // Item 2: close all sessions (destructive) — show confirmation
