@@ -3185,10 +3185,10 @@ impl ShellKeep {
                         // Collect distinct server_window_ids (preserving order)
                         let mut saved_window_ids: Vec<String> = Vec::new();
                         for tab in &saved_env_tabs {
-                            if let Some(ref swid) = tab.server_window_id {
-                                if !saved_window_ids.contains(swid) {
-                                    saved_window_ids.push(swid.clone());
-                                }
+                            if let Some(ref swid) = tab.server_window_id
+                                && !saved_window_ids.contains(swid)
+                            {
+                                saved_window_ids.push(swid.clone());
                             }
                         }
                         // Old state or no tabs: create one default window
