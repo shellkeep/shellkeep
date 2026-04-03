@@ -436,14 +436,29 @@ impl ShellKeep {
             let saved_state = shared_opt;
 
             // FR-STATE-14: restore window geometry from device state
-            if let Some(ref device) = device_opt
-                && let Some(geo) = device.window_geometry.get("main")
-                && let Some(win) = self.active_window_mut()
-            {
-                win.window_x = geo.x;
-                win.window_y = geo.y;
-                win.window_width = geo.width;
-                win.window_height = geo.height;
+            // Try last_active_window first, then "main", then any entry
+            if let Some(ref device) = device_opt {
+                let geo = device
+                    .last_active_window
+                    .as_ref()
+                    .and_then(|k| device.window_geometry.get(k))
+                    .or_else(|| device.window_geometry.get("main"))
+                    .or_else(|| device.window_geometry.values().next());
+                if let Some(geo) = geo
+                    && let Some(win) = self.active_window_mut()
+                {
+                    win.window_x = geo.x;
+                    win.window_y = geo.y;
+                    win.window_width = geo.width;
+                    win.window_height = geo.height;
+                    tracing::info!(
+                        "restored window geometry: {}x{} at ({:?},{:?})",
+                        geo.width,
+                        geo.height,
+                        geo.x,
+                        geo.y
+                    );
+                }
             }
 
             // Load hidden sessions from device state
@@ -3026,7 +3041,7 @@ impl ShellKeep {
                         .windows
                         .values()
                         .any(|w| w.kind == super::WindowKind::Session);
-                    let session_open_task = if !has_session_windows {
+                    let new_session_win_id = if !has_session_windows {
                         let (session_win_id, task) = window::open(window::Settings {
                             size: iced::Size::new(900.0, 600.0),
                             ..window::Settings::default()
@@ -3047,12 +3062,13 @@ impl ShellKeep {
                         self.windows.insert(session_win_id, session_win);
                         self.window_order.push(session_win_id);
                         self.focused_window = Some(session_win_id);
-                        Some(task.map(|_| Message::Noop))
+                        Some((session_win_id, task.map(|_| Message::Noop)))
                     } else {
                         None
                     };
 
                     // Run reconciliation — tabs will be added to the session window
+                    // (also restores geometry to internal state)
                     let reconcile_task = self.reconcile_sessions(result.sessions);
 
                     // If reconciliation didn't restore any tabs, create a fresh one
@@ -3067,8 +3083,22 @@ impl ShellKeep {
                     self.flush_state();
 
                     let mut tasks = vec![reconcile_task];
-                    if let Some(t) = session_open_task {
-                        tasks.push(t);
+                    if let Some((win_id, open_task)) = new_session_win_id {
+                        tasks.push(open_task);
+                        // FR-STATE-14: apply restored geometry to the actual window
+                        if let Some(win) = self.windows.get(&win_id) {
+                            let w = win.window_width as f32;
+                            let h = win.window_height as f32;
+                            if w > 0.0 && h > 0.0 {
+                                tasks.push(window::resize(win_id, iced::Size::new(w, h)));
+                            }
+                            if let (Some(x), Some(y)) = (win.window_x, win.window_y) {
+                                tasks.push(window::move_to(
+                                    win_id,
+                                    iced::Point::new(x as f32, y as f32),
+                                ));
+                            }
+                        }
                     }
                     if let Some(t) = fresh_tab_task {
                         tasks.push(t);
