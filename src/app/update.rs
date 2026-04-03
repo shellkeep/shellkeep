@@ -909,7 +909,7 @@ impl ShellKeep {
             }
 
             Message::StartRename(index) => {
-                tracing::debug!("start rename tab {index}");
+                tracing::info!("start rename tab {index}");
                 let label = self
                     .active_window()
                     .and_then(|w| w.tabs.get(index))
@@ -937,7 +937,7 @@ impl ShellKeep {
             }
 
             Message::FinishRename => {
-                tracing::debug!("finish rename tab");
+                tracing::info!("rename tab to: {}", self.rename_input.trim());
                 let mut rename_task = Task::none();
                 let renaming_tab = self.active_window().and_then(|w| w.renaming_tab);
                 if let Some(index) = renaming_tab {
