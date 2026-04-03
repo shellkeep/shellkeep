@@ -1234,6 +1234,10 @@ impl ShellKeep {
         // Build device state (geometry per window, hidden sessions)
         let mut device = DeviceState::new(&self.client_id);
         for (win_id, win) in &self.windows {
+            // Skip control window — only save session window geometry
+            if win.kind == WindowKind::Control {
+                continue;
+            }
             device.window_geometry.insert(
                 win.server_window_id.clone(),
                 WindowGeometry {
