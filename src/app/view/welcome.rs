@@ -8,7 +8,9 @@ use crate::ShellKeep;
 use crate::app::Message;
 use crate::app::view::styles;
 
-use iced::widget::{Space, button, center, column, container, row, scrollable, text, text_input};
+use iced::widget::{
+    Space, button, center, column, container, row, scrollable, text, text_input, tooltip,
+};
 use iced::{Color, Element, Length};
 use shellkeep::i18n;
 
@@ -324,9 +326,8 @@ impl ShellKeep {
             } else if is_connected {
                 // Show workspace sub-cards for each environment
                 let envs = self.server_environments(&uuid);
-                let hidden_count = self.hidden_sessions.len();
                 for env in &envs {
-                    let window_count = self
+                    let visible_count = self
                         .windows
                         .values()
                         .filter(|w| {
@@ -334,11 +335,13 @@ impl ShellKeep {
                                 && w.workspace_env.as_deref() == Some(env.as_str())
                         })
                         .count();
+                    let hidden_win_count = self
+                        .hidden_windows
+                        .iter()
+                        .filter(|hw| hw.workspace_env.as_deref() == Some(env.as_str()))
+                        .count();
 
-                    let detail_text = format!(
-                        "{window_count} window{}",
-                        if window_count == 1 { "" } else { "s" }
-                    );
+                    let visible_text = format!("{visible_count} visible",);
 
                     let uuid_focus = uuid.clone();
                     let env_focus = env.clone();
@@ -349,25 +352,45 @@ impl ShellKeep {
                     let uuid_delete = uuid.clone();
                     let env_delete = env.clone();
 
+                    let mut info_col = column![
+                        text(env.clone()).size(12).color(text_color),
+                        button(text(visible_text).size(10).color(label_color))
+                            .on_press(Message::FocusWorkspaceWindows(uuid_focus, env_focus,))
+                            .padding(0)
+                            .style(styles::ghost_button_style),
+                    ]
+                    .spacing(2)
+                    .width(Length::Fill);
+
+                    if hidden_win_count > 0 {
+                        let hidden_text = format!("{hidden_win_count} hidden",);
+                        let env_restore = env.clone();
+                        info_col = info_col.push(
+                            button(
+                                text(hidden_text)
+                                    .size(10)
+                                    .color(Color::from_rgb8(0x89, 0xb4, 0xfa)),
+                            )
+                            .on_press(Message::RestoreWorkspaceHiddenWindows(env_restore))
+                            .padding(0)
+                            .style(styles::ghost_button_style),
+                        );
+                    }
+
                     let workspace_card = container(
                         row![
-                            column![
-                                text(env.clone()).size(12).color(text_color),
-                                button(text(detail_text).size(10).color(label_color))
-                                    .on_press(
-                                        Message::FocusWorkspaceWindows(uuid_focus, env_focus,)
-                                    )
-                                    .padding(0)
+                            info_col,
+                            tooltip(
+                                button(text("+").size(12).color(text_color))
+                                    .on_press(Message::NewWindowForWorkspace(
+                                        uuid_new_win,
+                                        env_new_win,
+                                    ))
+                                    .padding([3, 6])
                                     .style(styles::ghost_button_style),
-                            ]
-                            .spacing(2)
-                            .width(Length::Fill),
-                            button(text("+").size(12).color(text_color))
-                                .on_press(
-                                    Message::NewWindowForWorkspace(uuid_new_win, env_new_win,)
-                                )
-                                .padding([3, 6])
-                                .style(styles::ghost_button_style),
+                                "New window",
+                                tooltip::Position::Top,
+                            ),
                             button(text("Rename").size(10).color(label_color))
                                 .on_press(Message::ShowRenameWorkspace(uuid_rename, env_rename,))
                                 .padding([3, 6])
@@ -412,82 +435,6 @@ impl ShellKeep {
                         if active_sessions == 1 { "" } else { "s" }
                     );
                     card_items.push(text(status).size(11).color(label_color).into());
-                }
-
-                // Hidden sessions dropdown (at server level — sessions can span workspaces)
-                if hidden_count > 0 {
-                    let toggle_text = if self.show_hidden_sessions_dropdown {
-                        format!(
-                            "\u{25be} {hidden_count} hidden session{}",
-                            if hidden_count == 1 { "" } else { "s" }
-                        )
-                    } else {
-                        format!(
-                            "\u{25b8} {hidden_count} hidden session{}",
-                            if hidden_count == 1 { "" } else { "s" }
-                        )
-                    };
-                    card_items.push(
-                        button(
-                            text(toggle_text)
-                                .size(11)
-                                .color(Color::from_rgb8(0x89, 0xb4, 0xfa)),
-                        )
-                        .on_press(Message::ToggleHiddenSessionsDropdown)
-                        .padding([2, 4])
-                        .style(styles::ghost_button_style)
-                        .into(),
-                    );
-
-                    if self.show_hidden_sessions_dropdown {
-                        for hidden_uuid in &self.hidden_sessions {
-                            let session_label = self
-                                .cached_shared_state
-                                .as_ref()
-                                .and_then(|state| {
-                                    state
-                                        .environments
-                                        .values()
-                                        .flat_map(|env| env.tabs.iter())
-                                        .find(|t| t.session_uuid == *hidden_uuid)
-                                        .map(|t| t.title.clone())
-                                })
-                                .unwrap_or_else(|| {
-                                    hidden_uuid[..8.min(hidden_uuid.len())].to_string()
-                                });
-
-                            let uuid_clone = hidden_uuid.clone();
-                            let restore_row = container(
-                                row![
-                                    text(format!("  {session_label}"))
-                                        .size(11)
-                                        .color(label_color)
-                                        .width(Length::Fill),
-                                    button(
-                                        text("Restore")
-                                            .size(10)
-                                            .color(Color::from_rgb8(0xa6, 0xe3, 0xa1)),
-                                    )
-                                    .on_press(Message::RestoreHiddenSession(uuid_clone))
-                                    .padding([2, 6])
-                                    .style(styles::ghost_button_style),
-                                ]
-                                .align_y(iced::Alignment::Center)
-                                .padding([2, 8]),
-                            )
-                            .style(|_: &iced::Theme| container::Style {
-                                background: Some(iced::Background::Color(Color::from_rgb8(
-                                    0x1e, 0x1e, 0x2e,
-                                ))),
-                                border: iced::Border {
-                                    radius: 2.0.into(),
-                                    ..Default::default()
-                                },
-                                ..Default::default()
-                            });
-                            card_items.push(restore_row.into());
-                        }
-                    }
                 }
 
                 // Server-level buttons

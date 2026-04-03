@@ -146,8 +146,8 @@ pub(crate) enum Message {
     LatencyTick,
     /// FR-UI-04/05: latency measurement result (tab_id, latency_ms or None on error)
     LatencyMeasured(TabId, Option<u32>),
-    /// Toggle the hidden sessions dropdown in the control window
-    ToggleHiddenSessionsDropdown,
+    /// Restore all hidden windows for a workspace environment
+    RestoreWorkspaceHiddenWindows(String),
     /// Show/hide the restore hidden sessions dropdown
     ShowRestoreDropdown,
     /// Dismiss the restore dropdown

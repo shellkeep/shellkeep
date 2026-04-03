@@ -200,7 +200,7 @@ impl ShellKeep {
             | Message::ConfirmDeleteWorkspace
             | Message::CancelDeleteWorkspace
             | Message::WorkspaceSessionsFound(..)
-            | Message::ToggleHiddenSessionsDropdown => self.handle_workspace_message(message),
+            | Message::RestoreWorkspaceHiddenWindows(..) => self.handle_workspace_message(message),
 
             Message::Noop => Task::none(),
         }
@@ -1623,20 +1623,37 @@ impl ShellKeep {
                     return Task::batch([window::close(win_id), iced::exit()]);
                 }
 
-                // Session window: hide all active tabs and close the window
-                if let Some(win) = self.windows.get(&win_id) {
-                    // Move all active session UUIDs to hidden_sessions
-                    for tab in &win.tabs {
-                        if !tab.is_dead()
-                            && !tab.session_uuid.is_empty()
-                            && !self.hidden_sessions.contains(&tab.session_uuid)
-                        {
-                            self.hidden_sessions.push(tab.session_uuid.clone());
+                // Session window: snapshot as hidden window, then close
+                if let Some(win) = self.windows.remove(&win_id) {
+                    let hidden_tabs: Vec<_> = win
+                        .tabs
+                        .iter()
+                        .filter(|t| !t.is_dead() && !t.session_uuid.is_empty())
+                        .map(|t| super::HiddenTab {
+                            session_uuid: t.session_uuid.clone(),
+                            tmux_session_name: t.tmux_session.clone(),
+                            label: t.label.clone(),
+                        })
+                        .collect();
+                    for ht in &hidden_tabs {
+                        if !self.hidden_sessions.contains(&ht.session_uuid) {
+                            self.hidden_sessions.push(ht.session_uuid.clone());
                         }
                     }
+                    if !hidden_tabs.is_empty() {
+                        self.hidden_windows.push(super::HiddenWindow {
+                            server_window_id: win.server_window_id,
+                            name: win.name,
+                            server_uuid: win.server_uuid,
+                            workspace_env: win.workspace_env,
+                            width: win.window_width,
+                            height: win.window_height,
+                            x: win.window_x,
+                            y: win.window_y,
+                            tabs: hidden_tabs,
+                        });
+                    }
                 }
-                // Remove the window
-                self.windows.remove(&win_id);
                 self.window_order.retain(|&id| id != win_id);
                 if self.focused_window == Some(win_id) {
                     self.focused_window = self.window_order.first().copied();
@@ -3539,10 +3556,69 @@ impl ShellKeep {
                 self.update(Message::ExistingSessionsFound(result))
             }
 
-            Message::ToggleHiddenSessionsDropdown => {
-                tracing::debug!("toggle hidden sessions dropdown");
-                self.show_hidden_sessions_dropdown = !self.show_hidden_sessions_dropdown;
-                Task::none()
+            Message::RestoreWorkspaceHiddenWindows(env) => {
+                tracing::info!("restore hidden windows for workspace: {env}");
+                let mut to_restore = Vec::new();
+                let mut kept = Vec::new();
+                for hw in self.hidden_windows.drain(..) {
+                    if hw.workspace_env.as_deref() == Some(env.as_str()) {
+                        to_restore.push(hw);
+                    } else {
+                        kept.push(hw);
+                    }
+                }
+                self.hidden_windows = kept;
+
+                let mut tasks: Vec<Task<Message>> = Vec::new();
+                for hw in to_restore {
+                    // Remove session UUIDs from hidden_sessions
+                    for ht in &hw.tabs {
+                        self.hidden_sessions.retain(|u| u != &ht.session_uuid);
+                    }
+
+                    // Open a new OS window with saved geometry
+                    let (new_id, open_task) = window::open(window::Settings {
+                        size: iced::Size::new(hw.width as f32, hw.height as f32),
+                        position: if let (Some(x), Some(y)) = (hw.x, hw.y) {
+                            window::Position::Specific(iced::Point::new(x as f32, y as f32))
+                        } else {
+                            window::Position::Default
+                        },
+                        ..window::Settings::default()
+                    });
+
+                    // Create AppWindow with restored state
+                    let mut new_win = super::AppWindow::new(new_id);
+                    new_win.server_window_id = hw.server_window_id;
+                    new_win.name = hw.name;
+                    new_win.server_uuid = hw.server_uuid;
+                    new_win.workspace_env = hw.workspace_env;
+                    new_win.window_width = hw.width;
+                    new_win.window_height = hw.height;
+                    new_win.window_x = hw.x;
+                    new_win.window_y = hw.y;
+
+                    self.windows.insert(new_id, new_win);
+                    self.window_order.push(new_id);
+                    self.focused_window = Some(new_id);
+
+                    tasks.push(open_task.map(Message::WindowOpened));
+
+                    // Restore each tab by reattaching to existing tmux session
+                    let prev_env = self.current_environment.clone();
+                    self.current_environment = env.clone();
+                    for ht in hw.tabs {
+                        tasks.push(self.open_tab_russh(&ht.label, &ht.tmux_session_name));
+                    }
+                    self.current_environment = prev_env;
+                }
+
+                self.save_state();
+                if tasks.is_empty() {
+                    Task::none()
+                } else {
+                    Task::batch(tasks)
+                }
             }
 
             _ => Task::none(),

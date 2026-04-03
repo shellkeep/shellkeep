@@ -116,6 +116,26 @@ pub(crate) struct ActiveWorkspace {
 // Per-window state — Phase 4: server > window > tab hierarchy
 // ---------------------------------------------------------------------------
 
+/// Snapshot of a window that was hidden (closed but remembered for restoration).
+pub(crate) struct HiddenWindow {
+    pub(crate) server_window_id: String,
+    pub(crate) name: String,
+    pub(crate) server_uuid: Option<String>,
+    pub(crate) workspace_env: Option<String>,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) x: Option<i32>,
+    pub(crate) y: Option<i32>,
+    pub(crate) tabs: Vec<HiddenTab>,
+}
+
+/// Tab metadata preserved in a hidden window.
+pub(crate) struct HiddenTab {
+    pub(crate) session_uuid: String,
+    pub(crate) tmux_session_name: String,
+    pub(crate) label: String,
+}
+
 /// Phase 5: distinguish control windows from session windows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WindowKind {
@@ -301,8 +321,8 @@ pub(crate) struct ShellKeep {
     /// UUID of server currently being connected to (for UI state)
     pub(crate) connecting_server: Option<String>,
 
-    /// Whether the hidden sessions dropdown is expanded in the control window
-    pub(crate) show_hidden_sessions_dropdown: bool,
+    /// Hidden windows: closed but remembered for restoration per workspace
+    pub(crate) hidden_windows: Vec<HiddenWindow>,
 
     /// Whether we're currently confirming a destructive CloseServer action
     pub(crate) confirm_close_server: bool,
@@ -373,7 +393,7 @@ impl ShellKeep {
             state_syncers: HashMap::new(),
             saved_servers,
             connecting_server: None,
-            show_hidden_sessions_dropdown: false,
+            hidden_windows: Vec::new(),
             confirm_close_server: false,
             renaming_window: None,
             window_rename_input: String::new(),
