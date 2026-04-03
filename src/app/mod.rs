@@ -672,13 +672,18 @@ impl ShellKeep {
 
     /// Count active (connected) sessions for a workspace.
     #[allow(dead_code)]
-    pub(crate) fn workspace_session_count(&self, server_uuid: &str, env: &str) -> usize {
+    pub(crate) fn workspace_session_count(&self, _server_uuid: &str, env: &str) -> usize {
+        // Count from cached shared state (server's view of sessions per environment)
+        // rather than from windows (which may not have workspace_env set correctly).
+        if let Some(ref state) = self.cached_shared_state {
+            if let Some(environment) = state.environments.get(env) {
+                return environment.tabs.len();
+            }
+        }
+        // Fallback: count tabs across all session windows
         self.windows
             .values()
-            .filter(|w| {
-                w.server_uuid.as_deref() == Some(server_uuid)
-                    && w.workspace_env.as_deref() == Some(env)
-            })
+            .filter(|w| w.kind == WindowKind::Session)
             .map(|w| w.tabs.len())
             .sum()
     }
