@@ -324,12 +324,35 @@ impl ShellKeep {
             } else if is_connected {
                 // Show workspace sub-cards for each environment
                 let envs = self.server_environments(&uuid);
+                let hidden_count = self.hidden_sessions.len();
                 for env in &envs {
                     let session_count = self.workspace_session_count(&uuid, env);
-                    let count_text = format!(
+                    let window_count = self
+                        .windows
+                        .values()
+                        .filter(|w| {
+                            w.kind == crate::app::WindowKind::Session
+                                && w.workspace_env.as_deref() == Some(env.as_str())
+                        })
+                        .count();
+
+                    // Build detail text: "1 session, 1 window" or "0 sessions, 2 hidden"
+                    let mut details = Vec::new();
+                    details.push(format!(
                         "{session_count} session{}",
                         if session_count == 1 { "" } else { "s" }
-                    );
+                    ));
+                    if window_count > 0 {
+                        details.push(format!(
+                            "{window_count} window{}",
+                            if window_count == 1 { "" } else { "s" }
+                        ));
+                    }
+                    if hidden_count > 0 {
+                        details.push(format!("{hidden_count} hidden"));
+                    }
+                    let detail_text = details.join(", ");
+
                     let env_clone = env.clone();
                     let uuid_clone = uuid.clone();
 
@@ -337,7 +360,7 @@ impl ShellKeep {
                         row![
                             column![
                                 text(env.clone()).size(12).color(text_color),
-                                text(count_text).size(10).color(label_color),
+                                text(detail_text).size(10).color(label_color),
                             ]
                             .spacing(2)
                             .width(Length::Fill),
@@ -379,33 +402,7 @@ impl ShellKeep {
                     card_items.push(text(status).size(11).color(label_color).into());
                 }
 
-                // Window and hidden session counts
-                let visible_windows = self
-                    .windows
-                    .values()
-                    .filter(|w| w.kind == crate::app::WindowKind::Session)
-                    .count();
-                let hidden_count = self.hidden_sessions.len();
-                let mut status_parts = Vec::new();
-                if visible_windows > 0 {
-                    status_parts.push(format!(
-                        "{visible_windows} window{}",
-                        if visible_windows == 1 { "" } else { "s" }
-                    ));
-                }
-                if hidden_count > 0 {
-                    status_parts.push(format!("{hidden_count} hidden"));
-                }
-                if !status_parts.is_empty() {
-                    card_items.push(
-                        text(status_parts.join(", "))
-                            .size(11)
-                            .color(label_color)
-                            .into(),
-                    );
-                }
-
-                // Hidden sessions dropdown
+                // Hidden sessions dropdown (at server level — sessions can span workspaces)
                 if hidden_count > 0 {
                     let toggle_text = if self.show_hidden_sessions_dropdown {
                         format!(
