@@ -1487,8 +1487,9 @@ impl ShellKeep {
             );
         }
 
-        // FR-TABS-17: intercept window close requests
-        subs.push(window::close_requests().map(Message::WindowCloseRequested));
+        // FR-TABS-17: window close detection via Event::Closed in events() below.
+        // Note: close_requests() was removed because it intercepted the OS close
+        // without delivering the message, preventing Event::Closed from firing.
 
         // FR-STATE-14: track window move/resize for geometry persistence
         // Bug 7 fix: also track Focused events so focused_window is always

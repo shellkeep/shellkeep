@@ -1610,17 +1610,18 @@ impl ShellKeep {
                     .get(&win_id)
                     .is_some_and(|w| w.kind == super::WindowKind::Control);
                 if is_control {
-                    // If there are session windows open, just hide the control window
-                    let session_count = self
+                    // Control window closed — remove from tracking
+                    self.windows.remove(&win_id);
+                    self.window_order.retain(|&id| id != win_id);
+                    // If no session windows remain, exit the app
+                    let has_session_windows = self
                         .windows
                         .values()
-                        .filter(|w| w.kind == super::WindowKind::Session)
-                        .count();
-                    if session_count > 0 {
-                        return window::close(win_id);
+                        .any(|w| w.kind == super::WindowKind::Session);
+                    if !has_session_windows && self.hidden_windows.is_empty() {
+                        return iced::exit();
                     }
-                    // No session windows — exit the app
-                    return Task::batch([window::close(win_id), iced::exit()]);
+                    return Task::none();
                 }
 
                 // Session window: snapshot as hidden window, then close
@@ -1661,11 +1662,12 @@ impl ShellKeep {
                 self.state_dirty = true;
                 self.flush_state();
                 // Show control window so user sees updated visible/hidden counts
-                let mut tasks = vec![window::close(win_id)];
+                // (window is already closed by the OS at this point via Event::Closed)
                 if self.windows.contains_key(&self.control_window_id) {
-                    tasks.push(window::gain_focus(self.control_window_id));
+                    window::gain_focus(self.control_window_id)
+                } else {
+                    Task::none()
                 }
-                Task::batch(tasks)
             }
 
             Message::CloseDialogClose => {
