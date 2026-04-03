@@ -3208,6 +3208,7 @@ impl ShellKeep {
                                 .map(|s| s.uuid.clone())
                         });
 
+                        let mut first_session_win = true;
                         for swid in &saved_window_ids {
                             let geo = device_state
                                 .as_ref()
@@ -3239,11 +3240,11 @@ impl ShellKeep {
                             self.windows.insert(win_id, session_win);
                             self.window_order.push(win_id);
 
-                            if last_active.as_deref() == Some(swid.as_str())
-                                || self.focused_window.is_none()
-                            {
+                            // Always focus the first session window; last_active overrides
+                            if first_session_win || last_active.as_deref() == Some(swid.as_str()) {
                                 self.focused_window = Some(win_id);
                             }
+                            first_session_win = false;
 
                             window_open_tasks.push(open_task.map(|_| Message::Noop));
 
