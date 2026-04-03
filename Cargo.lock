@@ -4951,6 +4951,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "dirs",
+ "gtk",
  "iced",
  "iced_runtime",
  "iced_term",

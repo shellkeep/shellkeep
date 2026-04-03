@@ -43,6 +43,15 @@ mod real_tray {
                 return None;
             }
 
+            // On Linux, muda uses GTK for tray menus — must init before use.
+            #[cfg(target_os = "linux")]
+            {
+                if gtk::init().is_err() {
+                    tracing::warn!("failed to initialize GTK for tray icon");
+                    return None;
+                }
+            }
+
             let icon = match create_icon() {
                 Ok(i) => i,
                 Err(e) => {
