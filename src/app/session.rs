@@ -83,7 +83,7 @@ pub(crate) fn ssh_channel_stream(data: &SshSubscriptionData) -> BoxStream<'stati
                         None => {
                             tracing::info!("ssh stream {tab_id}: channel closed");
                             let _ = output.send(
-                                Message::SshDisconnected(tab_id, "connection lost".into())
+                                Message::SshDisconnected(tab_id, "channel closed".into())
                             ).await;
                             break;
                         }

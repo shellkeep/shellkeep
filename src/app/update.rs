@@ -2624,8 +2624,13 @@ impl ShellKeep {
                         .find(|s| s.host == c.key.host)
                         .map(|s| s.uuid.clone())
                 });
-                new_win.workspace_env = Some(self.current_workspace.clone());
-                // Item 8: default window name
+                // FR-TABS-07: new window belongs to the focused window's workspace
+                let ws = self
+                    .active_window()
+                    .and_then(|w| w.workspace_env.clone())
+                    .unwrap_or_else(|| self.current_workspace.clone());
+                new_win.workspace_env = Some(ws);
+                // Default window name
                 self.window_counter += 1;
                 if let Some(ref conn) = self.current_conn {
                     new_win.name = format!(

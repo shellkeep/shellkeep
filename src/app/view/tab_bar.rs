@@ -167,7 +167,7 @@ impl ShellKeep {
     /// Build the list of hidden session menu items from saved state.
     pub(crate) fn build_hidden_session_items(&self) -> Vec<Element<'_, Message>> {
         let saved_state = self.cached_shared_state.as_ref().cloned();
-        let saved_env_tabs = saved_state
+        let saved_ws_tabs = saved_state
             .as_ref()
             .map(|s| s.workspace_tabs(&self.current_workspace))
             .unwrap_or_default();
@@ -191,13 +191,12 @@ impl ShellKeep {
                 .into(),
         );
 
+        // FR-SESSION-13: only show hidden sessions from the current workspace
         for uuid in &self.hidden_sessions {
-            let title = saved_env_tabs
-                .iter()
-                .find(|t| &t.session_uuid == uuid)
-                .map(|t| t.title.clone())
-                .unwrap_or_else(|| format!("Session {}", &uuid[..8.min(uuid.len())]));
-
+            let Some(saved) = saved_ws_tabs.iter().find(|t| &t.session_uuid == uuid) else {
+                continue; // not in this workspace
+            };
+            let title = saved.title.clone();
             let uuid_owned = uuid.clone();
             items.push(
                 button(text(title).size(13))
