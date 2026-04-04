@@ -2536,10 +2536,14 @@ impl ShellKeep {
             // FR-STATE-14: track window geometry changes (per-window)
             Message::WindowMoved(win_id, pos) => {
                 if let Some(win) = self.windows.get_mut(&win_id) {
+                    tracing::debug!(
+                        "window {win_id:?} moved to ({}, {})",
+                        pos.x as i32,
+                        pos.y as i32
+                    );
                     win.window_x = Some(pos.x as i32);
                     win.window_y = Some(pos.y as i32);
                 }
-                // Also track focus
                 self.focused_window = Some(win_id);
                 self.save_geometry(win_id);
                 Task::none()
@@ -2547,6 +2551,11 @@ impl ShellKeep {
 
             Message::WindowResized(win_id, size) => {
                 if let Some(win) = self.windows.get_mut(&win_id) {
+                    tracing::debug!(
+                        "window {win_id:?} resized to {}x{}",
+                        size.width as u32,
+                        size.height as u32
+                    );
                     win.window_width = size.width as u32;
                     win.window_height = size.height as u32;
                 }
