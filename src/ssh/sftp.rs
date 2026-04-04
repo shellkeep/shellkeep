@@ -58,7 +58,9 @@ pub async fn write_file_atomic(
     path: &str,
     data: &[u8],
 ) -> Result<(), SshError> {
-    let tmp_path = format!("{path}.tmp");
+    // Use a unique tmp path to avoid races between concurrent writes
+    let rand: u32 = rand::random();
+    let tmp_path = format!("{path}.tmp.{rand:08x}");
     // Use create() not write() — write() only opens existing files,
     // create() uses CREATE|TRUNCATE|WRITE flags.
     let mut file = sftp
@@ -78,10 +80,17 @@ pub async fn write_file_atomic(
         Ok(()) => Ok(()),
         Err(_) => {
             // Fallback: unlink target then rename
-            let _ = sftp.remove_file(path).await; // ignore error if file doesn't exist
-            sftp.rename(&tmp_path, path)
-                .await
-                .map_err(|e| SshError::Sftp(format!("sftp rename {tmp_path} -> {path}: {e}")))
+            let _ = sftp.remove_file(path).await;
+            match sftp.rename(&tmp_path, path).await {
+                Ok(()) => Ok(()),
+                Err(e) => {
+                    // Clean up orphaned tmp file
+                    let _ = sftp.remove_file(&tmp_path).await;
+                    Err(SshError::Sftp(format!(
+                        "sftp rename {tmp_path} -> {path}: {e}"
+                    )))
+                }
+            }
         }
     }
 }
