@@ -245,6 +245,16 @@ impl ShellKeep {
             Message::SshDisconnected(tab_id, reason) => {
                 // Clear connecting state on disconnect
                 self.connecting_server = None;
+
+                // FR-EXIT-01: if the user exited the shell, auto-close the tab
+                if reason == "session exited" {
+                    tracing::info!("tab {tab_id}: session exited, auto-closing");
+                    if let Some((win_id, idx)) = self.find_tab_window(tab_id) {
+                        return self.close_tab_in_window(win_id, idx);
+                    }
+                    return Task::none();
+                }
+
                 let max_attempts = self.config.ssh.reconnect_max_attempts;
                 if let Some(tab) = self.find_tab_mut(tab_id) {
                     // Clear channel state so subscription stops
