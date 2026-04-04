@@ -50,19 +50,16 @@ pub async fn read_file(sftp: &SftpSession, path: &str) -> Result<Vec<u8>, SshErr
         .map_err(|e| SshError::Sftp(format!("sftp read {path}: {e}")))
 }
 
-/// Write a file atomically via SFTP: write to .tmp, then rename.
-/// FR-STATE-05: uses posix-rename semantics (atomic overwrite). Falls back to
-/// unlink + rename if the rename fails (e.g., server lacks posix-rename extension).
+/// Write a file via SFTP. Tries atomic (tmp+rename) first, falls back to
+/// direct overwrite if rename is not supported by the server.
 pub async fn write_file_atomic(
     sftp: &SftpSession,
     path: &str,
     data: &[u8],
 ) -> Result<(), SshError> {
-    // Use a unique tmp path to avoid races between concurrent writes
+    // Try atomic write: tmp file + rename
     let rand: u32 = rand::random();
     let tmp_path = format!("{path}.tmp.{rand:08x}");
-    // Use create() not write() — write() only opens existing files,
-    // create() uses CREATE|TRUNCATE|WRITE flags.
     let mut file = sftp
         .create(&tmp_path)
         .await
@@ -70,29 +67,34 @@ pub async fn write_file_atomic(
     file.write_all(data)
         .await
         .map_err(|e| SshError::Sftp(format!("sftp write {tmp_path}: {e}")))?;
-    // Flush and close the file handle before renaming — SFTP requires the
-    // handle to be closed (SSH_FXP_CLOSE) before the data is visible on disk.
     file.shutdown()
         .await
         .map_err(|e| SshError::Sftp(format!("sftp close {tmp_path}: {e}")))?;
+
     // Try rename (posix-rename@openssh.com does atomic overwrite)
-    match sftp.rename(&tmp_path, path).await {
-        Ok(()) => Ok(()),
-        Err(_) => {
-            // Fallback: unlink target then rename
-            let _ = sftp.remove_file(path).await;
-            match sftp.rename(&tmp_path, path).await {
-                Ok(()) => Ok(()),
-                Err(e) => {
-                    // Clean up orphaned tmp file
-                    let _ = sftp.remove_file(&tmp_path).await;
-                    Err(SshError::Sftp(format!(
-                        "sftp rename {tmp_path} -> {path}: {e}"
-                    )))
-                }
-            }
-        }
+    if sftp.rename(&tmp_path, path).await.is_ok() {
+        return Ok(());
     }
+    // Fallback: unlink target then rename
+    let _ = sftp.remove_file(path).await;
+    if sftp.rename(&tmp_path, path).await.is_ok() {
+        return Ok(());
+    }
+    // Rename not supported at all — fall back to direct write.
+    // Safe because shellkeep uses a lock to serialize writers.
+    let _ = sftp.remove_file(&tmp_path).await;
+    tracing::debug!("sftp rename failed, falling back to direct write for {path}");
+    let mut file = sftp
+        .create(path)
+        .await
+        .map_err(|e| SshError::Sftp(format!("sftp create {path}: {e}")))?;
+    file.write_all(data)
+        .await
+        .map_err(|e| SshError::Sftp(format!("sftp write {path}: {e}")))?;
+    file.shutdown()
+        .await
+        .map_err(|e| SshError::Sftp(format!("sftp close {path}: {e}")))?;
+    Ok(())
 }
 
 /// Remote file paths for split state.
