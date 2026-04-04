@@ -123,10 +123,13 @@ impl ShellKeep {
             tabs_row.push(tab_btn);
         }
 
-        let new_tab_btn = button(text("+").size(14))
+        // Place "+" button right after the last tab
+        let new_tab_btn: Element<'_, Message> = button(text("+").size(14))
             .on_press(Message::NewTab)
             .padding([6, 10])
-            .style(styles::ghost_button_style);
+            .style(styles::ghost_button_style)
+            .into();
+        tabs_row.push(new_tab_btn);
 
         // P8: always show restore button, with badge count when hidden sessions exist
         let hidden_count = self.hidden_sessions.len();
@@ -154,7 +157,7 @@ impl ShellKeep {
             ))
             .width(Length::Fill);
 
-        let bar = row![scrollable_tabs, new_tab_btn, restore_btn]
+        let bar = row![scrollable_tabs, restore_btn]
             .width(Length::Fill)
             .align_y(iced::Alignment::Center);
 
