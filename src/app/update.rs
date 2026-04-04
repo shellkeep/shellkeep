@@ -3204,9 +3204,18 @@ impl ShellKeep {
                             let size = geo
                                 .map(|g| iced::Size::new(g.width as f32, g.height as f32))
                                 .unwrap_or(iced::Size::new(900.0, 600.0));
+                            let position = geo
+                                .and_then(|g| match (g.x, g.y) {
+                                    (Some(x), Some(y)) => Some(window::Position::Specific(
+                                        iced::Point::new(x as f32, y as f32),
+                                    )),
+                                    _ => None,
+                                })
+                                .unwrap_or(window::Position::Default);
 
                             let (win_id, open_task) = window::open(window::Settings {
                                 size,
+                                position,
                                 ..window::Settings::default()
                             });
 
@@ -3235,22 +3244,6 @@ impl ShellKeep {
                             first_session_win = false;
 
                             window_open_tasks.push(open_task.map(|_| Message::Noop));
-
-                            // Apply position after window opens
-                            if let Some(geo) = geo {
-                                let w = geo.width as f32;
-                                let h = geo.height as f32;
-                                if w > 0.0 && h > 0.0 {
-                                    window_open_tasks
-                                        .push(window::resize(win_id, iced::Size::new(w, h)));
-                                }
-                                if let (Some(x), Some(y)) = (geo.x, geo.y) {
-                                    window_open_tasks.push(window::move_to(
-                                        win_id,
-                                        iced::Point::new(x as f32, y as f32),
-                                    ));
-                                }
-                            }
                         }
                     }
 
