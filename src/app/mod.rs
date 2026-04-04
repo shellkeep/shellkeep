@@ -971,6 +971,17 @@ impl ShellKeep {
         self.state_dirty = true;
         self.flush_state();
 
+        // If the window is now empty, close it.
+        let mut close_window_task = Task::none();
+        if let Some(win) = self.windows.get(&win_id)
+            && win.tabs.is_empty()
+            && win.kind == WindowKind::Session
+        {
+            tracing::info!("window {win_id:?} has no tabs, closing");
+            self.windows.remove(&win_id);
+            close_window_task = window::close(win_id);
+        }
+
         self.toast = Some((
             "Session closed and terminated on server.".into(),
             std::time::Instant::now(),
@@ -984,7 +995,7 @@ impl ShellKeep {
                 let conn_key = conn.key.clone();
                 let identity = conn.identity_file.clone();
                 let keepalive = self.config.ssh.keepalive_interval;
-                return Task::perform(
+                let kill_task = Task::perform(
                     async move {
                         let mut mgr_guard = mgr.lock().await;
                         let handle_arc = if let Some(h) = mgr_guard.get_cached(&conn_key) {
@@ -1014,9 +1025,10 @@ impl ShellKeep {
                     },
                     |_| Message::Noop,
                 );
+                return Task::batch([kill_task, close_window_task]);
             }
         }
-        Task::none()
+        close_window_task
     }
 
     /// Hide a tab — disconnect SSH but keep the tmux session alive on the server.
