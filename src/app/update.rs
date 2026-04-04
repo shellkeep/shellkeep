@@ -3018,7 +3018,13 @@ impl ShellKeep {
                             }
                         } else {
                             tracing::info!("no server shared state found (first connection)");
-                            self.cached_shared_state = Some(SharedState::new());
+                            let mut initial = SharedState::new();
+                            shellkeep::state::environment::create_workspace(
+                                &mut initial,
+                                &self.current_workspace,
+                            )
+                            .ok();
+                            self.cached_shared_state = Some(initial);
                         }
                         if let Some(json) = device_json {
                             match serde_json::from_str::<DeviceState>(&json) {
@@ -3106,7 +3112,13 @@ impl ShellKeep {
                         }
                     } else {
                         tracing::info!("no server shared state found (first connection)");
-                        self.cached_shared_state = Some(SharedState::new());
+                        let mut initial = SharedState::new();
+                        shellkeep::state::environment::create_workspace(
+                            &mut initial,
+                            &self.current_workspace,
+                        )
+                        .ok();
+                        self.cached_shared_state = Some(initial);
                     }
 
                     // Parse device state

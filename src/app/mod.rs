@@ -726,8 +726,9 @@ impl ShellKeep {
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
     }
 
-    /// Restore hidden windows from shared state into in-memory list.
+    /// Restore hidden windows from shared state, replacing any in-memory list.
     pub(crate) fn restore_hidden_windows_from_shared(&mut self, state: &SharedState) {
+        self.hidden_windows.clear();
         for hw in &state.hidden_windows {
             self.hidden_windows.push(HiddenWindow {
                 server_window_id: hw.server_window_id.clone(),

@@ -134,7 +134,11 @@ fn main() -> iced::Result {
     // Parse SSH args (skip --debug which is shellkeep-specific)
     let initial_ssh_args = cli::parse_cli_ssh_args(&args[1..]);
 
-    tracing::info!("shellkeep v{} starting", env!("CARGO_PKG_VERSION"));
+    tracing::info!(
+        "shellkeep v{} ({}) starting",
+        env!("CARGO_PKG_VERSION"),
+        env!("GIT_COMMIT")
+    );
 
     // NFR-I18N-07: detect and initialize locale
     let locale = i18n::detect_locale();
