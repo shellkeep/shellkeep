@@ -43,6 +43,9 @@ pub struct SharedState {
         alias = "last_environment"
     )]
     pub last_workspace: Option<String>,
+    /// FR-SESSION-13a: hidden window snapshots (shared across devices)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hidden_windows: Vec<HiddenWindowState>,
 }
 
 impl SharedState {
@@ -52,6 +55,7 @@ impl SharedState {
             last_modified: chrono_now(),
             workspaces: HashMap::new(),
             last_workspace: None,
+            hidden_windows: Vec::new(),
         }
     }
 
@@ -146,7 +150,32 @@ pub struct StateFile {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Workspace {
     pub name: String,
+    /// Stable UUID for this workspace (used in tmux session naming).
+    #[serde(default = "generate_uuid")]
+    pub uuid: String,
     pub tabs: Vec<TabState>,
+}
+
+/// FR-SESSION-13a: hidden window snapshot (persisted in shared state).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HiddenWindowState {
+    pub server_window_id: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<String>,
+    pub tabs: Vec<HiddenTabState>,
+}
+
+/// Tab metadata preserved in a hidden window snapshot.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HiddenTabState {
+    pub session_uuid: String,
+    pub tmux_session_name: String,
+    pub label: String,
+}
+
+fn generate_uuid() -> String {
+    uuid::Uuid::new_v4().to_string()
 }
 
 /// Legacy FR-STATE-14: window position and size (v2 format).
@@ -191,6 +220,7 @@ impl StateFile {
             last_modified: chrono_now(),
             workspaces: self.workspaces,
             last_workspace: self.last_workspace,
+            hidden_windows: Vec::new(),
         };
         validate_workspaces(&mut shared.workspaces);
 
@@ -264,6 +294,7 @@ mod tests {
             "Default".to_string(),
             Workspace {
                 name: "Default".to_string(),
+                uuid: "test-uuid".into(),
                 tabs: vec![TabState {
                     session_uuid: "uuid-1".into(),
                     tmux_session_name: "shellkeep-0".into(),
@@ -329,6 +360,7 @@ mod tests {
             "Default".to_string(),
             Workspace {
                 name: "Default".to_string(),
+                uuid: "test-uuid".into(),
                 tabs: vec![TabState {
                     session_uuid: "uuid-1".into(),
                     tmux_session_name: "shellkeep-0".into(),
@@ -357,6 +389,7 @@ mod tests {
             "Default".to_string(),
             Workspace {
                 name: "Default".to_string(),
+                uuid: "test-uuid".into(),
                 tabs: vec![TabState {
                     session_uuid: "uuid-1".into(),
                     tmux_session_name: "shellkeep-0".into(),
@@ -421,6 +454,7 @@ mod tests {
             "Default".to_string(),
             Workspace {
                 name: "Default".to_string(),
+                uuid: "test-uuid".into(),
                 tabs: vec![TabState {
                     session_uuid: "u1".into(),
                     tmux_session_name: "sk-0".into(),

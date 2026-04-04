@@ -6,9 +6,8 @@
 use super::connection;
 
 /// Check if a session name belongs to shellkeep (but NOT the lock session).
-/// Matches old format ("shellkeep-N"), v1 format ("<client-id>--shellkeep-YYYYMMDD-HHMMSS"),
-/// v2 workspace format ("<client-id>--<workspace>--shellkeep-YYYYMMDD-HHMMSS"),
-/// and v3 shared format ("<workspace>--shellkeep-YYYYMMDD-HHMMSS").
+/// FR-SESSION-04: current format is `shellkeep--<workspace-uuid>--<session-uuid>`.
+/// Also matches legacy formats for backward compatibility.
 /// FR-LOCK-11: lock sessions ("shellkeep-lock*") are never treated as terminal sessions.
 fn is_shellkeep_session(name: &str) -> bool {
     if name == "shellkeep-lock" || name.starts_with("shellkeep-lock-") {
@@ -17,25 +16,32 @@ fn is_shellkeep_session(name: &str) -> bool {
     if name.contains("--shellkeep-lock") {
         return false;
     }
-    name.starts_with("shellkeep-") || name.contains("--shellkeep-")
+    name.starts_with("shellkeep--")
+        || name.starts_with("shellkeep-")
+        || name.contains("--shellkeep-")
 }
 
-/// FR-ENV-02: filter sessions by workspace name.
-/// Returns sessions matching `<workspace-name>--shellkeep-` prefix.
-pub fn filter_sessions_by_workspace(sessions: &[String], workspace_name: &str) -> Vec<String> {
-    let prefix = format!("{workspace_name}--shellkeep-");
+/// FR-ENV-02: filter sessions by workspace UUID.
+/// Returns sessions matching `shellkeep--<workspace-uuid>--` prefix,
+/// plus legacy sessions matching `<workspace-name>--shellkeep-` prefix.
+pub fn filter_sessions_by_workspace(
+    sessions: &[String],
+    workspace_uuid: &str,
+    workspace_name: &str,
+) -> Vec<String> {
+    let uuid_prefix = format!("shellkeep--{workspace_uuid}--");
+    let legacy_prefix = format!("{workspace_name}--shellkeep-");
     sessions
         .iter()
-        .filter(|s| s.starts_with(&prefix))
+        .filter(|s| s.starts_with(&uuid_prefix) || s.starts_with(&legacy_prefix))
         .cloned()
         .collect()
 }
 
-/// FR-ENV-02: generate a tmux session name scoped to workspace.
-/// Format: `<workspace-name>--shellkeep-YYYYMMDD-HHMMSS`
-pub fn workspace_tmux_session_name(workspace_name: &str) -> String {
-    let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
-    format!("{workspace_name}--shellkeep-{timestamp}")
+/// FR-SESSION-04: generate a tmux session name.
+/// Format: `shellkeep--<workspace-uuid>--<session-uuid>`
+pub fn make_tmux_session_name(workspace_uuid: &str, session_uuid: &str) -> String {
+    format!("shellkeep--{workspace_uuid}--{session_uuid}")
 }
 
 /// List existing shellkeep tmux sessions using a russh connection.
@@ -85,7 +91,7 @@ mod tests {
 
     #[test]
     fn session_prefix_filter() {
-        let lines = "shellkeep-0\nshellkeep-1\nother-session\nshellkeep-5\nmylaptop--shellkeep-20260329-120000\nDefault--shellkeep-20260329-130000\nmylaptop--Default--shellkeep-20260329-140000\n";
+        let lines = "shellkeep--abc-123--def-456\nshellkeep-0\nother-session\nDefault--shellkeep-20260329-130000\n";
         let sessions: Vec<String> = lines
             .lines()
             .map(|l| l.trim().to_string())
@@ -94,59 +100,47 @@ mod tests {
         assert_eq!(
             sessions,
             vec![
+                "shellkeep--abc-123--def-456",
                 "shellkeep-0",
-                "shellkeep-1",
-                "shellkeep-5",
-                "mylaptop--shellkeep-20260329-120000",
                 "Default--shellkeep-20260329-130000",
-                "mylaptop--Default--shellkeep-20260329-140000",
             ]
         );
     }
 
     #[test]
     fn filter_by_workspace() {
+        let ws_uuid = "aaaa-bbbb";
         let sessions = vec![
+            format!("shellkeep--{ws_uuid}--sess-1"),
+            format!("shellkeep--{ws_uuid}--sess-2"),
+            "shellkeep--other-uuid--sess-3".to_string(),
+            // Legacy format
             "Default--shellkeep-20260329-120000".to_string(),
-            "Default--shellkeep-20260329-120100".to_string(),
             "ProjectA--shellkeep-20260329-130000".to_string(),
-            "shellkeep-0".to_string(),
         ];
-        let filtered = filter_sessions_by_workspace(&sessions, "Default");
-        assert_eq!(filtered.len(), 2);
-        assert!(
-            filtered
-                .iter()
-                .all(|s| s.starts_with("Default--shellkeep-"))
-        );
-
-        let proj_a = filter_sessions_by_workspace(&sessions, "ProjectA");
+        let filtered = filter_sessions_by_workspace(&sessions, ws_uuid, "Default");
+        assert_eq!(filtered.len(), 3); // 2 UUID + 1 legacy
+        let proj_a = filter_sessions_by_workspace(&sessions, "no-match", "ProjectA");
         assert_eq!(proj_a.len(), 1);
-
-        let empty = filter_sessions_by_workspace(&sessions, "Nonexistent");
+        let empty = filter_sessions_by_workspace(&sessions, "no-match", "Nonexistent");
         assert!(empty.is_empty());
     }
 
     #[test]
-    fn workspace_session_name_format() {
-        let name = workspace_tmux_session_name("Default");
-        assert!(name.starts_with("Default--shellkeep-"));
-        // Should contain a timestamp-like pattern
-        assert!(name.len() > "Default--shellkeep-".len());
+    fn tmux_session_name_format() {
+        let name = make_tmux_session_name("ws-uuid-123", "sess-uuid-456");
+        assert_eq!(name, "shellkeep--ws-uuid-123--sess-uuid-456");
     }
 
     #[test]
     fn lock_sessions_excluded() {
-        // FR-LOCK-11: lock sessions must never appear as regular sessions
         assert!(!is_shellkeep_session("shellkeep-lock"));
         assert!(!is_shellkeep_session("shellkeep-lock-my-client"));
         assert!(!is_shellkeep_session("my-client--shellkeep-lock-my-client"));
-        // Regular sessions still match
+        // New UUID format matches
+        assert!(is_shellkeep_session("shellkeep--abc--def"));
+        // Legacy formats still match
         assert!(is_shellkeep_session("shellkeep-0"));
         assert!(is_shellkeep_session("Default--shellkeep-20260330-120000"));
-        // Old v2 format with client-id still matches
-        assert!(is_shellkeep_session(
-            "my-client--Default--shellkeep-20260330-120000"
-        ));
     }
 }

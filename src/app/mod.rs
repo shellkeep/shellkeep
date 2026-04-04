@@ -710,10 +710,41 @@ impl ShellKeep {
     // -----------------------------------------------------------------------
 
     /// Open a new tab, assigning it the next unused tmux session name.
-    /// FR-SESSION-04, FR-SESSION-05, FR-ENV-02: generate tmux session name with
-    /// workspace and timestamp.
+    /// FR-SESSION-04: generate tmux session name as shellkeep--<workspace-uuid>--<session-uuid>.
     pub(crate) fn next_tmux_session(&self) -> String {
-        shellkeep::ssh::tmux::workspace_tmux_session_name(&self.current_workspace)
+        let ws_uuid = self.current_workspace_uuid();
+        let session_uuid = uuid::Uuid::new_v4().to_string();
+        shellkeep::ssh::tmux::make_tmux_session_name(&ws_uuid, &session_uuid)
+    }
+
+    /// Get the UUID of the current workspace from cached shared state.
+    fn current_workspace_uuid(&self) -> String {
+        self.cached_shared_state
+            .as_ref()
+            .and_then(|s| s.workspaces.get(&self.current_workspace))
+            .map(|ws| ws.uuid.clone())
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+    }
+
+    /// Restore hidden windows from shared state into in-memory list.
+    pub(crate) fn restore_hidden_windows_from_shared(&mut self, state: &SharedState) {
+        for hw in &state.hidden_windows {
+            self.hidden_windows.push(HiddenWindow {
+                server_window_id: hw.server_window_id.clone(),
+                name: hw.name.clone(),
+                server_uuid: None,
+                workspace_env: hw.workspace.clone(),
+                tabs: hw
+                    .tabs
+                    .iter()
+                    .map(|ht| HiddenTab {
+                        session_uuid: ht.session_uuid.clone(),
+                        tmux_session_name: ht.tmux_session_name.clone(),
+                        label: ht.label.clone(),
+                    })
+                    .collect(),
+            });
+        }
     }
 
     /// Open a tab using russh SSH. Returns a Task that establishes the connection.
@@ -1208,10 +1239,18 @@ impl ShellKeep {
                 }
             }
         }
+        // Preserve workspace UUID from cached state (or generate new)
+        let ws_uuid = self
+            .cached_shared_state
+            .as_ref()
+            .and_then(|s| s.workspaces.get(&self.current_workspace))
+            .map(|ws| ws.uuid.clone())
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         shared.workspaces.insert(
             self.current_workspace.clone(),
             Workspace {
                 name: self.current_workspace.clone(),
+                uuid: ws_uuid,
                 tabs: env_tabs,
             },
         );
@@ -1224,6 +1263,26 @@ impl ShellKeep {
                 }
             }
         }
+        // FR-SESSION-13a: persist hidden windows in shared state
+        use shellkeep::state::state_file::{HiddenTabState, HiddenWindowState};
+        shared.hidden_windows = self
+            .hidden_windows
+            .iter()
+            .map(|hw| HiddenWindowState {
+                server_window_id: hw.server_window_id.clone(),
+                name: hw.name.clone(),
+                workspace: hw.workspace_env.clone(),
+                tabs: hw
+                    .tabs
+                    .iter()
+                    .map(|ht| HiddenTabState {
+                        session_uuid: ht.session_uuid.clone(),
+                        tmux_session_name: ht.tmux_session_name.clone(),
+                        label: ht.label.clone(),
+                    })
+                    .collect(),
+            })
+            .collect();
 
         // Build device state (geometry per window, hidden sessions)
         let mut device = DeviceState::new(&self.client_id);

@@ -577,11 +577,16 @@ impl ShellKeep {
                         session.as_str(),
                         saved.server_window_id.as_deref(),
                     ));
-                } else if session.starts_with(&format!("{}--shellkeep-", self.current_workspace)) {
-                    // Shellkeep session in OUR workspace but NOT in saved state —
-                    // orphan from a failed kill. Only clean up sessions in the current
-                    // workspace to avoid touching other workspaces' sessions.
-                    stale.push(session.clone());
+                } else {
+                    // Check if this is a shellkeep session in OUR workspace
+                    // (UUID format or legacy format) but NOT in saved state —
+                    // orphan from a failed kill.
+                    let ws_uuid = self.current_workspace_uuid();
+                    let uuid_prefix = format!("shellkeep--{ws_uuid}--");
+                    let legacy_prefix = format!("{}--shellkeep-", self.current_workspace);
+                    if session.starts_with(&uuid_prefix) || session.starts_with(&legacy_prefix) {
+                        stale.push(session.clone());
+                    }
                 }
             }
 
@@ -974,67 +979,20 @@ impl ShellKeep {
 
             Message::FinishRename => {
                 tracing::info!("rename tab to: {}", self.rename_input.trim());
-                let mut rename_task = Task::none();
+                let rename_task = Task::none();
                 let renaming_tab = self.active_window().and_then(|w| w.renaming_tab);
                 if let Some(index) = renaming_tab {
                     let valid = self.active_window().is_some_and(|w| index < w.tabs.len())
                         && !self.rename_input.trim().is_empty();
                     if valid {
                         let new_label = self.rename_input.trim().to_string();
-                        let (old_tmux, is_russh, has_conn_params, conn_params) = {
-                            // SAFETY: `valid` check above ensures window and index exist
-                            #[allow(clippy::unwrap_used)]
-                            let win = self.active_window().unwrap();
-                            let tab = &win.tabs[index];
-                            (
-                                tab.tmux_session.clone(),
-                                tab.is_russh(),
-                                tab.conn_params().is_some(),
-                                tab.conn_params().cloned(),
-                            )
-                        };
                         if let Some(win) = self.active_window_mut() {
-                            win.tabs[index].label = new_label.clone();
+                            win.tabs[index].label = new_label;
                             win.update_title();
                         }
                         self.save_state();
-
-                        // FR-SESSION-06: also rename tmux session on the server
-                        if is_russh && has_conn_params {
-                            let sanitized: String = new_label
-                                .chars()
-                                .map(|c| {
-                                    if c.is_alphanumeric() || c == '-' || c == '_' {
-                                        c
-                                    } else {
-                                        '-'
-                                    }
-                                })
-                                .collect();
-                            let new_tmux =
-                                format!("{}--shellkeep-{}", self.current_workspace, sanitized);
-                            if let Some(win) = self.active_window_mut() {
-                                win.tabs[index].tmux_session = new_tmux.clone();
-                            }
-                            let mgr = self.conn_manager.clone();
-                            // SAFETY: has_conn_params checked above
-                            #[allow(clippy::unwrap_used)]
-                            let conn = conn_params.unwrap();
-                            rename_task = Task::perform(
-                                async move {
-                                    let conn_key = conn.key.clone();
-                                    let mgr_guard = mgr.lock().await;
-                                    if let Some(handle_arc) = mgr_guard.get_cached(&conn_key) {
-                                        let handle = handle_arc.lock().await;
-                                        let cmd = format!(
-                                            "tmux rename-session -t {old_tmux} {new_tmux} 2>/dev/null || true"
-                                        );
-                                        let _ = ssh::connection::exec_command(&handle, &cmd).await;
-                                    }
-                                },
-                                |_| Message::Noop,
-                            );
-                        }
+                        // FR-SESSION-06: tab rename only updates the label.
+                        // Tmux session name is UUID-based and does not change.
                     }
                 }
                 if let Some(win) = self.active_window_mut() {
@@ -3050,17 +3008,16 @@ impl ShellKeep {
                                         "loaded server shared state: {} workspaces",
                                         state.workspaces.len()
                                     );
+                                    self.restore_hidden_windows_from_shared(&state);
                                     self.cached_shared_state = Some(state);
                                 }
                                 Err(e) => {
                                     tracing::warn!("corrupt server shared state: {e}");
-                                    // Set empty state so reconciliation can proceed
                                     self.cached_shared_state = Some(SharedState::new());
                                 }
                             }
                         } else {
                             tracing::info!("no server shared state found (first connection)");
-                            // First connection — set empty state so reconciliation proceeds
                             self.cached_shared_state = Some(SharedState::new());
                         }
                         if let Some(json) = device_json {
@@ -3139,6 +3096,7 @@ impl ShellKeep {
                                     "loaded server shared state: {} workspaces",
                                     state.workspaces.len()
                                 );
+                                self.restore_hidden_windows_from_shared(&state);
                                 self.cached_shared_state = Some(state);
                             }
                             Err(e) => {
