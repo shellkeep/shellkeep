@@ -3110,6 +3110,12 @@ impl ShellKeep {
                     Task::none()
                 }
                 Ok(result) => {
+                    // Guard: if user disconnected while async connect was in-flight, discard
+                    if self.current_conn.is_none() {
+                        tracing::info!("server connected but already disconnected, ignoring");
+                        return Task::none();
+                    }
+
                     // Store the syncer
                     self.state_syncer = Some(result.syncer);
 

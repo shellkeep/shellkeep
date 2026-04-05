@@ -1362,9 +1362,13 @@ impl ShellKeep {
             tokio::task::spawn(async move {
                 if let Err(e) = syncer.write_shared_state(&shared_json).await {
                     tracing::warn!("server shared state sync failed: {e}");
+                } else {
+                    tracing::info!("server shared state synced ({} bytes)", shared_json.len());
                 }
                 if let Err(e) = syncer.write_device_state(&device_json).await {
                     tracing::warn!("server device state sync failed: {e}");
+                } else {
+                    tracing::info!("server device state synced ({} bytes)", device_json.len());
                 }
             });
         }
