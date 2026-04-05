@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: 2026 shellkeep contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# shellkeep configuration for GUI E2E tests.
+# The test server is localhost (shellkeep runs on the droplet itself).
+
+[general]
+client_id = "e2e-gui-test"
+
+[ssh]
+connect_timeout = 10
+keepalive_interval = 15
+keepalive_count_max = 3
+reconnect_max_attempts = 5
+reconnect_backoff_base = 1.0
