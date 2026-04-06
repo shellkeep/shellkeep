@@ -12,10 +12,8 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use shellkeep::ssh::connection::{SshHandler, exec_command};
-use shellkeep::ssh::sftp::{
-    StateSyncer, open_sftp, read_file, write_file_atomic,
-};
 use shellkeep::ssh::lock;
+use shellkeep::ssh::sftp::{StateSyncer, open_sftp, read_file, write_file_atomic};
 use shellkeep::ssh::tmux;
 use shellkeep::state::state_file::{
     DeviceState, HiddenTabState, HiddenWindowState, SharedState, TabState, WindowGeometry,
@@ -44,11 +42,19 @@ async fn exec(handle: &russh::client::Handle<SshHandler>, cmd: &str) -> String {
 }
 
 async fn cleanup_tmux(handle: &russh::client::Handle<SshHandler>, prefix: &str) {
-    let sessions = exec(handle, "tmux list-sessions -F '#{session_name}' 2>/dev/null").await;
+    let sessions = exec(
+        handle,
+        "tmux list-sessions -F '#{session_name}' 2>/dev/null",
+    )
+    .await;
     for name in sessions.lines() {
         let name = name.trim();
         if name.starts_with(prefix) {
-            let _ = exec(handle, &format!("tmux kill-session -t '{name}' 2>/dev/null")).await;
+            let _ = exec(
+                handle,
+                &format!("tmux kill-session -t '{name}' 2>/dev/null"),
+            )
+            .await;
         }
     }
 }
@@ -58,7 +64,9 @@ async fn cleanup_state(handle: &russh::client::Handle<SshHandler>, dir: &str) {
 }
 
 /// Create an Arc<Mutex<Handle>> for StateSyncer (it requires this wrapper).
-fn wrap_handle(handle: russh::client::Handle<SshHandler>) -> Arc<Mutex<russh::client::Handle<SshHandler>>> {
+fn wrap_handle(
+    handle: russh::client::Handle<SshHandler>,
+) -> Arc<Mutex<russh::client::Handle<SshHandler>>> {
     Arc::new(Mutex::new(handle))
 }
 
@@ -106,14 +114,24 @@ async fn test_state_roundtrip_shared() {
 
     // Write
     let json = serde_json::to_string_pretty(&shared).unwrap();
-    syncer.write_shared_state(&json).await.expect("write shared failed");
+    syncer
+        .write_shared_state(&json)
+        .await
+        .expect("write shared failed");
 
     // Read back
-    let read_json = syncer.read_shared_state().await.expect("read failed").expect("no data");
+    let read_json = syncer
+        .read_shared_state()
+        .await
+        .expect("read failed")
+        .expect("no data");
     let read: SharedState = serde_json::from_str(&read_json).expect("parse failed");
 
     assert_eq!(read.last_workspace, Some("TestWorkspace".to_string()));
-    let ws = read.workspaces.get("TestWorkspace").expect("workspace missing");
+    let ws = read
+        .workspaces
+        .get("TestWorkspace")
+        .expect("workspace missing");
     assert_eq!(ws.uuid, ws_uuid);
     assert_eq!(ws.tabs.len(), 1);
     assert_eq!(ws.tabs[0].session_uuid, session_uuid);
@@ -140,19 +158,36 @@ async fn test_state_roundtrip_device() {
     let mut device = DeviceState::new(&client_id);
     device.window_geometry.insert(
         "win-001".to_string(),
-        WindowGeometry { x: Some(100), y: Some(200), width: 900, height: 600 },
+        WindowGeometry {
+            x: Some(100),
+            y: Some(200),
+            width: 900,
+            height: 600,
+        },
     );
     device.window_geometry.insert(
         "win-002".to_string(),
-        WindowGeometry { x: Some(500), y: Some(300), width: 800, height: 500 },
+        WindowGeometry {
+            x: Some(500),
+            y: Some(300),
+            width: 800,
+            height: 500,
+        },
     );
     device.hidden_sessions = vec!["hidden-uuid-1".to_string(), "hidden-uuid-2".to_string()];
     device.last_active_window = Some("win-001".to_string());
 
     let json = serde_json::to_string_pretty(&device).unwrap();
-    syncer.write_device_state(&json).await.expect("write device failed");
+    syncer
+        .write_device_state(&json)
+        .await
+        .expect("write device failed");
 
-    let read_json = syncer.read_device_state().await.expect("read failed").expect("no data");
+    let read_json = syncer
+        .read_device_state()
+        .await
+        .expect("read failed")
+        .expect("no data");
     let read: DeviceState = serde_json::from_str(&read_json).expect("parse failed");
 
     assert_eq!(read.client_id, client_id);
@@ -220,8 +255,14 @@ async fn test_state_preserves_other_workspaces() {
     // Verify both workspaces present
     let final_json = syncer.read_shared_state().await.unwrap().unwrap();
     let final_state: SharedState = serde_json::from_str(&final_json).unwrap();
-    assert!(final_state.workspaces.contains_key("WorkspaceA"), "WorkspaceA clobbered");
-    assert!(final_state.workspaces.contains_key("WorkspaceB"), "WorkspaceB missing");
+    assert!(
+        final_state.workspaces.contains_key("WorkspaceA"),
+        "WorkspaceA clobbered"
+    );
+    assert!(
+        final_state.workspaces.contains_key("WorkspaceB"),
+        "WorkspaceB missing"
+    );
     assert_eq!(final_state.workspaces["WorkspaceA"].tabs[0].title, "Tab A");
     assert_eq!(final_state.workspaces["WorkspaceB"].tabs[0].title, "Tab B");
 
@@ -284,8 +325,14 @@ async fn test_state_multi_window_tabs() {
     assert_eq!(tabs.len(), 3);
 
     // Group by server_window_id
-    let window_a: Vec<_> = tabs.iter().filter(|t| t.server_window_id.as_deref() == Some("window-A")).collect();
-    let window_b: Vec<_> = tabs.iter().filter(|t| t.server_window_id.as_deref() == Some("window-B")).collect();
+    let window_a: Vec<_> = tabs
+        .iter()
+        .filter(|t| t.server_window_id.as_deref() == Some("window-A"))
+        .collect();
+    let window_b: Vec<_> = tabs
+        .iter()
+        .filter(|t| t.server_window_id.as_deref() == Some("window-B"))
+        .collect();
     assert_eq!(window_a.len(), 2, "window-A should have 2 tabs");
     assert_eq!(window_b.len(), 1, "window-B should have 1 tab");
 
@@ -310,13 +357,11 @@ async fn test_state_hidden_windows_in_shared() {
         server_window_id: "hidden-win-1".to_string(),
         name: "Hidden Window".to_string(),
         workspace: Some("Default".to_string()),
-        tabs: vec![
-            HiddenTabState {
-                session_uuid: "hidden-tab-1".to_string(),
-                tmux_session_name: "shellkeep--ws--hidden-tab-1".to_string(),
-                label: "Hidden Tab".to_string(),
-            },
-        ],
+        tabs: vec![HiddenTabState {
+            session_uuid: "hidden-tab-1".to_string(),
+            tmux_session_name: "shellkeep--ws--hidden-tab-1".to_string(),
+            label: "Hidden Tab".to_string(),
+        }],
     }];
 
     let json = serde_json::to_string_pretty(&shared).unwrap();
@@ -344,31 +389,49 @@ async fn test_device_state_isolation() {
     let client_b = "e2e-device-B";
 
     // Create syncers for two different client IDs
-    let syncer_a = StateSyncer::new(handle_arc.clone(), client_a).await.unwrap();
-    let syncer_b = StateSyncer::new(handle_arc.clone(), client_b).await.unwrap();
+    let syncer_a = StateSyncer::new(handle_arc.clone(), client_a)
+        .await
+        .unwrap();
+    let syncer_b = StateSyncer::new(handle_arc.clone(), client_b)
+        .await
+        .unwrap();
 
     // Write different device states
     let mut device_a = DeviceState::new(client_a);
     device_a.window_geometry.insert(
         "win-a".to_string(),
-        WindowGeometry { x: Some(0), y: Some(0), width: 1920, height: 1080 },
+        WindowGeometry {
+            x: Some(0),
+            y: Some(0),
+            width: 1920,
+            height: 1080,
+        },
     );
     let mut device_b = DeviceState::new(client_b);
     device_b.window_geometry.insert(
         "win-b".to_string(),
-        WindowGeometry { x: Some(100), y: Some(100), width: 800, height: 600 },
+        WindowGeometry {
+            x: Some(100),
+            y: Some(100),
+            width: 800,
+            height: 600,
+        },
     );
 
-    syncer_a.write_device_state(&serde_json::to_string(&device_a).unwrap()).await.unwrap();
-    syncer_b.write_device_state(&serde_json::to_string(&device_b).unwrap()).await.unwrap();
+    syncer_a
+        .write_device_state(&serde_json::to_string(&device_a).unwrap())
+        .await
+        .unwrap();
+    syncer_b
+        .write_device_state(&serde_json::to_string(&device_b).unwrap())
+        .await
+        .unwrap();
 
     // Read back — each client should only see its own state
-    let read_a: DeviceState = serde_json::from_str(
-        &syncer_a.read_device_state().await.unwrap().unwrap()
-    ).unwrap();
-    let read_b: DeviceState = serde_json::from_str(
-        &syncer_b.read_device_state().await.unwrap().unwrap()
-    ).unwrap();
+    let read_a: DeviceState =
+        serde_json::from_str(&syncer_a.read_device_state().await.unwrap().unwrap()).unwrap();
+    let read_b: DeviceState =
+        serde_json::from_str(&syncer_b.read_device_state().await.unwrap().unwrap()).unwrap();
 
     assert_eq!(read_a.client_id, client_a);
     assert!(read_a.window_geometry.contains_key("win-a"));
@@ -395,13 +458,19 @@ async fn test_sftp_atomic_write() {
     let test_path = "/tmp/shellkeep-e2e-sftp-atomic.txt";
     let content = b"atomic write test content";
 
-    write_file_atomic(&sftp, test_path, content).await.expect("atomic write failed");
+    write_file_atomic(&sftp, test_path, content)
+        .await
+        .expect("atomic write failed");
 
     let read_back = read_file(&sftp, test_path).await.expect("read failed");
     assert_eq!(read_back, content, "content mismatch after atomic write");
 
     // Verify no tmp files left behind
-    let tmp_files = exec(&handle, &format!("ls {test_path}.tmp.* 2>/dev/null | wc -l")).await;
+    let tmp_files = exec(
+        &handle,
+        &format!("ls {test_path}.tmp.* 2>/dev/null | wc -l"),
+    )
+    .await;
     assert_eq!(tmp_files.trim(), "0", "tmp files left behind: {tmp_files}");
 
     exec(&handle, &format!("rm -f {test_path}")).await;
@@ -429,13 +498,23 @@ async fn test_sftp_concurrent_writes() {
 
     // Verify all files exist and have correct content
     for (path, expected) in &tasks {
-        let data = read_file(&sftp, path).await.unwrap_or_else(|e| panic!("read {path} failed: {e}"));
+        let data = read_file(&sftp, path)
+            .await
+            .unwrap_or_else(|e| panic!("read {path} failed: {e}"));
         let actual = String::from_utf8_lossy(&data);
-        assert_eq!(actual.as_ref(), expected.as_str(), "content mismatch for {path}");
+        assert_eq!(
+            actual.as_ref(),
+            expected.as_str(),
+            "content mismatch for {path}"
+        );
     }
 
     // Verify no tmp files left
-    let tmp_count = exec(&handle, &format!("ls {base_path}/*.tmp.* 2>/dev/null | wc -l")).await;
+    let tmp_count = exec(
+        &handle,
+        &format!("ls {base_path}/*.tmp.* 2>/dev/null | wc -l"),
+    )
+    .await;
     assert_eq!(tmp_count.trim(), "0", "tmp files left behind");
 
     exec(&handle, &format!("rm -rf {base_path}")).await;
@@ -450,7 +529,9 @@ async fn test_state_syncer_creation() {
     let handle_arc = wrap_handle(handle);
     let client_id = test_client_id("syncer-create");
 
-    let syncer = StateSyncer::new(handle_arc.clone(), &client_id).await.unwrap();
+    let syncer = StateSyncer::new(handle_arc.clone(), &client_id)
+        .await
+        .unwrap();
     assert!(syncer.is_sftp(), "expected SFTP mode");
 
     // Verify directories were created
@@ -486,10 +567,15 @@ async fn test_tmux_uuid_naming() {
     let name = tmux::make_tmux_session_name(ws_uuid, session_uuid);
     assert_eq!(name, format!("shellkeep--{ws_uuid}--{session_uuid}"));
 
-    tmux::create_session_russh(&handle, &name).await.expect("create failed");
+    tmux::create_session_russh(&handle, &name)
+        .await
+        .expect("create failed");
 
     let sessions = tmux::list_sessions_russh(&handle).await;
-    assert!(sessions.contains(&name), "session not found in list: {sessions:?}");
+    assert!(
+        sessions.contains(&name),
+        "session not found in list: {sessions:?}"
+    );
 
     cleanup_tmux(&handle, prefix).await;
 }
@@ -515,8 +601,16 @@ async fn test_tmux_workspace_filter() {
     let filtered_a = tmux::filter_sessions_by_workspace(&all, ws_a, "WorkspaceA");
     let filtered_b = tmux::filter_sessions_by_workspace(&all, ws_b, "WorkspaceB");
 
-    assert_eq!(filtered_a.len(), 2, "workspace A should have 2 sessions: {filtered_a:?}");
-    assert_eq!(filtered_b.len(), 1, "workspace B should have 1 session: {filtered_b:?}");
+    assert_eq!(
+        filtered_a.len(),
+        2,
+        "workspace A should have 2 sessions: {filtered_a:?}"
+    );
+    assert_eq!(
+        filtered_b.len(),
+        1,
+        "workspace B should have 1 session: {filtered_b:?}"
+    );
 
     cleanup_tmux(&handle, prefix).await;
 }
@@ -526,7 +620,11 @@ async fn test_tmux_workspace_filter() {
 async fn test_tmux_kill_session() {
     let handle = connect().await;
     let name = "shellkeep--e2ekill--sess-kill";
-    let _ = exec(&handle, &format!("tmux kill-session -t '{name}' 2>/dev/null")).await;
+    let _ = exec(
+        &handle,
+        &format!("tmux kill-session -t '{name}' 2>/dev/null"),
+    )
+    .await;
 
     tmux::create_session_russh(&handle, name).await.unwrap();
     let before = tmux::list_sessions_russh(&handle).await;
@@ -534,7 +632,10 @@ async fn test_tmux_kill_session() {
 
     exec(&handle, &format!("tmux kill-session -t '{name}'")).await;
     let after = tmux::list_sessions_russh(&handle).await;
-    assert!(!after.contains(&name.to_string()), "session still exists after kill");
+    assert!(
+        !after.contains(&name.to_string()),
+        "session still exists after kill"
+    );
 }
 
 #[tokio::test]
@@ -542,7 +643,11 @@ async fn test_tmux_kill_session() {
 async fn test_tmux_session_survives_disconnect() {
     let handle = connect().await;
     let name = "shellkeep--e2esurvive--sess-surv";
-    let _ = exec(&handle, &format!("tmux kill-session -t '{name}' 2>/dev/null")).await;
+    let _ = exec(
+        &handle,
+        &format!("tmux kill-session -t '{name}' 2>/dev/null"),
+    )
+    .await;
 
     tmux::create_session_russh(&handle, name).await.unwrap();
 
@@ -552,9 +657,16 @@ async fn test_tmux_session_survives_disconnect() {
     // Reconnect
     let handle2 = connect().await;
     let sessions = tmux::list_sessions_russh(&handle2).await;
-    assert!(sessions.contains(&name.to_string()), "session did not survive disconnect");
+    assert!(
+        sessions.contains(&name.to_string()),
+        "session did not survive disconnect"
+    );
 
-    exec(&handle2, &format!("tmux kill-session -t '{name}' 2>/dev/null")).await;
+    exec(
+        &handle2,
+        &format!("tmux kill-session -t '{name}' 2>/dev/null"),
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -606,10 +718,16 @@ async fn test_lock_same_client_takeover() {
     let client_id = "e2e-lock-same";
     let workspace = "e2e-lock-test";
     let lock_name = format!("shellkeep-lock-{workspace}");
-    let _ = exec(&handle, &format!("tmux kill-session -t '{lock_name}' 2>/dev/null")).await;
+    let _ = exec(
+        &handle,
+        &format!("tmux kill-session -t '{lock_name}' 2>/dev/null"),
+    )
+    .await;
 
     // Acquire lock
-    lock::acquire_lock(&handle, client_id, Some(15), workspace).await.unwrap();
+    lock::acquire_lock(&handle, client_id, Some(15), workspace)
+        .await
+        .unwrap();
 
     // Acquire again with SAME client_id — should succeed silently (FR-LOCK-06)
     lock::acquire_lock(&handle, client_id, Some(15), workspace)
@@ -617,7 +735,9 @@ async fn test_lock_same_client_takeover() {
         .expect("same client_id takeover should succeed");
 
     // Verify lock still exists
-    let check = lock::check_lock(&handle, client_id, workspace).await.unwrap();
+    let check = lock::check_lock(&handle, client_id, workspace)
+        .await
+        .unwrap();
     assert!(check.is_some(), "lock should still exist");
     assert_eq!(check.unwrap().client_id, client_id);
 
@@ -630,14 +750,23 @@ async fn test_lock_different_client_conflict() {
     let handle = connect().await;
     let workspace = "e2e-lock-conflict";
     let lock_name = format!("shellkeep-lock-{workspace}");
-    let _ = exec(&handle, &format!("tmux kill-session -t '{lock_name}' 2>/dev/null")).await;
+    let _ = exec(
+        &handle,
+        &format!("tmux kill-session -t '{lock_name}' 2>/dev/null"),
+    )
+    .await;
 
     // Client A acquires lock
-    lock::acquire_lock(&handle, "client-A", Some(15), workspace).await.unwrap();
+    lock::acquire_lock(&handle, "client-A", Some(15), workspace)
+        .await
+        .unwrap();
 
     // Client B tries — should fail (lock is fresh, not orphaned)
     let result = lock::acquire_lock(&handle, "client-B", Some(15), workspace).await;
-    assert!(result.is_err(), "different client should be rejected: {result:?}");
+    assert!(
+        result.is_err(),
+        "different client should be rejected: {result:?}"
+    );
     let err = result.unwrap_err().to_string();
     assert!(
         err.contains("lock") || err.contains("Lock") || err.contains("held"),
@@ -653,18 +782,22 @@ async fn test_lock_orphan_expired() {
     let handle = connect().await;
     let workspace = "e2e-lock-orphan";
     let lock_name = format!("shellkeep-lock-{workspace}");
-    let _ = exec(&handle, &format!("tmux kill-session -t '{lock_name}' 2>/dev/null")).await;
+    let _ = exec(
+        &handle,
+        &format!("tmux kill-session -t '{lock_name}' 2>/dev/null"),
+    )
+    .await;
 
     // Client A acquires lock
-    lock::acquire_lock(&handle, "client-orphan-A", Some(15), workspace).await.unwrap();
+    lock::acquire_lock(&handle, "client-orphan-A", Some(15), workspace)
+        .await
+        .unwrap();
 
     // Manually backdate the CONNECTED_AT to make it look orphaned
     let old_time = "2020-01-01T00:00:00Z";
     exec(
         &handle,
-        &format!(
-            "tmux set-environment -t '{lock_name}' SHELLKEEP_LOCK_CONNECTED_AT '{old_time}'"
-        ),
+        &format!("tmux set-environment -t '{lock_name}' SHELLKEEP_LOCK_CONNECTED_AT '{old_time}'"),
     )
     .await;
 
@@ -673,7 +806,9 @@ async fn test_lock_orphan_expired() {
     assert!(result.is_ok(), "orphan takeover should succeed: {result:?}");
 
     // Verify new client holds the lock
-    let info = lock::check_lock(&handle, "client-orphan-B", workspace).await.unwrap();
+    let info = lock::check_lock(&handle, "client-orphan-B", workspace)
+        .await
+        .unwrap();
     assert!(info.is_some());
     assert_eq!(info.unwrap().client_id, "client-orphan-B");
 
@@ -693,7 +828,9 @@ async fn test_reconcile_hidden_not_restored() {
     cleanup_state(&handle, "~/.shellkeep").await;
 
     let handle_arc = wrap_handle(handle);
-    let syncer = StateSyncer::new(handle_arc.clone(), &client_id).await.unwrap();
+    let syncer = StateSyncer::new(handle_arc.clone(), &client_id)
+        .await
+        .unwrap();
 
     let ws_uuid = "reconcile-ws";
     let visible_uuid = "visible-tab-uuid";
@@ -727,16 +864,20 @@ async fn test_reconcile_hidden_not_restored() {
     let mut device = DeviceState::new(&client_id);
     device.hidden_sessions = vec![hidden_uuid.to_string()];
 
-    syncer.write_shared_state(&serde_json::to_string(&shared).unwrap()).await.unwrap();
-    syncer.write_device_state(&serde_json::to_string(&device).unwrap()).await.unwrap();
+    syncer
+        .write_shared_state(&serde_json::to_string(&shared).unwrap())
+        .await
+        .unwrap();
+    syncer
+        .write_device_state(&serde_json::to_string(&device).unwrap())
+        .await
+        .unwrap();
 
     // Read back and simulate reconciliation logic
-    let read_shared: SharedState = serde_json::from_str(
-        &syncer.read_shared_state().await.unwrap().unwrap()
-    ).unwrap();
-    let read_device: DeviceState = serde_json::from_str(
-        &syncer.read_device_state().await.unwrap().unwrap()
-    ).unwrap();
+    let read_shared: SharedState =
+        serde_json::from_str(&syncer.read_shared_state().await.unwrap().unwrap()).unwrap();
+    let read_device: DeviceState =
+        serde_json::from_str(&syncer.read_device_state().await.unwrap().unwrap()).unwrap();
 
     let tabs = &read_shared.workspaces["Default"].tabs;
     let restorable: Vec<_> = tabs
@@ -762,7 +903,9 @@ async fn test_reconcile_dead_session() {
     // Create one tmux session (alive), reference two in state (one will be dead)
     let alive_name = tmux::make_tmux_session_name(ws_uuid, "alive-sess");
     let dead_name = tmux::make_tmux_session_name(ws_uuid, "dead-sess");
-    tmux::create_session_russh(&handle, &alive_name).await.unwrap();
+    tmux::create_session_russh(&handle, &alive_name)
+        .await
+        .unwrap();
     // dead_name is NOT created on server — simulates a killed session
 
     let saved_tabs = vec![
@@ -819,8 +962,14 @@ async fn test_workspace_create_rename() {
 
     // Rename
     environment::rename_workspace(&mut state, "MyProject", "RenamedProject").unwrap();
-    assert!(!state.workspaces.contains_key("MyProject"), "old name should be gone");
-    assert!(state.workspaces.contains_key("RenamedProject"), "new name should exist");
+    assert!(
+        !state.workspaces.contains_key("MyProject"),
+        "old name should be gone"
+    );
+    assert!(
+        state.workspaces.contains_key("RenamedProject"),
+        "new name should exist"
+    );
 
     // UUID must be preserved after rename
     assert_eq!(
@@ -888,7 +1037,9 @@ async fn test_workspace_uuid_stable_across_rename() {
     cleanup_state(&handle, "~/.shellkeep").await;
 
     let handle_arc = wrap_handle(handle);
-    let syncer = StateSyncer::new(handle_arc.clone(), &client_id).await.unwrap();
+    let syncer = StateSyncer::new(handle_arc.clone(), &client_id)
+        .await
+        .unwrap();
 
     // Create state with workspace, persist, rename, persist again
     let mut shared = SharedState::new();
@@ -896,32 +1047,49 @@ async fn test_workspace_uuid_stable_across_rename() {
     let original_uuid = shared.workspaces["OriginalName"].uuid.clone();
 
     // Add a tab to the workspace
-    shared.workspaces.get_mut("OriginalName").unwrap().tabs.push(TabState {
-        session_uuid: "tab-1".to_string(),
-        tmux_session_name: tmux::make_tmux_session_name(&original_uuid, "tab-1"),
-        title: "Tab 1".to_string(),
-        position: 0,
-        server_window_id: None,
-    });
+    shared
+        .workspaces
+        .get_mut("OriginalName")
+        .unwrap()
+        .tabs
+        .push(TabState {
+            session_uuid: "tab-1".to_string(),
+            tmux_session_name: tmux::make_tmux_session_name(&original_uuid, "tab-1"),
+            title: "Tab 1".to_string(),
+            position: 0,
+            server_window_id: None,
+        });
 
     // Write original
-    syncer.write_shared_state(&serde_json::to_string(&shared).unwrap()).await.unwrap();
+    syncer
+        .write_shared_state(&serde_json::to_string(&shared).unwrap())
+        .await
+        .unwrap();
 
     // Rename
     environment::rename_workspace(&mut shared, "OriginalName", "NewName").unwrap();
-    syncer.write_shared_state(&serde_json::to_string(&shared).unwrap()).await.unwrap();
+    syncer
+        .write_shared_state(&serde_json::to_string(&shared).unwrap())
+        .await
+        .unwrap();
 
     // Read back
-    let read: SharedState = serde_json::from_str(
-        &syncer.read_shared_state().await.unwrap().unwrap()
-    ).unwrap();
+    let read: SharedState =
+        serde_json::from_str(&syncer.read_shared_state().await.unwrap().unwrap()).unwrap();
 
     assert!(!read.workspaces.contains_key("OriginalName"));
     assert!(read.workspaces.contains_key("NewName"));
-    assert_eq!(read.workspaces["NewName"].uuid, original_uuid, "UUID changed after rename!");
+    assert_eq!(
+        read.workspaces["NewName"].uuid, original_uuid,
+        "UUID changed after rename!"
+    );
     assert_eq!(read.workspaces["NewName"].tabs.len(), 1);
     // tmux session name should still reference the original UUID
-    assert!(read.workspaces["NewName"].tabs[0].tmux_session_name.contains(&original_uuid));
+    assert!(
+        read.workspaces["NewName"].tabs[0]
+            .tmux_session_name
+            .contains(&original_uuid)
+    );
 
     let guard = handle_arc.lock().await;
     cleanup_state(&guard, "~/.shellkeep").await;
