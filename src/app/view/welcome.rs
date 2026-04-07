@@ -596,7 +596,7 @@ impl ShellKeep {
                     .height(Length::Fill)
                     .style(styles::scrim_style),
             )
-            .on_press(Message::CancelCloseServer)
+            .on_press(Message::Noop)
             .interaction(iced::mouse::Interaction::Idle);
             stack![control_content, scrim, center(dialog)].into()
         } else if self.dialogs.show_forget_server.is_some() {
@@ -614,7 +614,7 @@ impl ShellKeep {
                     .height(Length::Fill)
                     .style(styles::scrim_style),
             )
-            .on_press(Message::CancelForgetServer)
+            .on_press(Message::Noop)
             .interaction(iced::mouse::Interaction::Idle);
             stack![control_content, scrim, center(dialog)].into()
         } else if self.dialogs.show_new_workspace.is_some() {
@@ -625,7 +625,7 @@ impl ShellKeep {
                     .height(Length::Fill)
                     .style(styles::scrim_style),
             )
-            .on_press(Message::CancelNewWorkspace)
+            .on_press(Message::Noop)
             .interaction(iced::mouse::Interaction::Idle);
             stack![control_content, scrim, center(dialog)].into()
         } else if self.dialogs.show_workspace_rename.is_some() {
@@ -643,7 +643,7 @@ impl ShellKeep {
                     .height(Length::Fill)
                     .style(styles::scrim_style),
             )
-            .on_press(Message::CancelRenameWorkspace)
+            .on_press(Message::Noop)
             .interaction(iced::mouse::Interaction::Idle);
             stack![control_content, scrim, center(dialog)].into()
         } else if self.dialogs.show_workspace_delete.is_some() {
@@ -660,7 +660,7 @@ impl ShellKeep {
                     .height(Length::Fill)
                     .style(styles::scrim_style),
             )
-            .on_press(Message::CancelDeleteWorkspace)
+            .on_press(Message::Noop)
             .interaction(iced::mouse::Interaction::Idle);
             stack![control_content, scrim, center(dialog)].into()
         } else {

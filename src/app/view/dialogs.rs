@@ -153,7 +153,7 @@ impl ShellKeep {
                 .height(Length::Fill)
                 .style(styles::scrim_style),
         )
-        .on_press(Message::CancelWorkspaceDialog)
+        .on_press(Message::Noop)
         .interaction(iced::mouse::Interaction::Idle);
 
         stack![scrim, center(dialog)].into()
@@ -207,7 +207,7 @@ impl ShellKeep {
                 .height(Length::Fill)
                 .style(styles::scrim_style),
         )
-        .on_press(Message::CancelRenameWorkspaceDialog)
+        .on_press(Message::Noop)
         .interaction(iced::mouse::Interaction::Idle);
 
         stack![scrim, center(dialog)].into()
@@ -267,7 +267,7 @@ impl ShellKeep {
                 .height(Length::Fill)
                 .style(styles::scrim_style),
         )
-        .on_press(Message::CancelDeleteWorkspaceDialog)
+        .on_press(Message::Noop)
         .interaction(iced::mouse::Interaction::Idle);
 
         stack![scrim, center(dialog)].into()

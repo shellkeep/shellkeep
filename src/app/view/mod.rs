@@ -515,7 +515,7 @@ impl ShellKeep {
                     .height(Length::Fill)
                     .style(styles::scrim_style),
             )
-            .on_press(Message::CancelWindowRename)
+            .on_press(Message::Noop)
             .interaction(iced::mouse::Interaction::Idle);
 
             stack![main_view, scrim, center(rename_dialog)].into()
@@ -648,7 +648,7 @@ impl ShellKeep {
                     .height(Length::Fill)
                     .style(styles::scrim_style),
             )
-            .on_press(Message::CloseDialogCancel)
+            .on_press(Message::Noop)
             .interaction(iced::mouse::Interaction::Idle);
 
             stack![main_view, scrim, center(dialog),].into()
@@ -774,7 +774,7 @@ impl ShellKeep {
                     .height(Length::Fill)
                     .style(styles::scrim_style),
             )
-            .on_press(Message::HostKeyReject)
+            .on_press(Message::Noop)
             .interaction(iced::mouse::Interaction::Idle);
 
             stack![main_view, scrim, center(dialog)].into()
@@ -832,7 +832,7 @@ impl ShellKeep {
                     .height(Length::Fill)
                     .style(styles::scrim_style),
             )
-            .on_press(Message::PasswordCancel)
+            .on_press(Message::Noop)
             .interaction(iced::mouse::Interaction::Idle);
 
             stack![main_view, scrim, center(dialog)].into()
@@ -882,7 +882,7 @@ impl ShellKeep {
                     .height(Length::Fill)
                     .style(styles::scrim_style),
             )
-            .on_press(Message::LockCancel)
+            .on_press(Message::Noop)
             .interaction(iced::mouse::Interaction::Idle);
 
             stack![main_view, scrim, center(dialog)].into()
@@ -943,7 +943,7 @@ impl ShellKeep {
                     .height(Length::Fill)
                     .style(styles::scrim_style),
             )
-            .on_press(Message::DismissShortcutsDialog)
+            .on_press(Message::Noop)
             .interaction(iced::mouse::Interaction::Idle);
 
             stack![main_view, scrim, center(dialog)].into()
