@@ -253,6 +253,7 @@ fn default_keyboard_bindings() -> Vec<(Binding<InputKind>, BindingAction)> {
         ArrowLeft,  Modifiers::SHIFT; BindingAction::Esc("\x1b[1;2D".into());
         ArrowRight, Modifiers::SHIFT; BindingAction::Esc("\x1b[1;2C".into());
         // ALT
+        Enter,      Modifiers::ALT; BindingAction::Esc("\x1b\x0d".into());
         Backspace,  Modifiers::ALT; BindingAction::Esc("\x1b\x7f".into());
         End,        Modifiers::ALT; BindingAction::Esc("\x1b[1;3F".into());
         Home,       Modifiers::ALT; BindingAction::Esc("\x1b[1;3H".into());
