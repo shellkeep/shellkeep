@@ -352,6 +352,19 @@ impl ShellKeep {
                     }
                 }
 
+                // Focus the terminal if this is the active tab
+                let should_focus = self
+                    .active_window()
+                    .is_some_and(|w| w.tabs.get(w.active_tab).is_some_and(|t| t.id == tab_id));
+                if should_focus {
+                    let terminal_id = self
+                        .find_tab(tab_id)
+                        .and_then(|t| t.terminal.as_ref())
+                        .map(|t| t.widget_id().clone());
+                    if let Some(id) = terminal_id {
+                        return iced_term::TerminalView::focus(id);
+                    }
+                }
                 Task::none()
             }
             Err(e) => {
@@ -744,6 +757,15 @@ impl ShellKeep {
                     win.renaming_tab = None;
                     win.tab_context_menu = None;
                     win.update_title();
+                }
+                // Auto-focus the terminal so keyboard input works without clicking
+                let terminal_id = self
+                    .active_window()
+                    .and_then(|w| w.tabs.get(w.active_tab))
+                    .and_then(|t| t.terminal.as_ref())
+                    .map(|t| t.widget_id().clone());
+                if let Some(id) = terminal_id {
+                    return iced_term::TerminalView::focus(id);
                 }
                 Task::none()
             }
