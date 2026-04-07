@@ -8,9 +8,7 @@ use crate::ShellKeep;
 use crate::app::Message;
 use crate::app::view::styles;
 
-use iced::widget::{
-    Space, button, center, column, container, row, scrollable, text, text_input, tooltip,
-};
+use iced::widget::{Space, button, center, column, container, row, scrollable, text, text_input};
 use iced::{Color, Element, Length};
 use shellkeep::i18n;
 
@@ -386,17 +384,14 @@ impl ShellKeep {
                     let workspace_card = container(
                         row![
                             info_col,
-                            tooltip(
-                                button(text("+").size(12).color(text_color))
-                                    .on_press(Message::NewWindowForWorkspace(
-                                        uuid_new_win,
-                                        env_new_win,
-                                    ))
-                                    .padding([3, 6])
-                                    .style(styles::ghost_button_style),
-                                "New window",
-                                tooltip::Position::Top,
-                            ),
+                            button(
+                                text("+ New window")
+                                    .size(10)
+                                    .color(Color::from_rgb8(0x89, 0xb4, 0xfa)),
+                            )
+                            .on_press(Message::NewWindowForWorkspace(uuid_new_win, env_new_win,))
+                            .padding([3, 6])
+                            .style(styles::ghost_button_style),
                             button(text("Rename").size(10).color(label_color))
                                 .on_press(Message::ShowRenameWorkspace(uuid_rename, env_rename,))
                                 .padding([3, 6])
