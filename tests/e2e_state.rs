@@ -1094,3 +1094,187 @@ async fn test_workspace_uuid_stable_across_rename() {
     let guard = handle_arc.lock().await;
     cleanup_state(&guard, "~/.shellkeep").await;
 }
+
+// =========================================================================
+// FR-TABS-03: Tab movement between windows within the same workspace
+// =========================================================================
+
+/// FR-TABS-03: moving a tab between windows updates server_window_id and
+/// persists correctly. Verifies the invariant that all tabs in a window
+/// belong to the same workspace.
+#[tokio::test]
+#[ignore]
+async fn test_fr_tabs_03_move_tab_between_windows() {
+    let handle = connect().await;
+    let client_id = test_client_id("fr-tabs-03");
+    cleanup_state(&handle, "~/.shellkeep").await;
+
+    let handle_arc = wrap_handle(handle);
+    let syncer = StateSyncer::new(handle_arc.clone(), &client_id)
+        .await
+        .expect("syncer creation failed");
+
+    // Setup: 2 windows in "Default" workspace, 2 tabs in window-A, 1 in window-B
+    let mut shared = SharedState::new();
+    shared.workspaces.insert(
+        "Default".to_string(),
+        Workspace {
+            name: "Default".to_string(),
+            uuid: "ws-main".to_string(),
+            tabs: vec![
+                TabState {
+                    session_uuid: "tab-1".to_string(),
+                    tmux_session_name: "shellkeep--ws-main--tab-1".to_string(),
+                    title: "Tab1".to_string(),
+                    position: 0,
+                    server_window_id: Some("window-A".to_string()),
+                },
+                TabState {
+                    session_uuid: "tab-2".to_string(),
+                    tmux_session_name: "shellkeep--ws-main--tab-2".to_string(),
+                    title: "Tab2".to_string(),
+                    position: 1,
+                    server_window_id: Some("window-A".to_string()),
+                },
+                TabState {
+                    session_uuid: "tab-3".to_string(),
+                    tmux_session_name: "shellkeep--ws-main--tab-3".to_string(),
+                    title: "Tab3".to_string(),
+                    position: 0,
+                    server_window_id: Some("window-B".to_string()),
+                },
+            ],
+        },
+    );
+
+    // Persist initial state
+    let json = serde_json::to_string_pretty(&shared).unwrap();
+    syncer.write_shared_state(&json).await.unwrap();
+
+    // Simulate moving tab-2 from window-A to window-B (FR-TABS-03)
+    let ws = shared.workspaces.get_mut("Default").unwrap();
+    let tab = ws
+        .tabs
+        .iter_mut()
+        .find(|t| t.session_uuid == "tab-2")
+        .unwrap();
+    tab.server_window_id = Some("window-B".to_string());
+    tab.position = 1; // second tab in window-B
+
+    // Persist updated state
+    let json = serde_json::to_string_pretty(&shared).unwrap();
+    syncer.write_shared_state(&json).await.unwrap();
+
+    // Read back and verify
+    let read_json = syncer.read_shared_state().await.unwrap().unwrap();
+    let read: SharedState = serde_json::from_str(&read_json).unwrap();
+    let tabs = &read.workspaces["Default"].tabs;
+    assert_eq!(tabs.len(), 3, "total tab count must be preserved");
+
+    // Window-A should now have 1 tab, window-B should have 2
+    let window_a: Vec<_> = tabs
+        .iter()
+        .filter(|t| t.server_window_id.as_deref() == Some("window-A"))
+        .collect();
+    let window_b: Vec<_> = tabs
+        .iter()
+        .filter(|t| t.server_window_id.as_deref() == Some("window-B"))
+        .collect();
+    assert_eq!(window_a.len(), 1, "window-A should have 1 tab after move");
+    assert_eq!(window_b.len(), 2, "window-B should have 2 tabs after move");
+
+    // Verify tab-2 is now in window-B
+    let moved_tab = tabs.iter().find(|t| t.session_uuid == "tab-2").unwrap();
+    assert_eq!(
+        moved_tab.server_window_id.as_deref(),
+        Some("window-B"),
+        "tab-2 should have moved to window-B"
+    );
+
+    // Verify workspace isolation: all tabs in each window belong to same workspace
+    for tab in tabs {
+        assert!(
+            tab.tmux_session_name.contains("ws-main"),
+            "tab {} should reference workspace UUID ws-main",
+            tab.session_uuid
+        );
+    }
+
+    let guard = handle_arc.lock().await;
+    cleanup_state(&guard, "~/.shellkeep").await;
+}
+
+/// FR-TABS-03: workspace isolation — tabs from different workspaces must not
+/// share a server_window_id. Verifies the invariant at the state level.
+#[tokio::test]
+#[ignore]
+async fn test_fr_tabs_03_workspace_isolation() {
+    let handle = connect().await;
+    let client_id = test_client_id("fr-tabs-03-iso");
+    cleanup_state(&handle, "~/.shellkeep").await;
+
+    let handle_arc = wrap_handle(handle);
+    let syncer = StateSyncer::new(handle_arc.clone(), &client_id)
+        .await
+        .expect("syncer creation failed");
+
+    // Setup: 2 workspaces, each with tabs in their own windows
+    let mut shared = SharedState::new();
+    shared.workspaces.insert(
+        "Dev".to_string(),
+        Workspace {
+            name: "Dev".to_string(),
+            uuid: "ws-dev".to_string(),
+            tabs: vec![TabState {
+                session_uuid: "dev-tab-1".to_string(),
+                tmux_session_name: "shellkeep--ws-dev--dev-tab-1".to_string(),
+                title: "DevTab".to_string(),
+                position: 0,
+                server_window_id: Some("win-dev".to_string()),
+            }],
+        },
+    );
+    shared.workspaces.insert(
+        "Prod".to_string(),
+        Workspace {
+            name: "Prod".to_string(),
+            uuid: "ws-prod".to_string(),
+            tabs: vec![TabState {
+                session_uuid: "prod-tab-1".to_string(),
+                tmux_session_name: "shellkeep--ws-prod--prod-tab-1".to_string(),
+                title: "ProdTab".to_string(),
+                position: 0,
+                server_window_id: Some("win-prod".to_string()),
+            }],
+        },
+    );
+
+    // Persist and read back
+    let json = serde_json::to_string_pretty(&shared).unwrap();
+    syncer.write_shared_state(&json).await.unwrap();
+    let read_json = syncer.read_shared_state().await.unwrap().unwrap();
+    let read: SharedState = serde_json::from_str(&read_json).unwrap();
+
+    // Verify each workspace's tabs have distinct window IDs (no cross-workspace mixing)
+    let dev_window_ids: Vec<_> = read.workspaces["Dev"]
+        .tabs
+        .iter()
+        .filter_map(|t| t.server_window_id.as_deref())
+        .collect();
+    let prod_window_ids: Vec<_> = read.workspaces["Prod"]
+        .tabs
+        .iter()
+        .filter_map(|t| t.server_window_id.as_deref())
+        .collect();
+
+    // No window ID should appear in both workspaces
+    for dev_wid in &dev_window_ids {
+        assert!(
+            !prod_window_ids.contains(dev_wid),
+            "window {dev_wid} appears in both Dev and Prod — violates FR-TABS-03 isolation"
+        );
+    }
+
+    let guard = handle_arc.lock().await;
+    cleanup_state(&guard, "~/.shellkeep").await;
+}
