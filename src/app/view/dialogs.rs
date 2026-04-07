@@ -92,6 +92,7 @@ impl ShellKeep {
                     "New workspace name",
                     &self.dialogs.new_workspace_dialog_input
                 )
+                .id(crate::NEW_WORKSPACE_INPUT_ID)
                 .on_input(Message::NewWorkspaceDialogInput)
                 .on_submit(Message::ConfirmNewWorkspaceDialog)
                 .size(13)
@@ -174,6 +175,7 @@ impl ShellKeep {
                     .size(13)
                     .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
                 text_input("New name", &self.dialogs.rename_workspace_dialog_input)
+                    .id(crate::RENAME_WORKSPACE_INPUT_ID)
                     .on_input(Message::RenameWorkspaceDialogInput)
                     .on_submit(Message::ConfirmRenameWorkspaceDialog)
                     .size(13)

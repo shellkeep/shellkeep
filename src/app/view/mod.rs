@@ -484,6 +484,7 @@ impl ShellKeep {
                         .size(16)
                         .color(Color::from_rgb8(0xcd, 0xd6, 0xf4)),
                     text_input("Window name", &self.window_rename_input)
+                        .id(crate::WINDOW_RENAME_INPUT_ID)
                         .on_input(Message::WindowRenameInputChanged)
                         .on_submit(Message::FinishWindowRename)
                         .size(14)
@@ -796,6 +797,7 @@ impl ShellKeep {
                         .color(label_color),
                     Space::new().height(8),
                     text_input("Password", &self.dialogs.password_input)
+                        .id(crate::PASSWORD_INPUT_ID)
                         .on_input(Message::PasswordInputChanged)
                         .on_submit(Message::PasswordSubmit)
                         .secure(true)

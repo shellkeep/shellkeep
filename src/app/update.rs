@@ -40,6 +40,11 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 pub(crate) const RENAME_INPUT_ID: &str = "rename-tab-input";
+pub(crate) const RENAME_WORKSPACE_INPUT_ID: &str = "rename-workspace-input";
+pub(crate) const NEW_WORKSPACE_INPUT_ID: &str = "new-workspace-input";
+pub(crate) const PASSWORD_INPUT_ID: &str = "password-input";
+pub(crate) const SERVER_FORM_HOST_ID: &str = "server-form-host";
+pub(crate) const WINDOW_RENAME_INPUT_ID: &str = "window-rename-input";
 
 impl ShellKeep {
     pub(crate) fn update(&mut self, message: Message) -> Task<Message> {
@@ -388,6 +393,7 @@ impl ShellKeep {
                     self.dialogs.password_input.clear();
                     self.dialogs.password_target_tab = Some(tab_id);
                     self.dialogs.password_conn_params = self.current_conn.clone();
+                    return iced_runtime::widget::operation::focus(PASSWORD_INPUT_ID);
                 } else if el.contains("session locked by") || el.contains("lock held by") {
                     // FR-LOCK-05: show lock conflict dialog
                     if let Some(tab) = self.find_tab_mut(tab_id) {
@@ -1238,7 +1244,7 @@ impl ShellKeep {
                     self.renaming_window = Some(win_id);
                     self.window_rename_input = current_name;
                 }
-                Task::none()
+                iced_runtime::widget::operation::focus(WINDOW_RENAME_INPUT_ID)
             }
 
             Message::WindowRenameInputChanged(v) => {
@@ -1736,7 +1742,7 @@ impl ShellKeep {
                 self.dialogs.show_workspace_dialog = false;
                 self.dialogs.new_workspace_dialog_input.clear();
                 self.dialogs.show_new_workspace_dialog = true;
-                Task::none()
+                iced_runtime::widget::operation::focus(NEW_WORKSPACE_INPUT_ID)
             }
 
             Message::CancelWorkspaceDialog => {
@@ -1749,7 +1755,7 @@ impl ShellKeep {
             Message::ShowNewWorkspaceDialog => {
                 self.dialogs.new_workspace_dialog_input.clear();
                 self.dialogs.show_new_workspace_dialog = true;
-                Task::none()
+                iced_runtime::widget::operation::focus(NEW_WORKSPACE_INPUT_ID)
             }
 
             Message::NewWorkspaceDialogInput(input) => {
@@ -1786,7 +1792,7 @@ impl ShellKeep {
                 self.dialogs.rename_workspace_target = Some(name.clone());
                 self.dialogs.rename_workspace_dialog_input = name;
                 self.dialogs.show_rename_workspace_dialog = true;
-                Task::none()
+                iced_runtime::widget::operation::focus(RENAME_WORKSPACE_INPUT_ID)
             }
 
             Message::RenameWorkspaceDialogInput(input) => {
@@ -3109,6 +3115,7 @@ impl ShellKeep {
                         self.dialogs.password_input.clear();
                         self.dialogs.password_target_tab = None;
                         self.dialogs.password_conn_params = self.current_conn.clone();
+                        return iced_runtime::widget::operation::focus(PASSWORD_INPUT_ID);
                     } else if el.contains("already connected to this server") {
                         self.error = Some(format!(
                             "Duplicate connection — {e}\nUse the existing entry or disconnect it first."
@@ -3377,7 +3384,7 @@ impl ShellKeep {
                     self.dialogs.server_form_identity.clear();
                 }
                 self.dialogs.show_server_form = Some(opt_uuid);
-                Task::none()
+                iced_runtime::widget::operation::focus(SERVER_FORM_HOST_ID)
             }
 
             Message::BackToServerList => {
@@ -3454,7 +3461,7 @@ impl ShellKeep {
                 tracing::info!("show new workspace dialog for server {server_uuid}");
                 self.dialogs.show_new_workspace = Some(server_uuid);
                 self.dialogs.new_workspace_input.clear();
-                Task::none()
+                iced_runtime::widget::operation::focus(NEW_WORKSPACE_INPUT_ID)
             }
 
             Message::NewWorkspaceInputChanged(v) => {
@@ -3486,7 +3493,7 @@ impl ShellKeep {
                 tracing::info!("show rename workspace: {env}");
                 self.dialogs.show_workspace_rename = Some((_server_uuid, env.clone()));
                 self.dialogs.workspace_rename_input = env;
-                Task::none()
+                iced_runtime::widget::operation::focus(RENAME_WORKSPACE_INPUT_ID)
             }
 
             Message::RenameWorkspaceInputChanged(v) => {

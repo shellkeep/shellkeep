@@ -648,6 +648,7 @@ impl ShellKeep {
             .padding(10);
 
         let host_field = text_input("hostname or IP", &self.dialogs.server_form_host)
+            .id(crate::SERVER_FORM_HOST_ID)
             .on_input(Message::ServerFormHostChanged)
             .on_submit(Message::SaveAndConnectServer)
             .size(14)
@@ -799,6 +800,7 @@ impl ShellKeep {
                     .size(13)
                     .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
                 text_input("Workspace name", input)
+                    .id(crate::NEW_WORKSPACE_INPUT_ID)
                     .on_input(Message::NewWorkspaceInputChanged)
                     .on_submit(Message::ConfirmNewWorkspace)
                     .size(13)
@@ -837,6 +839,7 @@ impl ShellKeep {
                     .size(13)
                     .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
                 text_input("New name", input)
+                    .id(crate::RENAME_WORKSPACE_INPUT_ID)
                     .on_input(Message::RenameWorkspaceInputChanged)
                     .on_submit(Message::ConfirmRenameWorkspace)
                     .size(13)

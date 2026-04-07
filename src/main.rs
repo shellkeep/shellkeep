@@ -17,7 +17,10 @@ use iced::{Point, Size, window};
 use shellkeep::i18n;
 
 // Re-export for view layer
-pub(crate) use app::update::RENAME_INPUT_ID;
+pub(crate) use app::update::{
+    NEW_WORKSPACE_INPUT_ID, PASSWORD_INPUT_ID, RENAME_INPUT_ID, RENAME_WORKSPACE_INPUT_ID,
+    SERVER_FORM_HOST_ID, WINDOW_RENAME_INPUT_ID,
+};
 
 fn main() -> iced::Result {
     let args: Vec<String> = std::env::args().collect();
