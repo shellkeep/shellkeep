@@ -582,7 +582,8 @@ impl Widget<Event, Theme, iced::Renderer> for TerminalView<'_> {
                 // Draw text
                 if indexed.c != ' ' && indexed.c != '\t' {
                     if content.grid.cursor.point == indexed.point
-                        && content.terminal_mode.contains(TermMode::APP_CURSOR)
+                        && content.terminal_mode.contains(TermMode::SHOW_CURSOR)
+                        && matches!(content.cursor_shape, CursorShape::Block)
                     {
                         fg = bg;
                     }
