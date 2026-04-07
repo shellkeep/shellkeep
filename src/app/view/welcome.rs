@@ -596,7 +596,8 @@ impl ShellKeep {
                     .height(Length::Fill)
                     .style(styles::scrim_style),
             )
-            .on_press(Message::CancelCloseServer);
+            .on_press(Message::CancelCloseServer)
+            .interaction(iced::mouse::Interaction::Idle);
             stack![control_content, scrim, center(dialog)].into()
         } else if self.dialogs.show_forget_server.is_some() {
             let label = self
@@ -613,7 +614,8 @@ impl ShellKeep {
                     .height(Length::Fill)
                     .style(styles::scrim_style),
             )
-            .on_press(Message::CancelForgetServer);
+            .on_press(Message::CancelForgetServer)
+            .interaction(iced::mouse::Interaction::Idle);
             stack![control_content, scrim, center(dialog)].into()
         } else if self.dialogs.show_new_workspace.is_some() {
             let dialog = self.view_new_workspace_dialog(&self.dialogs.new_workspace_input.clone());
@@ -623,7 +625,8 @@ impl ShellKeep {
                     .height(Length::Fill)
                     .style(styles::scrim_style),
             )
-            .on_press(Message::CancelNewWorkspace);
+            .on_press(Message::CancelNewWorkspace)
+            .interaction(iced::mouse::Interaction::Idle);
             stack![control_content, scrim, center(dialog)].into()
         } else if self.dialogs.show_workspace_rename.is_some() {
             let env = self
@@ -640,7 +643,8 @@ impl ShellKeep {
                     .height(Length::Fill)
                     .style(styles::scrim_style),
             )
-            .on_press(Message::CancelRenameWorkspace);
+            .on_press(Message::CancelRenameWorkspace)
+            .interaction(iced::mouse::Interaction::Idle);
             stack![control_content, scrim, center(dialog)].into()
         } else if self.dialogs.show_workspace_delete.is_some() {
             let env = self
@@ -656,7 +660,8 @@ impl ShellKeep {
                     .height(Length::Fill)
                     .style(styles::scrim_style),
             )
-            .on_press(Message::CancelDeleteWorkspace);
+            .on_press(Message::CancelDeleteWorkspace)
+            .interaction(iced::mouse::Interaction::Idle);
             stack![control_content, scrim, center(dialog)].into()
         } else {
             control_content

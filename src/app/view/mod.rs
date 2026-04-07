@@ -366,7 +366,8 @@ impl ShellKeep {
                         ..Default::default()
                     }),
             )
-            .on_press(Message::ContextMenuDismiss);
+            .on_press(Message::ContextMenuDismiss)
+            .interaction(iced::mouse::Interaction::Idle);
 
             stack![
                 column![tab_bar, content, status_bar],
@@ -405,7 +406,8 @@ impl ShellKeep {
                     .width(Length::Fill)
                     .height(Length::Fill),
             )
-            .on_press(Message::ContextMenuDismiss);
+            .on_press(Message::ContextMenuDismiss)
+            .interaction(iced::mouse::Interaction::Idle);
 
             stack![
                 column![tab_bar, content, status_bar],
@@ -513,7 +515,8 @@ impl ShellKeep {
                     .height(Length::Fill)
                     .style(styles::scrim_style),
             )
-            .on_press(Message::CancelWindowRename);
+            .on_press(Message::CancelWindowRename)
+            .interaction(iced::mouse::Interaction::Idle);
 
             stack![main_view, scrim, center(rename_dialog)].into()
         } else {
@@ -645,7 +648,8 @@ impl ShellKeep {
                     .height(Length::Fill)
                     .style(styles::scrim_style),
             )
-            .on_press(Message::CloseDialogCancel);
+            .on_press(Message::CloseDialogCancel)
+            .interaction(iced::mouse::Interaction::Idle);
 
             stack![main_view, scrim, center(dialog),].into()
         } else {
@@ -770,7 +774,8 @@ impl ShellKeep {
                     .height(Length::Fill)
                     .style(styles::scrim_style),
             )
-            .on_press(Message::HostKeyReject);
+            .on_press(Message::HostKeyReject)
+            .interaction(iced::mouse::Interaction::Idle);
 
             stack![main_view, scrim, center(dialog)].into()
         } else {
@@ -827,7 +832,8 @@ impl ShellKeep {
                     .height(Length::Fill)
                     .style(styles::scrim_style),
             )
-            .on_press(Message::PasswordCancel);
+            .on_press(Message::PasswordCancel)
+            .interaction(iced::mouse::Interaction::Idle);
 
             stack![main_view, scrim, center(dialog)].into()
         } else {
@@ -876,7 +882,8 @@ impl ShellKeep {
                     .height(Length::Fill)
                     .style(styles::scrim_style),
             )
-            .on_press(Message::LockCancel);
+            .on_press(Message::LockCancel)
+            .interaction(iced::mouse::Interaction::Idle);
 
             stack![main_view, scrim, center(dialog)].into()
         } else {
@@ -936,7 +943,8 @@ impl ShellKeep {
                     .height(Length::Fill)
                     .style(styles::scrim_style),
             )
-            .on_press(Message::DismissShortcutsDialog);
+            .on_press(Message::DismissShortcutsDialog)
+            .interaction(iced::mouse::Interaction::Idle);
 
             stack![main_view, scrim, center(dialog)].into()
         } else {
