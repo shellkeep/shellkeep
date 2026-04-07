@@ -8,7 +8,9 @@ use crate::ShellKeep;
 use crate::app::Message;
 use crate::app::view::styles;
 
-use iced::widget::{Space, button, center, column, container, row, scrollable, text, text_input};
+use iced::widget::{
+    Space, button, center, column, container, mouse_area, row, scrollable, stack, text, text_input,
+};
 use iced::{Color, Element, Length};
 use shellkeep::i18n;
 
@@ -588,8 +590,14 @@ impl ShellKeep {
                 .width(380),
             )
             .style(styles::dialog_container_style);
-            use iced::widget::{center, stack};
-            stack![control_content, center(dialog)].into()
+            let scrim = mouse_area(
+                container(Space::new().width(Length::Fill).height(Length::Fill))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .style(styles::scrim_style),
+            )
+            .on_press(Message::CancelCloseServer);
+            stack![control_content, scrim, center(dialog)].into()
         } else if self.dialogs.show_forget_server.is_some() {
             let label = self
                 .dialogs
@@ -599,12 +607,24 @@ impl ShellKeep {
                 .map(|s| s.display_label())
                 .unwrap_or_else(|| "this server".to_string());
             let dialog = self.view_forget_server_dialog(&label);
-            use iced::widget::{center, stack};
-            stack![control_content, center(dialog)].into()
+            let scrim = mouse_area(
+                container(Space::new().width(Length::Fill).height(Length::Fill))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .style(styles::scrim_style),
+            )
+            .on_press(Message::CancelForgetServer);
+            stack![control_content, scrim, center(dialog)].into()
         } else if self.dialogs.show_new_workspace.is_some() {
             let dialog = self.view_new_workspace_dialog(&self.dialogs.new_workspace_input.clone());
-            use iced::widget::{center, stack};
-            stack![control_content, center(dialog)].into()
+            let scrim = mouse_area(
+                container(Space::new().width(Length::Fill).height(Length::Fill))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .style(styles::scrim_style),
+            )
+            .on_press(Message::CancelNewWorkspace);
+            stack![control_content, scrim, center(dialog)].into()
         } else if self.dialogs.show_workspace_rename.is_some() {
             let env = self
                 .dialogs
@@ -614,8 +634,14 @@ impl ShellKeep {
                 .unwrap_or_default();
             let dialog = self
                 .view_workspace_rename_dialog(&env, &self.dialogs.workspace_rename_input.clone());
-            use iced::widget::{center, stack};
-            stack![control_content, center(dialog)].into()
+            let scrim = mouse_area(
+                container(Space::new().width(Length::Fill).height(Length::Fill))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .style(styles::scrim_style),
+            )
+            .on_press(Message::CancelRenameWorkspace);
+            stack![control_content, scrim, center(dialog)].into()
         } else if self.dialogs.show_workspace_delete.is_some() {
             let env = self
                 .dialogs
@@ -624,8 +650,14 @@ impl ShellKeep {
                 .map(|(_, e)| e.clone())
                 .unwrap_or_default();
             let dialog = self.view_workspace_delete_dialog(&env);
-            use iced::widget::{center, stack};
-            stack![control_content, center(dialog)].into()
+            let scrim = mouse_area(
+                container(Space::new().width(Length::Fill).height(Length::Fill))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .style(styles::scrim_style),
+            )
+            .on_press(Message::CancelDeleteWorkspace);
+            stack![control_content, scrim, center(dialog)].into()
         } else {
             control_content
         }
