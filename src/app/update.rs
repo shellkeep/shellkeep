@@ -1831,6 +1831,19 @@ impl ShellKeep {
                     if self.current_workspace == old_name {
                         self.current_workspace = new_name.clone();
                     }
+                    // Update workspace_env in all open windows
+                    for win in self.windows.values_mut() {
+                        if win.workspace_env.as_deref() == Some(&old_name) {
+                            win.workspace_env = Some(new_name.clone());
+                            win.update_title();
+                        }
+                    }
+                    // Update workspace_env in hidden windows
+                    for hw in &mut self.hidden_windows {
+                        if hw.workspace_env.as_deref() == Some(&old_name) {
+                            hw.workspace_env = Some(new_name.clone());
+                        }
+                    }
                     self.toast = Some((
                         format!("Workspace renamed to \"{new_name}\""),
                         std::time::Instant::now(),
