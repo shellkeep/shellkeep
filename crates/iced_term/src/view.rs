@@ -326,10 +326,8 @@ impl<'a> TerminalView<'a> {
                     }
                 }
                 Key::Named(code) => {
-                    // Shift+PageUp/Down: scroll scrollback buffer
-                    if modifiers.shift()
-                        && !last_content.terminal_mode.contains(TermMode::ALT_SCREEN)
-                    {
+                    // Shift+PageUp/Down: forwarded to tmux via scroll command
+                    if modifiers.shift() {
                         match code {
                             iced_core::keyboard::key::Named::PageUp => {
                                 return Some(Command::Scroll(-25));

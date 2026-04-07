@@ -217,56 +217,6 @@ impl ShellKeep {
             center(text(i18n::t(i18n::NO_ACTIVE_TAB))).into()
         };
 
-        // FR-TABS-09: search bar overlay
-        let content: Element<'_, Message> = if self.search.active {
-            let match_info: Element<'_, Message> = if self.search.last_match.is_some() {
-                text(i18n::t(i18n::MATCH_FOUND))
-                    .size(11)
-                    .color(Color::from_rgb8(0xa6, 0xe3, 0xa1))
-                    .into()
-            } else if !self.search.input.is_empty() {
-                text(i18n::t(i18n::NO_MATCHES))
-                    .size(11)
-                    .color(Color::from_rgb8(0xf3, 0x8b, 0xa8))
-                    .into()
-            } else {
-                Space::new().width(0).into()
-            };
-            let search_bar = container(
-                row![
-                    text_input("Search...", &self.search.input)
-                        .id("search-input")
-                        .on_input(Message::SearchInputChanged)
-                        .on_submit(Message::SearchNext)
-                        .size(13)
-                        .padding(6)
-                        .width(280),
-                    button(text(i18n::t(i18n::PREVIOUS)).size(11))
-                        .on_press(Message::SearchPrev)
-                        .padding([4, 8])
-                        .style(styles::search_button_style),
-                    button(text(i18n::t(i18n::NEXT)).size(11))
-                        .on_press(Message::SearchNext)
-                        .padding([4, 8])
-                        .style(styles::search_button_style),
-                    match_info,
-                    Space::new().width(Length::Fill),
-                    button(text(i18n::t(i18n::CLOSE)).size(11))
-                        .on_press(Message::SearchClose)
-                        .padding([4, 8])
-                        .style(styles::search_button_style),
-                ]
-                .spacing(6)
-                .align_y(iced::Alignment::Center)
-                .padding([4, 8]),
-            )
-            .width(Length::Fill)
-            .style(styles::search_bar_style);
-            column![search_bar, content].into()
-        } else {
-            content
-        };
-
         let status_bar = self.view_status_bar(win);
 
         // Wrap with tab context menu if active
@@ -898,7 +848,6 @@ impl ShellKeep {
             let shortcuts = [
                 ("Ctrl+Shift+T", "New tab"),
                 ("Ctrl+Shift+W", "Close tab"),
-                ("Ctrl+Shift+F", "Search"),
                 ("Ctrl+Shift+F2", "Rename tab"),
                 ("Ctrl+Shift+\u{2190}/\u{2192}", "Switch tab"),
                 ("Ctrl+Shift++/-", "Zoom in/out"),

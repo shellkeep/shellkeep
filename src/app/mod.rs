@@ -19,7 +19,6 @@ use tab::{
 
 use iced::{Subscription, Task, Theme, keyboard, window};
 use iced_term::settings::{BackendSettings, Settings};
-use iced_term::{RegexSearch, SearchMatch};
 use shellkeep::config::Config;
 use shellkeep::ssh::manager::{ConnKey, ConnectionManager};
 use shellkeep::state::history;
@@ -45,14 +44,6 @@ pub(crate) struct WelcomeState {
     pub(crate) port_input: String,
     pub(crate) user_input: String,
     pub(crate) identity_input: String,
-}
-
-/// Scrollback search state.
-pub(crate) struct SearchState {
-    pub(crate) active: bool,
-    pub(crate) input: String,
-    pub(crate) regex: Option<RegexSearch>,
-    pub(crate) last_match: Option<SearchMatch>,
 }
 
 /// All dialog-related state (workspace, host key, password, lock, close).
@@ -289,9 +280,6 @@ pub(crate) struct ShellKeep {
     /// System tray icon (FR-TRAY-01)
     pub(crate) tray: Option<Tray>,
 
-    // Scrollback search state (FR-TABS-09, FR-TERMINAL-07)
-    pub(crate) search: SearchState,
-
     /// FR-CONFIG-04: config hot reload receiver
     pub(crate) config_reload_rx: Option<std::sync::mpsc::Receiver<()>>,
 
@@ -411,12 +399,6 @@ impl ShellKeep {
             recent,
             error: None,
             tray: None,
-            search: SearchState {
-                active: false,
-                input: String::new(),
-                regex: None,
-                last_match: None,
-            },
             config_reload_rx: None,
             dialogs: DialogState {
                 show_close_dialog: false,
@@ -535,21 +517,6 @@ impl ShellKeep {
 
         (app, open_task)
     }
-}
-
-/// Escape special regex characters for literal matching in terminal search.
-pub(crate) fn escape_regex(input: &str) -> String {
-    let mut escaped = String::with_capacity(input.len() * 2);
-    for c in input.chars() {
-        if matches!(
-            c,
-            '\\' | '.' | '+' | '*' | '?' | '(' | ')' | '|' | '[' | ']' | '{' | '}' | '^' | '$'
-        ) {
-            escaped.push('\\');
-        }
-        escaped.push(c);
-    }
-    escaped
 }
 
 // ---------------------------------------------------------------------------

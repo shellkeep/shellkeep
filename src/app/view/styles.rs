@@ -137,32 +137,6 @@ pub(crate) fn bar_background_style(_theme: &Theme) -> container::Style {
     }
 }
 
-/// Search bar background style.
-pub(crate) fn search_bar_style(_theme: &Theme) -> container::Style {
-    container::Style {
-        background: Some(iced::Background::Color(Color::from_rgb8(0x24, 0x24, 0x36))),
-        border: iced::Border {
-            radius: 0.0.into(),
-            width: 0.0,
-            color: Color::TRANSPARENT,
-        },
-        ..Default::default()
-    }
-}
-
-/// Search bar button style (prev/next/close).
-pub(crate) fn search_button_style(_theme: &Theme, _status: button::Status) -> button::Style {
-    button::Style {
-        background: Some(iced::Background::Color(Color::from_rgb8(0x31, 0x32, 0x44))),
-        text_color: Color::from_rgb8(0xcd, 0xd6, 0xf4),
-        border: iced::Border {
-            radius: 4.0.into(),
-            ..Default::default()
-        },
-        ..Default::default()
-    }
-}
-
 /// Toast notification container style.
 pub(crate) fn toast_style(_theme: &Theme) -> container::Style {
     container::Style {

@@ -60,8 +60,6 @@ pub struct TerminalConfig {
     pub font_size: f32,
     /// Font family (monospace).
     pub font_family: Option<String>,
-    /// Scrollback buffer size in lines.
-    pub scrollback_lines: u32,
     /// Cursor shape.
     pub cursor_shape: CursorShape,
     /// Enable hyperlink detection.
@@ -136,7 +134,6 @@ impl Default for TerminalConfig {
         Self {
             font_size: 14.0,
             font_family: None,
-            scrollback_lines: 10_000,
             cursor_shape: CursorShape::Block,
             hyperlinks: true,
         }
@@ -236,9 +233,6 @@ impl Config {
             self.ssh.reconnect_max_attempts = 100;
         }
         self.terminal.font_size = self.terminal.font_size.clamp(6.0, 72.0);
-        if self.terminal.scrollback_lines > 1_000_000 {
-            self.terminal.scrollback_lines = 1_000_000;
-        }
     }
 
     pub fn file_path() -> PathBuf {
@@ -297,7 +291,6 @@ mod tests {
         assert_eq!(config.terminal.font_size, 14.0);
         assert_eq!(config.ssh.default_port, 22);
         assert_eq!(config.ssh.connect_timeout, 10);
-        assert_eq!(config.terminal.scrollback_lines, 10_000);
         assert_eq!(config.keybindings.new_tab, "Ctrl+Shift+T");
         assert!(config.tray.enabled);
         assert_eq!(config.state.history_max_days, 90);
@@ -316,7 +309,6 @@ mod tests {
         assert_eq!(config.terminal.font_size, 16.0);
         assert_eq!(config.ssh.default_port, 2222);
         // Other values should be defaults
-        assert_eq!(config.terminal.scrollback_lines, 10_000);
         assert_eq!(config.ssh.connect_timeout, 10);
     }
 
@@ -332,11 +324,9 @@ mod tests {
         config.ssh.keepalive_interval = 1;
         config.ssh.reconnect_max_attempts = 999;
         config.terminal.font_size = 2.0;
-        config.terminal.scrollback_lines = 5_000_000;
         config.validate();
         assert_eq!(config.ssh.keepalive_interval, 5);
         assert_eq!(config.ssh.reconnect_max_attempts, 100);
         assert_eq!(config.terminal.font_size, 6.0);
-        assert_eq!(config.terminal.scrollback_lines, 1_000_000);
     }
 }

@@ -60,12 +60,6 @@ pub(crate) enum Message {
     TrayPoll,
     /// FR-UI-07: create a fresh session replacing a dead tab
     CreateNewSession(usize),
-    // FR-TABS-09: scrollback search
-    SearchToggle,
-    SearchInputChanged(String),
-    SearchNext,
-    SearchPrev,
-    SearchClose,
     /// FR-CONFIG-04: config file changed on disk
     ConfigReloaded,
     /// FR-LOCK-04: periodic lock heartbeat
@@ -89,10 +83,6 @@ pub(crate) enum Message {
     FocusWorkspaceWindows(String, String),
     /// Phase 4: a new window has been opened (iced assigned ID)
     WindowOpened(window::Id),
-    /// FR-TERMINAL-18: export scrollback to file
-    ExportScrollback,
-    /// FR-TABS-12: copy entire scrollback to clipboard
-    CopyScrollback,
     // FR-ENV-03: workspace selection dialog
     ShowWorkspaceDialog,
     WorkspaceFilterChanged(String),

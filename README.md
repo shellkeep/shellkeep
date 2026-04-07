@@ -44,7 +44,7 @@ You SSH into a server, set up your terminal tabs, get deep into a debugging sess
 
 **Per-device layout sync** -- Each computer remembers its own window and tab arrangement. Open shellkeep on your desktop and laptop with different layouts for the same server.
 
-**Dead session recovery** -- If a session ended while you were disconnected, shellkeep preserves the scrollback history so you can review what happened.
+**Dead session recovery** -- If a session ended while you were disconnected, shellkeep detects and displays the dead session so you can create a new one in its place.
 
 **System tray** -- Minimize to tray and let sessions persist in the background. One-click to restore your windows.
 
@@ -190,7 +190,6 @@ theme = dark                       # "dark", "light", or "system"
 [terminal]
 font_family = JetBrains Mono
 font_size = 13
-scrollback_lines = 50000
 cursor_shape = ibeam               # "block", "ibeam", "underline"
 
 [ssh]
@@ -215,10 +214,8 @@ All shortcuts use `Ctrl+Shift` to avoid conflicts with remote applications.
 | `Ctrl+Shift+W` | Close tab |
 | `Ctrl+Shift+N` | New window |
 | `F2` | Rename current tab |
-| `Ctrl+Shift+F` | Search in scrollback |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab |
 | `Ctrl+Shift+C` / `Ctrl+Shift+V` | Copy / paste |
-| `Ctrl+Shift+A` | Copy entire scrollback |
 | `Ctrl+Shift+Plus` / `Minus` / `0` | Zoom in / out / reset |
 
 All shortcuts are customizable in `config.toml`.

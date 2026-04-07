@@ -519,49 +519,25 @@ impl Backend {
     }
 
     fn scroll(&mut self, terminal: &mut Term<EventProxy>, delta_value: i32) {
-        if delta_value != 0 {
-            let scroll = Scroll::Delta(delta_value);
-            if terminal
+        // Scrollback is managed by tmux. In alt-screen mode (less, vim, etc.),
+        // forward scroll as arrow-key escapes. Otherwise, scroll is a no-op —
+        // tmux handles it via mouse reports when `set -g mouse on`.
+        if delta_value != 0
+            && terminal
                 .mode()
                 .contains(TermMode::ALTERNATE_SCROLL | TermMode::ALT_SCREEN)
-            {
-                let line_cmd = if delta_value > 0 { b'A' } else { b'B' };
-                let mut content = vec![];
+        {
+            let line_cmd = if delta_value > 0 { b'A' } else { b'B' };
+            let mut content = vec![];
 
-                for _ in 0..delta_value.abs() {
-                    content.push(0x1b);
-                    content.push(b'O');
-                    content.push(line_cmd);
-                }
-
-                self.write(content);
-            } else {
-                terminal.grid_mut().scroll_display(scroll);
+            for _ in 0..delta_value.abs() {
+                content.push(0x1b);
+                content.push(b'O');
+                content.push(line_cmd);
             }
-        }
-    }
 
-    /// FR-TERMINAL-18 / FR-TABS-12: Extract all scrollback + visible text.
-    pub fn scrollback_text(&self) -> String {
-        let term = self.term.lock();
-        let grid = term.grid();
-        let total = grid.total_lines();
-        let cols = grid.columns();
-        let mut result = String::new();
-        for line_idx in 0..total {
-            // Grid lines: topmost scrollback is -(total-screen_lines), bottommost visible is screen_lines-1.
-            let line = Line(line_idx as i32 - (total as i32 - grid.screen_lines() as i32));
-            let mut row_text = String::new();
-            for col in 0..cols {
-                let cell = &grid[line][Column(col)];
-                row_text.push(cell.c);
-            }
-            // Trim trailing spaces per line
-            let trimmed = row_text.trim_end();
-            result.push_str(trimmed);
-            result.push('\n');
+            self.write(content);
         }
-        result
     }
 
     pub fn selectable_content(&self) -> String {
@@ -600,49 +576,6 @@ impl Backend {
 
     pub fn renderable_content(&self) -> &RenderableContent {
         &self.last_content
-    }
-
-    /// Search forward (right/down) from the given origin for the pattern.
-    /// Returns the match range if found, and scrolls the viewport to show it.
-    pub fn search_next(&mut self, regex: &mut RegexSearch, origin: Point) -> Option<Match> {
-        let term = self.term.clone();
-        let mut term = term.lock();
-        let result = term.search_next(regex, origin, Direction::Right, Side::Left, None);
-        if let Some(ref m) = result {
-            self.scroll_to_match(&mut term, m);
-        }
-        result
-    }
-
-    /// Search backward (left/up) from the given origin for the pattern.
-    /// Returns the match range if found, and scrolls the viewport to show it.
-    pub fn search_prev(&mut self, regex: &mut RegexSearch, origin: Point) -> Option<Match> {
-        let term = self.term.clone();
-        let mut term = term.lock();
-        let result = term.search_next(regex, origin, Direction::Left, Side::Right, None);
-        if let Some(ref m) = result {
-            self.scroll_to_match(&mut term, m);
-        }
-        result
-    }
-
-    /// Scroll the viewport so that the match start is visible.
-    fn scroll_to_match(&mut self, term: &mut Term<EventProxy>, m: &Match) {
-        let match_line = m.start().line;
-        let display_offset = term.grid().display_offset() as i32;
-        let screen_lines = self.size.num_lines as i32;
-        // match_line is in grid coordinates (negative = scrollback).
-        // Visible lines range from -display_offset to -display_offset + screen_lines - 1.
-        let viewport_top = -display_offset;
-        let viewport_bottom = viewport_top + screen_lines - 1;
-        if match_line.0 < viewport_top || match_line.0 > viewport_bottom {
-            // Scroll so match is near the top of viewport
-            let new_offset = -match_line.0;
-            let delta = new_offset - display_offset;
-            if delta != 0 {
-                term.grid_mut().scroll_display(Scroll::Delta(delta));
-            }
-        }
     }
 
     /// Based on alacritty/src/display/hint.rs > regex_match_at

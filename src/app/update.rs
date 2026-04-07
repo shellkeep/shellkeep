@@ -16,7 +16,6 @@
 //! - `handle_dialog_message` — close, workspace, host-key, password, lock dialogs
 //! - `handle_timer_message` — reconnect backoff, spinner, heartbeat, latency
 //! - `handle_terminal_message` — terminal I/O, context menu, window geometry
-//! - `handle_search_message` — scrollback search, export, clipboard
 //!
 //! To add a new message: add the variant to [`Message`], add it to the
 //! appropriate arm in `update()`, then implement the handler.
@@ -27,7 +26,6 @@ use super::tab::{ChannelHolder, SPINNER_FRAMES};
 
 use iced::{Task, keyboard, window};
 use iced_term::settings::FontSettings;
-use iced_term::{AlacrittyColumn, AlacrittyLine, AlacrittyPoint, RegexSearch};
 use shellkeep::config::Config;
 use shellkeep::i18n;
 use shellkeep::ssh;
@@ -159,15 +157,6 @@ impl ShellKeep {
             | Message::WindowOpened(..)
             | Message::ShowControlWindow
             | Message::CopyToClipboard(..) => self.handle_terminal_message(message),
-
-            // --- Search messages ---
-            Message::SearchToggle
-            | Message::SearchInputChanged(..)
-            | Message::SearchNext
-            | Message::SearchPrev
-            | Message::SearchClose
-            | Message::ExportScrollback
-            | Message::CopyScrollback => self.handle_search_message(message),
 
             // --- State sync messages ---
             Message::StateSyncerReady(..)
@@ -1545,32 +1534,6 @@ impl ShellKeep {
                 self.current_font_size = self.config.terminal.font_size;
                 self.apply_font_to_all_tabs();
             }
-            // Ctrl+Shift+F — toggle scrollback search — session windows only
-            if focused_is_session
-                && modifiers.control()
-                && modifiers.shift()
-                && key == keyboard::Key::Character("f".into())
-            {
-                return self.update(Message::SearchToggle);
-            }
-            // Ctrl+Shift+S — export scrollback — session windows only
-            if focused_is_session
-                && modifiers.control()
-                && modifiers.shift()
-                && key == keyboard::Key::Character("s".into())
-                && win_tab_count > 0
-            {
-                return self.update(Message::ExportScrollback);
-            }
-            // Ctrl+Shift+A — copy scrollback — session windows only
-            if focused_is_session
-                && modifiers.control()
-                && modifiers.shift()
-                && key == keyboard::Key::Character("a".into())
-                && win_tab_count > 0
-            {
-                return self.update(Message::CopyScrollback);
-            }
             // Enter/Escape on close-tab confirmation dialog
             if self.dialogs.pending_close_tabs.is_some() {
                 if key == keyboard::Key::Named(keyboard::key::Named::Enter) {
@@ -1580,12 +1543,10 @@ impl ShellKeep {
                     return self.update(Message::CancelCloseTabs);
                 }
             }
-            // Escape — dismiss search, context menu, cancel rename, shortcuts dialog, or cancel welcome
+            // Escape — dismiss context menu, cancel rename, shortcuts dialog, or cancel welcome
             if key == keyboard::Key::Named(keyboard::key::Named::Escape) {
                 if self.dialogs.show_shortcuts_dialog {
                     return self.update(Message::DismissShortcutsDialog);
-                } else if self.search.active {
-                    return self.update(Message::SearchClose);
                 } else if let Some(win) = self.active_window_mut() {
                     if win.context_menu.is_some() {
                         win.context_menu = None;
@@ -1606,7 +1567,6 @@ impl ShellKeep {
                     || self.dialogs.show_workspace_dialog
                     || self.dialogs.show_new_workspace_dialog
                     || self.dialogs.show_rename_workspace_dialog
-                    || self.search.active
                     || is_renaming)
             {
                 return if modifiers.shift() {
@@ -2509,15 +2469,6 @@ impl ShellKeep {
             tracing::info!("tray enabled={}", new_config.tray.enabled);
         }
 
-        // Note: scrollback_lines is NOT hot-reloadable (requires terminal recreation)
-        if new_config.terminal.scrollback_lines != self.config.terminal.scrollback_lines {
-            tracing::info!(
-                "scrollback_lines changed {} -> {} (requires restart to take effect)",
-                self.config.terminal.scrollback_lines,
-                new_config.terminal.scrollback_lines
-            );
-        }
-
         self.config = new_config;
         self.toast = Some(("Configuration reloaded".into(), std::time::Instant::now()));
         Task::none()
@@ -2881,150 +2832,6 @@ impl ShellKeep {
             self.update_title();
         }
         Task::none()
-    }
-
-    // -----------------------------------------------------------------------
-    // Search messages
-    // -----------------------------------------------------------------------
-
-    fn handle_search_message(&mut self, message: Message) -> Task<Message> {
-        match message {
-            Message::SearchToggle => {
-                self.search.active = !self.search.active;
-                if !self.search.active {
-                    self.search.input.clear();
-                    self.search.regex = None;
-                    self.search.last_match = None;
-                    Task::none()
-                } else {
-                    iced_runtime::widget::operation::focus("search-input")
-                }
-            }
-
-            Message::SearchInputChanged(v) => {
-                self.search.input = v;
-                if self.search.input.is_empty() {
-                    self.search.regex = None;
-                    self.search.last_match = None;
-                    Task::none()
-                } else {
-                    let escaped = super::escape_regex(&self.search.input);
-                    self.search.regex = RegexSearch::new(&escaped).ok();
-                    if self.search.regex.is_some() {
-                        self.update(Message::SearchNext)
-                    } else {
-                        Task::none()
-                    }
-                }
-            }
-
-            Message::SearchNext => {
-                let active_tab = self.active_window().map(|w| w.active_tab).unwrap_or(0);
-                let win_id = self.active_window_id();
-                if let (Some(regex), Some(wid)) = (&mut self.search.regex, win_id)
-                    && let Some(win) = self.windows.get_mut(&wid)
-                    && let Some(tab) = win.tabs.get_mut(active_tab)
-                    && let Some(ref mut terminal) = tab.terminal
-                {
-                    let origin = self
-                        .search
-                        .last_match
-                        .as_ref()
-                        .map(|m| {
-                            let mut p = *m.end();
-                            p.column.0 += 1;
-                            p
-                        })
-                        .unwrap_or(AlacrittyPoint::new(AlacrittyLine(0), AlacrittyColumn(0)));
-                    self.search.last_match = terminal.search_next(regex, origin);
-                }
-                Task::none()
-            }
-
-            Message::SearchPrev => {
-                let active_tab = self.active_window().map(|w| w.active_tab).unwrap_or(0);
-                let win_id = self.active_window_id();
-                if let (Some(regex), Some(wid)) = (&mut self.search.regex, win_id)
-                    && let Some(win) = self.windows.get_mut(&wid)
-                    && let Some(tab) = win.tabs.get_mut(active_tab)
-                    && let Some(ref mut terminal) = tab.terminal
-                {
-                    let origin = self
-                        .search
-                        .last_match
-                        .as_ref()
-                        .map(|m| {
-                            let mut p = *m.start();
-                            if p.column.0 > 0 {
-                                p.column.0 -= 1;
-                            } else {
-                                p.line -= 1i32;
-                            }
-                            p
-                        })
-                        .unwrap_or(AlacrittyPoint::new(AlacrittyLine(0), AlacrittyColumn(0)));
-                    self.search.last_match = terminal.search_prev(regex, origin);
-                }
-                Task::none()
-            }
-
-            Message::SearchClose => {
-                self.search.active = false;
-                self.search.input.clear();
-                self.search.regex = None;
-                self.search.last_match = None;
-                Task::none()
-            }
-
-            // FR-TERMINAL-18: export scrollback to text file
-            Message::ExportScrollback => {
-                tracing::info!("export scrollback");
-                if let Some(win) = self.active_window()
-                    && let Some(tab) = win.tabs.get(win.active_tab)
-                    && let Some(ref terminal) = tab.terminal
-                {
-                    let text = terminal.scrollback_text();
-                    let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
-                    let filename = format!("shellkeep-export-{timestamp}.txt");
-                    let path = dirs::home_dir()
-                        .unwrap_or_else(|| std::path::PathBuf::from("."))
-                        .join(&filename);
-                    match std::fs::write(&path, &text) {
-                        Ok(()) => {
-                            tracing::info!("exported scrollback to {}", path.display());
-                            self.toast = Some((
-                                format!("Scrollback exported to {}", path.display()),
-                                std::time::Instant::now(),
-                            ));
-                        }
-                        Err(e) => {
-                            tracing::error!("failed to export scrollback: {e}");
-                            self.error = Some(format!("Export failed: {e}"));
-                        }
-                    }
-                }
-                Task::none()
-            }
-
-            // FR-TABS-12: copy entire scrollback to clipboard
-            Message::CopyScrollback => {
-                tracing::info!("copy scrollback to clipboard");
-                if let Some(win) = self.active_window()
-                    && let Some(tab) = win.tabs.get(win.active_tab)
-                    && let Some(ref terminal) = tab.terminal
-                {
-                    let text = terminal.scrollback_text();
-                    self.toast = Some((
-                        "Scrollback copied to clipboard".to_string(),
-                        std::time::Instant::now(),
-                    ));
-                    return iced::clipboard::write(text);
-                }
-                Task::none()
-            }
-
-            _ => Task::none(),
-        }
     }
 
     // -----------------------------------------------------------------------
@@ -4225,33 +4032,5 @@ mod tests {
     #[test]
     fn client_id_empty_input() {
         assert_eq!(filter_client_id(""), "");
-    }
-
-    // -------------------------------------------------------------------
-    // escape_regex
-    // -------------------------------------------------------------------
-
-    #[test]
-    fn escape_regex_special_chars() {
-        assert_eq!(
-            super::super::escape_regex("hello.world*"),
-            "hello\\.world\\*"
-        );
-    }
-
-    #[test]
-    fn escape_regex_no_specials() {
-        assert_eq!(super::super::escape_regex("foobar"), "foobar");
-    }
-
-    #[test]
-    fn escape_regex_all_specials() {
-        let input = r"\\.+*?()|[]{}^$";
-        let escaped = super::super::escape_regex(input);
-        // Every char should be preceded by backslash
-        for c in input.chars() {
-            let expected = format!("\\{c}");
-            assert!(escaped.contains(&expected), "missing escape for '{c}'");
-        }
     }
 }

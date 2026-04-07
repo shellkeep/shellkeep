@@ -153,13 +153,6 @@ pub const RENAME: &str = "Rename";
 pub const COPY: &str = "Copy";
 pub const PASTE: &str = "Paste";
 
-// Search
-pub const MATCH_FOUND: &str = "Match found";
-pub const NO_MATCHES: &str = "No matches";
-pub const PREVIOUS: &str = "Previous";
-pub const NEXT: &str = "Next";
-pub const CLOSE: &str = "Close";
-
 // Close dialog
 pub const CANCEL: &str = "Cancel";
 
@@ -224,12 +217,6 @@ fn pt_br_translations() -> HashMap<&'static str, &'static str> {
     m.insert(PASTE, "Colar");
 
     // Search
-    m.insert(MATCH_FOUND, "Resultado encontrado");
-    m.insert(NO_MATCHES, "Sem resultados");
-    m.insert(PREVIOUS, "Anterior");
-    m.insert(NEXT, "Próximo");
-    m.insert(CLOSE, "Fechar");
-
     // Close dialog
     m.insert(CANCEL, "Cancelar");
 
