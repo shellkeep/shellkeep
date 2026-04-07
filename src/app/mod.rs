@@ -79,6 +79,7 @@ pub(crate) struct DialogState {
     pub(crate) lock_info_text: String,
     pub(crate) lock_target_tab: Option<TabId>,
     pub(crate) pending_close_tabs: Option<Vec<usize>>,
+    pub(crate) pending_close_tabs_window: Option<window::Id>,
     pub(crate) show_shortcuts_dialog: bool,
     // Phase 6: workspace/server dialog state
     pub(crate) show_workspace_rename: Option<(String, String)>,
@@ -440,6 +441,7 @@ impl ShellKeep {
                 lock_info_text: String::new(),
                 lock_target_tab: None,
                 pending_close_tabs: None,
+                pending_close_tabs_window: None,
                 show_shortcuts_dialog: false,
                 show_workspace_rename: None,
                 workspace_rename_input: String::new(),

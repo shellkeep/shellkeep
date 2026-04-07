@@ -237,6 +237,8 @@ pub(crate) enum Message {
     ShowDeleteWorkspace(String, String),
     /// Confirm workspace deletion
     ConfirmDeleteWorkspace,
+    /// Confirm deletion of last workspace + clear remote state and disconnect
+    ConfirmDeleteLastWorkspaceAndClear,
     /// Cancel workspace deletion
     CancelDeleteWorkspace,
 

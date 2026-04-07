@@ -521,7 +521,9 @@ impl ShellKeep {
 
         // FR-TABS-17: close confirmation dialog overlay
         // FR-SESSION-10a: close-tab confirmation dialog
-        let main_view: Element<'_, Message> = if self.dialogs.pending_close_tabs.is_some() {
+        let main_view: Element<'_, Message> = if self.dialogs.pending_close_tabs.is_some()
+            && self.dialogs.pending_close_tabs_window == Some(window_id)
+        {
             let count = self
                 .dialogs
                 .pending_close_tabs

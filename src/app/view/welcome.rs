@@ -871,36 +871,82 @@ impl ShellKeep {
     /// Phase 6: remove workspace confirmation dialog.
     fn view_workspace_delete_dialog(&self, env: &str) -> Element<'_, Message> {
         use iced::widget::container;
-        container(
-            column![
-                text("Remove workspace?")
-                    .size(18)
-                    .color(Color::from_rgb8(0xcd, 0xd6, 0xf4)),
-                text(format!("Remove workspace \"{env}\"?"))
+        let is_last = self.dialogs.workspace_list.len() <= 1;
+
+        if is_last {
+            // Last workspace: offer to clear remote state and disconnect
+            container(
+                column![
+                    text("Remove last workspace?")
+                        .size(18)
+                        .color(Color::from_rgb8(0xcd, 0xd6, 0xf4)),
+                    text(format!(
+                        "\"{env}\" is the only workspace on this server."
+                    ))
                     .size(13)
                     .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
-                text("All sessions will be terminated and windows closed.")
+                    text(
+                        "You can remove it and start fresh, or clear all shellkeep data from the server and disconnect."
+                    )
                     .size(12)
-                    .color(Color::from_rgb8(0xf9, 0xe2, 0xaf)),
-                Space::new().height(8),
-                row![
-                    button(text("Cancel").size(13))
-                        .on_press(Message::CancelDeleteWorkspace)
-                        .padding([8, 16])
-                        .style(styles::secondary_button_style),
-                    Space::new().width(Length::Fill),
-                    button(text("Remove").size(13))
-                        .on_press(Message::ConfirmDeleteWorkspace)
-                        .padding([8, 16])
-                        .style(styles::danger_button_style),
+                    .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
+                    Space::new().height(12),
+                    row![
+                        button(text("Cancel").size(13))
+                            .on_press(Message::CancelDeleteWorkspace)
+                            .padding([8, 16])
+                            .style(styles::secondary_button_style),
+                        Space::new().width(Length::Fill),
+                        button(text("Remove").size(13))
+                            .on_press(Message::ConfirmDeleteWorkspace)
+                            .padding([8, 16])
+                            .style(styles::secondary_button_style),
+                        Space::new().width(8),
+                        button(text("Clear & disconnect").size(13))
+                            .on_press(Message::ConfirmDeleteLastWorkspaceAndClear)
+                            .padding([8, 16])
+                            .style(styles::danger_button_style),
+                    ]
+                    .width(Length::Fill),
                 ]
-                .width(Length::Fill),
-            ]
-            .spacing(8)
-            .padding(24)
-            .width(360),
-        )
-        .style(styles::dialog_container_style)
-        .into()
+                .spacing(8)
+                .padding(24)
+                .width(440),
+            )
+            .style(styles::dialog_container_style)
+            .into()
+        } else {
+            container(
+                column![
+                    text("Remove workspace?")
+                        .size(18)
+                        .color(Color::from_rgb8(0xcd, 0xd6, 0xf4)),
+                    text(format!("Remove workspace \"{env}\"?"))
+                        .size(13)
+                        .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
+                    text("All sessions will be terminated and windows closed.")
+                        .size(12)
+                        .color(Color::from_rgb8(0xf9, 0xe2, 0xaf)),
+                    Space::new().height(8),
+                    row![
+                        button(text("Cancel").size(13))
+                            .on_press(Message::CancelDeleteWorkspace)
+                            .padding([8, 16])
+                            .style(styles::secondary_button_style),
+                        Space::new().width(Length::Fill),
+                        button(text("Remove").size(13))
+                            .on_press(Message::ConfirmDeleteWorkspace)
+                            .padding([8, 16])
+                            .style(styles::danger_button_style),
+                    ]
+                    .width(Length::Fill),
+                ]
+                .spacing(8)
+                .padding(24)
+                .width(360),
+            )
+            .style(styles::dialog_container_style)
+            .into()
+        }
     }
 }

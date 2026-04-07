@@ -198,6 +198,7 @@ impl ShellKeep {
             | Message::CancelRenameWorkspace
             | Message::ShowDeleteWorkspace(..)
             | Message::ConfirmDeleteWorkspace
+            | Message::ConfirmDeleteLastWorkspaceAndClear
             | Message::CancelDeleteWorkspace
             | Message::WorkspaceSessionsFound(..)
             | Message::RestoreWorkspaceHiddenWindows(..) => self.handle_workspace_message(message),
@@ -754,6 +755,7 @@ impl ShellKeep {
                 if needs_confirm {
                     // Active session — ask confirmation
                     self.dialogs.pending_close_tabs = Some(vec![index]);
+                    self.dialogs.pending_close_tabs_window = self.active_window_id();
                     return Task::none();
                 }
                 // Dead/disconnected — close immediately
@@ -762,11 +764,14 @@ impl ShellKeep {
 
             Message::ConfirmCloseTabs => {
                 tracing::info!("confirm close tabs");
-                if let Some(indices) = self.dialogs.pending_close_tabs.take() {
+                let win_id = self.dialogs.pending_close_tabs_window.take();
+                if let Some(indices) = self.dialogs.pending_close_tabs.take()
+                    && let Some(win_id) = win_id
+                {
                     let mut tasks = Vec::new();
                     // Close from end to avoid index shifting
                     for idx in indices.into_iter().rev() {
-                        tasks.push(self.close_tab(idx));
+                        tasks.push(self.close_tab_in_window(win_id, idx));
                     }
                     return Task::batch(tasks);
                 }
@@ -776,6 +781,7 @@ impl ShellKeep {
             Message::CancelCloseTabs => {
                 tracing::debug!("cancel close tabs");
                 self.dialogs.pending_close_tabs = None;
+                self.dialogs.pending_close_tabs_window = None;
                 Task::none()
             }
 
@@ -878,6 +884,7 @@ impl ShellKeep {
                 self.hide_tab(index);
                 // P9: dismiss close dialog if it was open
                 self.dialogs.pending_close_tabs = None;
+                self.dialogs.pending_close_tabs_window = None;
                 if let Some(win) = self.active_window_mut() {
                     win.tab_context_menu = None;
                 }
@@ -916,6 +923,7 @@ impl ShellKeep {
                 };
                 if has_active {
                     self.dialogs.pending_close_tabs = Some(to_close);
+                    self.dialogs.pending_close_tabs_window = self.active_window_id();
                 } else {
                     let mut tasks = Vec::new();
                     for idx in to_close.into_iter().rev() {
@@ -949,6 +957,7 @@ impl ShellKeep {
                 };
                 if has_active {
                     self.dialogs.pending_close_tabs = Some(to_close);
+                    self.dialogs.pending_close_tabs_window = self.active_window_id();
                 } else {
                     let mut tasks = Vec::new();
                     for idx in to_close.into_iter().rev() {
@@ -3612,6 +3621,103 @@ impl ShellKeep {
                 self.flush_state();
                 self.toast = Some((
                     format!("Workspace \"{workspace_name}\" removed"),
+                    std::time::Instant::now(),
+                ));
+
+                if close_tasks.is_empty() {
+                    Task::none()
+                } else {
+                    Task::batch(close_tasks)
+                }
+            }
+
+            Message::ConfirmDeleteLastWorkspaceAndClear => {
+                let (server_uuid, workspace_name) = match self.dialogs.show_workspace_delete.take()
+                {
+                    Some(pair) => pair,
+                    None => return Task::none(),
+                };
+                tracing::info!(
+                    "clear remote state + delete last workspace: {workspace_name} on {server_uuid}"
+                );
+
+                // 1. Find tmux sessions to kill
+                let sessions_to_kill: Vec<String> = self
+                    .cached_shared_state
+                    .as_ref()
+                    .and_then(|s| s.workspaces.get(&workspace_name))
+                    .map(|ws| {
+                        ws.tabs
+                            .iter()
+                            .map(|t| t.tmux_session_name.clone())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                // 2. Close all session windows
+                let mut close_tasks: Vec<Task<Message>> = Vec::new();
+                let mut session_win_ids: Vec<window::Id> = Vec::new();
+                for (&win_id, win) in &self.windows {
+                    if win.kind == super::WindowKind::Session {
+                        session_win_ids.push(win_id);
+                    }
+                }
+                for win_id in &session_win_ids {
+                    self.windows.remove(win_id);
+                    self.window_order.retain(|id| id != win_id);
+                    close_tasks.push(window::close(*win_id));
+                }
+                if self
+                    .focused_window
+                    .is_some_and(|id| session_win_ids.contains(&id))
+                {
+                    self.focused_window = self.window_order.first().copied();
+                }
+
+                // 3. Kill tmux sessions + delete remote state directory
+                let mgr = self.conn_manager.clone();
+                if let Some(ref conn) = self.current_conn {
+                    let conn_key = conn.key.clone();
+                    close_tasks.push(Task::perform(
+                        async move {
+                            let mgr_guard = mgr.lock().await;
+                            if let Some(handle_arc) = mgr_guard.get_cached(&conn_key) {
+                                let handle = handle_arc.lock().await;
+                                for name in &sessions_to_kill {
+                                    let cmd = format!("tmux kill-session -t {name} 2>/dev/null");
+                                    let _ = ssh::connection::exec_command(&handle, &cmd).await;
+                                    tracing::info!("killed tmux session: {name}");
+                                }
+                                match ssh::connection::exec_command(&handle, "rm -rf ~/.shellkeep")
+                                    .await
+                                {
+                                    Ok(_) => tracing::info!("cleared remote state: ~/.shellkeep"),
+                                    Err(e) => {
+                                        tracing::warn!("failed to clear remote state: {e}")
+                                    }
+                                }
+                            }
+                        },
+                        |_| Message::Noop,
+                    ));
+                }
+
+                // 4. Clear local state (same as DisconnectServer)
+                self.current_conn = None;
+                self.sessions_listed = false;
+                self.server_state_loaded = false;
+                self.state_syncer = None;
+                self.connecting_server = None;
+                self.cached_shared_state = None;
+                self.cached_device_state = None;
+                self.hidden_sessions.clear();
+                self.dialogs.workspace_list.clear();
+                self.dialogs.delete_workspace_target = None;
+                self.current_workspace = "Default".to_string();
+                self.save_state();
+
+                self.toast = Some((
+                    format!("Workspace \"{workspace_name}\" removed. Server state cleared."),
                     std::time::Instant::now(),
                 ));
 
