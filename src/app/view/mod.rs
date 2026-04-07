@@ -479,7 +479,7 @@ impl ShellKeep {
         };
 
         // Item 5: window rename overlay
-        let main_view: Element<'_, Message> = if self.renaming_window.is_some() {
+        let main_view: Element<'_, Message> = if self.renaming_window == Some(window_id) {
             let rename_dialog = container(
                 column![
                     text("Rename window")
