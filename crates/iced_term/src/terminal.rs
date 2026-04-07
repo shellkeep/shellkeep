@@ -87,7 +87,7 @@ impl Terminal {
     }
 
     /// Feed raw SSH channel data into the terminal parser.
-    pub fn feed_ssh_data(&self, data: &[u8]) {
+    pub fn feed_ssh_data(&mut self, data: &[u8]) {
         self.backend.feed_ssh_data(data);
     }
 

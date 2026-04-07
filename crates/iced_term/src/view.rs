@@ -14,6 +14,7 @@ use alacritty_terminal::vte::ansi::{self as ansi, CursorShape, NamedColor};
 use iced::alignment::Vertical;
 use iced::font::{Style as FontStyle, Weight as FontWeight};
 use iced::mouse::{Cursor, ScrollDelta};
+use iced::widget::canvas::Frame;
 use iced::widget::canvas::{Path, Text};
 use iced::widget::container;
 use iced::{Color, Element, Length, Point, Rectangle, Size, Theme};
@@ -25,6 +26,65 @@ use iced_core::widget::operation::{self, Focusable};
 use iced_graphics::core::Widget;
 use iced_graphics::core::widget::{Tree, tree};
 use iced_graphics::geometry::Stroke;
+
+/// Draw box-drawing characters (U+2500–U+257F) as geometric paths instead of
+/// font glyphs, ensuring pixel-perfect borders without gaps between cells.
+/// Returns `true` if the character was handled, `false` if it should be
+/// rendered as normal text.
+fn draw_box_char(frame: &mut Frame, c: char, x: f32, y: f32, w: f32, h: f32, color: Color) -> bool {
+    let cx = x + w * 0.5;
+    let cy = y + h * 0.5;
+    let t = (w * 0.08).max(1.0); // line thickness
+
+    // (right, left, down, up) — which half-lines to draw from center
+    let segments: (bool, bool, bool, bool) = match c {
+        '─' | '━' => (true, true, false, false),
+        '│' | '┃' => (false, false, true, true),
+        '┌' | '┏' => (true, false, true, false),
+        '┐' | '┓' => (false, true, true, false),
+        '└' | '┗' => (true, false, false, true),
+        '┘' | '┛' => (false, true, false, true),
+        '├' | '┣' => (true, false, true, true),
+        '┤' | '┫' => (false, true, true, true),
+        '┬' | '┳' => (true, true, true, false),
+        '┴' | '┻' => (true, true, false, true),
+        '┼' | '╋' => (true, true, true, true),
+        '╌' | '╍' => (true, true, false, false), // dashed horizontal
+        '╎' | '╏' => (false, false, true, true), // dashed vertical
+        _ => return false,
+    };
+
+    let (right, left, down, up) = segments;
+
+    // Horizontal segments
+    if left {
+        frame.fill(
+            &Path::rectangle(Point::new(x, cy - t * 0.5), Size::new(w * 0.5, t)),
+            color,
+        );
+    }
+    if right {
+        frame.fill(
+            &Path::rectangle(Point::new(cx, cy - t * 0.5), Size::new(w * 0.5, t)),
+            color,
+        );
+    }
+    // Vertical segments
+    if up {
+        frame.fill(
+            &Path::rectangle(Point::new(cx - t * 0.5, y), Size::new(t, h * 0.5)),
+            color,
+        );
+    }
+    if down {
+        frame.fill(
+            &Path::rectangle(Point::new(cx - t * 0.5, cy), Size::new(t, h * 0.5)),
+            color,
+        );
+    }
+
+    true
+}
 
 pub struct TerminalView<'a> {
     term: &'a Terminal,
@@ -585,6 +645,13 @@ impl Widget<Event, Theme, iced::Renderer> for TerminalView<'_> {
                     {
                         fg = bg;
                     }
+
+                    // Box-drawing characters: render as geometric paths for
+                    // pixel-perfect borders without gaps between cells.
+                    if draw_box_char(frame, indexed.c, x, y, cell_width, cell_height, fg) {
+                        continue;
+                    }
+
                     // Resolve font style (bold/italic) from cell flags
                     let mut font = self.term.font.font_type;
                     if indexed

@@ -144,6 +144,9 @@ pub struct Backend {
     ssh_writer: Option<tokio::sync::mpsc::UnboundedSender<Vec<u8>>>,
     last_content: RenderableContent,
     pub(crate) url_regex: RegexSearch,
+    /// VTE parser — persisted across `feed_ssh_data()` calls so that escape
+    /// sequences split across SSH data chunks are handled correctly.
+    parser: alacritty_terminal::vte::ansi::Processor,
 }
 
 /// Parse a cursor shape string into alacritty's CursorShape.
@@ -212,6 +215,7 @@ impl Backend {
             // SAFETY: URL_REGEX is a compile-time constant that is always valid
             #[allow(clippy::expect_used)]
             url_regex: RegexSearch::new(URL_REGEX).expect("invalid url regexp"),
+            parser: Default::default(),
         })
     }
 
@@ -252,14 +256,16 @@ impl Backend {
             // SAFETY: URL_REGEX is a compile-time constant that is always valid
             #[allow(clippy::expect_used)]
             url_regex: RegexSearch::new(URL_REGEX).expect("invalid url regexp"),
+            parser: Default::default(),
         })
     }
 
     /// Feed raw bytes from SSH channel into the terminal parser.
-    pub fn feed_ssh_data(&self, data: &[u8]) {
+    /// The parser is persisted across calls so that escape sequences
+    /// split across SSH data chunks are handled correctly.
+    pub fn feed_ssh_data(&mut self, data: &[u8]) {
         let mut term = self.term.lock();
-        let mut parser: alacritty_terminal::vte::ansi::Processor = Default::default();
-        parser.advance(&mut *term, data);
+        self.parser.advance(&mut *term, data);
     }
 
     /// Returns the current terminal grid size as (cols, rows).
