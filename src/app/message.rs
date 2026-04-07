@@ -83,9 +83,9 @@ pub(crate) enum Message {
     WindowResized(window::Id, Size),
     /// Phase 4: open a new window for the current server
     NewWindow,
-    /// Open a new window for a specific workspace (server_uuid, environment)
+    /// Open a new window for a specific workspace (server_uuid, workspace)
     NewWindowForWorkspace(String, String),
-    /// Focus all windows belonging to a workspace (server_uuid, environment)
+    /// Focus all windows belonging to a workspace (server_uuid, workspace)
     FocusWorkspaceWindows(String, String),
     /// Phase 4: a new window has been opened (iced assigned ID)
     WindowOpened(window::Id),
@@ -146,7 +146,7 @@ pub(crate) enum Message {
     LatencyTick,
     /// FR-UI-04/05: latency measurement result (tab_id, latency_ms or None on error)
     LatencyMeasured(TabId, Option<u32>),
-    /// Restore all hidden windows for a workspace environment
+    /// Restore all hidden windows for a workspace
     RestoreWorkspaceHiddenWindows(String),
     /// Show/hide the restore hidden sessions dropdown
     ShowRestoreDropdown,

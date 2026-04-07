@@ -4,9 +4,9 @@
 //! Application state persistence, history, and recent connections.
 
 pub mod client_id;
-pub mod environment;
 pub mod history;
 pub mod permissions;
 pub mod recent;
 pub mod server;
 pub mod state_file;
+pub mod workspace;

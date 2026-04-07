@@ -15,23 +15,26 @@ Stores the window/tab layout. Updated atomically (write to temp, rename).
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 3,
   "last_modified": "1711667200Z",
   "client_id": "user-hostname",
-  "tabs": [
-    {
-      "session_uuid": "tab-0",
-      "tmux_session_name": "shellkeep-0",
-      "title": "user@server.com",
-      "position": 0
-    },
-    {
-      "session_uuid": "tab-1",
-      "tmux_session_name": "shellkeep-1",
-      "title": "Session 2",
-      "position": 1
+  "workspaces": {
+    "work": {
+      "name": "work",
+      "uuid": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+      "tabs": [
+        {
+          "session_uuid": "tab-0",
+          "tmux_session_name": "shellkeep-0",
+          "title": "user@server.com",
+          "position": 0
+        }
+      ]
     }
-  ]
+  },
+  "last_workspace": "work",
+  "hidden_windows": [],
+  "window_geometry": {}
 }
 ```
 
@@ -39,14 +42,20 @@ Stores the window/tab layout. Updated atomically (write to temp, rename).
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `schema_version` | u32 | Always 1. Used for future migrations. |
+| `schema_version` | u32 | Current version is 3. Used for migrations. |
 | `last_modified` | string | Unix timestamp in seconds + "Z" suffix. |
 | `client_id` | string | Unique client identifier (from config or auto-generated). |
-| `tabs` | array | Ordered list of tab states. |
-| `tabs[].session_uuid` | string | Unique tab identifier. |
-| `tabs[].tmux_session_name` | string | Remote tmux session name (e.g. "shellkeep-0"). |
-| `tabs[].title` | string | Display title of the tab. |
-| `tabs[].position` | usize | Position in the tab bar (0-indexed). |
+| `workspaces` | object | Map of workspace name → workspace object. |
+| `workspaces.*.name` | string | Workspace display name. |
+| `workspaces.*.uuid` | string | Unique workspace identifier. |
+| `workspaces.*.tabs` | array | Ordered list of tab states in this workspace. |
+| `workspaces.*.tabs[].session_uuid` | string | Unique tab identifier. |
+| `workspaces.*.tabs[].tmux_session_name` | string | Remote tmux session name. |
+| `workspaces.*.tabs[].title` | string | Display title of the tab. |
+| `workspaces.*.tabs[].position` | usize | Position in the tab bar (0-indexed). |
+| `last_workspace` | string | Name of the last active workspace. |
+| `hidden_windows` | array | List of hidden window IDs. |
+| `window_geometry` | object | Per-device window positions and sizes. |
 
 ## Recent Connections
 

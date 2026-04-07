@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: 2026 shellkeep contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Input validation for session and environment names.
+//! Input validation for session and workspace names.
 //!
 //! NFR-SEC-05: Reject tmux-incompatible chars and path traversal.
 //! NFR-SEC-06: UUID validation for file paths.
 
-/// Validate a tmux session/environment name.
+/// Validate a tmux session/workspace name.
 /// Rejects: `:`, `.`, `/`, `\`, `..`, null bytes, control chars.
 pub fn is_valid_session_name(name: &str) -> bool {
     if name.is_empty() || name.len() > 128 {

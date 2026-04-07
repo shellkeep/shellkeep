@@ -24,7 +24,7 @@ sections.
 - Add code comments to under-documented source files (especially public
   headers in `include/shellkeep/`).
 - Write a short tutorial for a specific workflow (e.g., "How to manage
-  multiple servers with environments").
+  multiple servers with workspaces").
 
 ## Steps
 

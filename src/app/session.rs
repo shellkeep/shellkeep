@@ -132,7 +132,7 @@ pub(crate) struct EstablishParams {
     pub password: Option<String>,
     /// If true, release the lock before acquiring it (lock takeover).
     pub force_lock: bool,
-    /// Workspace (environment) name for per-workspace lock.
+    /// Workspace name for per-workspace lock.
     pub workspace: String,
 }
 
@@ -358,7 +358,7 @@ pub(crate) async fn open_tab_channel(
             .map_err(|e| SshError::Channel(format!("pty: {e}")))?;
 
         let tmux_cmd = format!(
-            "TERM=xterm-256color tmux new-session -A -s {} \\; set status off || exec $SHELL",
+            "TERM=xterm-256color tmux new-session -A -s {} \\; set status off",
             params.tmux_session
         );
         ch.exec(true, tmux_cmd)

@@ -2,6 +2,6 @@
   "schema_version": 999,
   "last_modified": "2026-03-26T10:00:00Z",
   "client_id": "desktop-home",
-  "environments": {},
-  "last_environment": ""
+  "workspaces": {},
+  "last_workspace": ""
 }

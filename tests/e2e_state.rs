@@ -953,15 +953,15 @@ async fn test_reconcile_dead_session() {
 #[tokio::test]
 #[ignore]
 async fn test_workspace_create_rename() {
-    use shellkeep::state::environment;
+    use shellkeep::state::workspace;
 
     let mut state = SharedState::new();
-    environment::create_workspace(&mut state, "MyProject").unwrap();
+    workspace::create_workspace(&mut state, "MyProject").unwrap();
     assert!(state.workspaces.contains_key("MyProject"));
     let original_uuid = state.workspaces["MyProject"].uuid.clone();
 
     // Rename
-    environment::rename_workspace(&mut state, "MyProject", "RenamedProject").unwrap();
+    workspace::rename_workspace(&mut state, "MyProject", "RenamedProject").unwrap();
     assert!(
         !state.workspaces.contains_key("MyProject"),
         "old name should be gone"
@@ -981,14 +981,14 @@ async fn test_workspace_create_rename() {
 #[tokio::test]
 #[ignore]
 async fn test_workspace_delete() {
-    use shellkeep::state::environment;
+    use shellkeep::state::workspace;
 
     let mut state = SharedState::new();
-    environment::create_workspace(&mut state, "ToDelete").unwrap();
-    environment::create_workspace(&mut state, "ToKeep").unwrap();
+    workspace::create_workspace(&mut state, "ToDelete").unwrap();
+    workspace::create_workspace(&mut state, "ToKeep").unwrap();
     assert_eq!(state.workspaces.len(), 2);
 
-    environment::delete_workspace(&mut state, "ToDelete").unwrap();
+    workspace::delete_workspace(&mut state, "ToDelete").unwrap();
     assert_eq!(state.workspaces.len(), 1);
     assert!(!state.workspaces.contains_key("ToDelete"));
     assert!(state.workspaces.contains_key("ToKeep"));
@@ -1030,7 +1030,7 @@ async fn test_workspace_isolation() {
 #[tokio::test]
 #[ignore]
 async fn test_workspace_uuid_stable_across_rename() {
-    use shellkeep::state::environment;
+    use shellkeep::state::workspace;
 
     let handle = connect().await;
     let client_id = test_client_id("ws-rename");
@@ -1043,7 +1043,7 @@ async fn test_workspace_uuid_stable_across_rename() {
 
     // Create state with workspace, persist, rename, persist again
     let mut shared = SharedState::new();
-    environment::create_workspace(&mut shared, "OriginalName").unwrap();
+    workspace::create_workspace(&mut shared, "OriginalName").unwrap();
     let original_uuid = shared.workspaces["OriginalName"].uuid.clone();
 
     // Add a tab to the workspace
@@ -1067,7 +1067,7 @@ async fn test_workspace_uuid_stable_across_rename() {
         .unwrap();
 
     // Rename
-    environment::rename_workspace(&mut shared, "OriginalName", "NewName").unwrap();
+    workspace::rename_workspace(&mut shared, "OriginalName", "NewName").unwrap();
     syncer
         .write_shared_state(&serde_json::to_string(&shared).unwrap())
         .await

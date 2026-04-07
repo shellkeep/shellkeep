@@ -2,7 +2,7 @@
   "schema_version": 1,
   "last_modified": "2026-03-26T10:00:00Z",
   "client_id": "desktop-home",
-  "environments": {
+  "workspaces": {
     "work": {
       "windows": [
         {
@@ -34,5 +34,5 @@
       ]
     }
   },
-  "last_environment": "work"
+  "last_workspace": "work"
 }

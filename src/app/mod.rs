@@ -153,7 +153,7 @@ pub(crate) struct AppWindow {
     pub(crate) title: String,
     /// User-visible window name (e.g. "user@host - Window 1")
     pub(crate) name: String,
-    /// Which workspace environment this window shows (None for control window)
+    /// Which workspace this window shows (None for control window)
     pub(crate) workspace_env: Option<String>,
     /// Which saved server this window is connected to (None for control window)
     pub(crate) server_uuid: Option<String>,
@@ -692,7 +692,7 @@ impl ShellKeep {
     /// Count active (connected) sessions for a workspace.
     #[allow(dead_code)]
     pub(crate) fn workspace_session_count(&self, _server_uuid: &str, env: &str) -> usize {
-        // Count from cached shared state (server's view of sessions per environment)
+        // Count from cached shared state (server's view of sessions per workspace)
         // rather than from windows (which may not have workspace_env set correctly).
         if let Some(ref state) = self.cached_shared_state
             && let Some(ws) = state.workspaces.get(env)
@@ -877,9 +877,8 @@ impl ShellKeep {
         let id = TabId(self.next_id);
         self.next_id += 1;
 
-        let tmux_cmd = format!(
-            "TERM=xterm-256color tmux new-session -A -s {tmux_session} \\; set status off || exec $SHELL"
-        );
+        let tmux_cmd =
+            format!("TERM=xterm-256color tmux new-session -A -s {tmux_session} \\; set status off");
 
         let mut full_args = Vec::new();
         full_args.extend_from_slice(ssh_args);
@@ -1236,7 +1235,7 @@ impl ShellKeep {
         self.state_dirty = false;
         self.last_state_save = Some(std::time::Instant::now());
 
-        // Build shared state (environments, tabs from all windows)
+        // Build shared state (workspaces, tabs from all windows)
         let mut shared = SharedState::new();
         let mut pos = 0usize;
         let mut env_tabs: Vec<TabState> = Vec::new();

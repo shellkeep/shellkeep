@@ -4,7 +4,7 @@
 //! Typed error hierarchy for shellkeep.
 //!
 //! SshError is used throughout src/ssh/ (connection, sftp, lock, tmux, manager).
-//! StateError is used throughout src/state/ (client_id, state_file, environment).
+//! StateError is used throughout src/state/ (client_id, state_file, workspace).
 
 /// SSH-related errors with structured context.
 #[derive(Debug, thiserror::Error)]

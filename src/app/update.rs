@@ -3066,7 +3066,7 @@ impl ShellKeep {
                         } else {
                             tracing::info!("no server shared state found (first connection)");
                             let mut initial = SharedState::new();
-                            shellkeep::state::environment::create_workspace(
+                            shellkeep::state::workspace::create_workspace(
                                 &mut initial,
                                 &self.current_workspace,
                             )
@@ -3167,7 +3167,7 @@ impl ShellKeep {
                     } else {
                         tracing::info!("no server shared state found (first connection)");
                         let mut initial = SharedState::new();
-                        shellkeep::state::environment::create_workspace(
+                        shellkeep::state::workspace::create_workspace(
                             &mut initial,
                             &self.current_workspace,
                         )
