@@ -1621,17 +1621,17 @@ impl ShellKeep {
         }
 
         // FR-STATE-21: state watcher — persistent SSH channel watching shared.json
-        if self.current_conn.is_some() && self.state_syncer.is_some() {
-            if let Some(ref conn) = self.current_conn {
-                let data = state_watcher::StateWatcherData {
-                    conn_key: conn.key.clone(),
-                    conn_manager: self.conn_manager.clone(),
-                };
-                subs.push(Subscription::run_with(
-                    data,
-                    state_watcher::state_watcher_stream,
-                ));
-            }
+        if self.state_syncer.is_some()
+            && let Some(ref conn) = self.current_conn
+        {
+            let data = state_watcher::StateWatcherData {
+                conn_key: conn.key.clone(),
+                conn_manager: self.conn_manager.clone(),
+            };
+            subs.push(Subscription::run_with(
+                data,
+                state_watcher::state_watcher_stream,
+            ));
         }
 
         // FR-TABS-17: window close detection via Event::Closed in events() below.

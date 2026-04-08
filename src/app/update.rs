@@ -753,10 +753,10 @@ impl ShellKeep {
         remote: shellkeep::state::state_file::SharedState,
     ) -> Task<Message> {
         // Skip if this is our own write
-        if let Some(ref cached) = self.cached_shared_state {
-            if remote.version_uuid == cached.version_uuid {
-                return Task::none();
-            }
+        if let Some(ref cached) = self.cached_shared_state
+            && remote.version_uuid == cached.version_uuid
+        {
+            return Task::none();
         }
 
         tracing::info!(
