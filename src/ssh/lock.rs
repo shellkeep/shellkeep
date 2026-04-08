@@ -263,8 +263,9 @@ async fn write_devices(
     devices: &[ConnectedDevice],
 ) -> Result<(), SshError> {
     let json = serde_json::to_string(devices).unwrap_or_else(|_| "[]".to_string());
-    // Use base64 encoding to avoid shell quoting issues with JSON
-    let cmd = format!("tmux set-environment -t {lock_name} SHELLKEEP_LOCK_DEVICES '{json}'");
+    // Escape single quotes for safe shell embedding: ' → '\''
+    let escaped = json.replace('\'', "'\\''");
+    let cmd = format!("tmux set-environment -t {lock_name} SHELLKEEP_LOCK_DEVICES '{escaped}'");
     connection::exec_command(handle, &cmd).await?;
     Ok(())
 }

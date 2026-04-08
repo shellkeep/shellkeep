@@ -1341,6 +1341,9 @@ impl ShellKeep {
         // FR-CONN-20 + FR-STATE-20: sync state to server with merge-on-flush.
         // If another device wrote shared.json since our last read, we merge
         // per-entry using updated_at timestamps before writing.
+        // NOTE: TOCTOU window exists between read and write. If another device
+        // writes during this window, the watcher will detect the change and
+        // trigger a re-merge on the next flush cycle (self-healing).
         if let Some(ref syncer) = self.state_syncer {
             let syncer = syncer.clone();
             let device_json = match serde_json::to_string_pretty(&device) {

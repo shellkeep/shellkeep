@@ -121,6 +121,13 @@ pub(crate) fn state_watcher_stream(data: &StateWatcherData) -> BoxStream<'static
                     let chunk = String::from_utf8_lossy(&data);
                     buffer.push_str(&chunk);
 
+                    // Guard against unbounded buffer growth
+                    if buffer.len() > 1_048_576 {
+                        tracing::warn!("state watcher: buffer exceeded 1MB, clearing");
+                        buffer.clear();
+                        in_state_block = false;
+                    }
+
                     // Process complete lines
                     while let Some(newline_pos) = buffer.find('\n') {
                         let line = buffer[..newline_pos].to_string();
@@ -159,6 +166,11 @@ pub(crate) fn state_watcher_stream(data: &StateWatcherData) -> BoxStream<'static
                     }
                 }
                 Some(russh::ChannelMsg::Eof) | None => {
+                    if in_state_block {
+                        tracing::debug!(
+                            "state watcher: channel closed during STATE_BEGIN block, dropping partial data"
+                        );
+                    }
                     tracing::info!("state watcher: channel closed");
                     let _ = output.send(Message::WatcherDisconnected).await;
                     break;

@@ -281,11 +281,16 @@ pub(crate) async fn connect_server(params: ConnectServerParams) -> Result<i64, S
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs() as i64;
-        let server_epoch: i64 = ssh::connection::exec_command(&h, "date +%s")
-            .await
-            .ok()
-            .and_then(|s| s.trim().parse().ok())
-            .unwrap_or(local_before);
+        let server_epoch: i64 = match ssh::connection::exec_command(&h, "date +%s").await {
+            Ok(s) => s.trim().parse().unwrap_or_else(|_| {
+                tracing::warn!("server time probe: failed to parse, using local time");
+                local_before
+            }),
+            Err(e) => {
+                tracing::warn!("server time probe failed: {e}, using local time");
+                local_before
+            }
+        };
         let offset = server_epoch - local_before;
         tracing::info!("server time offset: {offset}s");
         offset

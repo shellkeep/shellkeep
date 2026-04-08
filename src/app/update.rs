@@ -197,14 +197,6 @@ impl ShellKeep {
             | Message::WorkspaceSessionsFound(..)
             | Message::RestoreWorkspaceHiddenWindows(..) => self.handle_workspace_message(message),
 
-            Message::StateFlushed(version_uuid) => {
-                // Update cached version so watcher ignores our own write
-                if let Some(ref mut state) = self.cached_shared_state {
-                    state.version_uuid = version_uuid;
-                }
-                Task::none()
-            }
-
             // FR-STATE-21: state watcher messages
             Message::WatcherMode(mode) => {
                 tracing::info!("state watcher sync mode: {mode}");
@@ -752,10 +744,17 @@ impl ShellKeep {
         &mut self,
         remote: shellkeep::state::state_file::SharedState,
     ) -> Task<Message> {
-        // Skip if this is our own write
+        // Skip if this is our own write. Check both version_uuid (fast path)
+        // and last_modified_by (handles merge-on-flush generating a new UUID).
         if let Some(ref cached) = self.cached_shared_state
             && remote.version_uuid == cached.version_uuid
         {
+            return Task::none();
+        }
+        if remote.last_modified_by == self.client_id {
+            // Our own write (possibly with a merged version_uuid we don't know yet).
+            // Update cache to prevent re-processing.
+            self.cached_shared_state = Some(remote);
             return Task::none();
         }
 
@@ -1318,6 +1317,10 @@ impl ShellKeep {
                             let handle = h.lock().await;
                             let _ =
                                 ssh::lock::leave_workspace(&handle, &cid_leave, &ws_leave).await;
+                        } else {
+                            tracing::debug!(
+                                "leave_workspace: connection already dead, orphan timeout will handle cleanup"
+                            );
                         }
                     });
                 }

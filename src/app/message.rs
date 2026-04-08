@@ -238,10 +238,6 @@ pub(crate) enum Message {
     /// Result of the control-plane server connection.
     ServerConnected(Result<Box<super::session::ServerConnectResult>, String>),
 
-    /// FR-STATE-20: async flush completed, carries the new version_uuid.
-    /// Used to update cached state so the watcher doesn't treat our own write as a change.
-    StateFlushed(String),
-
     /// FR-STATE-21: state watcher reports its mode ("inotify" or "poll").
     WatcherMode(String),
 
