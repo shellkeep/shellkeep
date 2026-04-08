@@ -67,7 +67,7 @@ async fn test_host_key_known_host() {
 
 #[tokio::test]
 #[ignore]
-async fn test_lock_acquire_release() {
+async fn test_lock_join_leave() {
     let handle = connect().await;
     let client_id = "e2e-lock-test";
 
@@ -80,10 +80,11 @@ async fn test_lock_acquire_release() {
     )
     .await;
 
-    // Acquire lock
-    shellkeep::ssh::lock::acquire_lock(&handle, client_id, Some(15), workspace)
+    // Join workspace
+    let others = shellkeep::ssh::lock::join_workspace(&handle, client_id, Some(15), workspace)
         .await
-        .expect("failed to acquire lock");
+        .expect("failed to join workspace");
+    assert!(others.is_empty(), "no other devices expected on fresh join");
 
     // Verify lock session exists
     let check = exec(
@@ -93,23 +94,23 @@ async fn test_lock_acquire_release() {
     .await;
     assert!(check.contains("EXISTS"), "lock session not found");
 
-    // Verify env vars
+    // Verify device list env var
     let env = exec(
         &handle,
         "tmux show-environment -t shellkeep-lock-Default 2>/dev/null",
     )
     .await;
     assert!(
-        env.contains("SHELLKEEP_LOCK_CLIENT_ID"),
-        "missing client_id env var: {env}"
+        env.contains("SHELLKEEP_LOCK_DEVICES"),
+        "missing devices env var: {env}"
     );
 
-    // Release lock
-    shellkeep::ssh::lock::release_lock(&handle, workspace)
+    // Leave workspace
+    shellkeep::ssh::lock::leave_workspace(&handle, client_id, workspace)
         .await
-        .expect("failed to release lock");
+        .expect("failed to leave workspace");
 
-    // Verify gone
+    // Verify gone (last device leaves, session destroyed)
     let check = exec(
         &handle,
         "tmux has-session -t shellkeep-lock-Default 2>/dev/null && echo EXISTS || echo GONE",
@@ -117,7 +118,7 @@ async fn test_lock_acquire_release() {
     .await;
     assert!(
         check.contains("GONE"),
-        "lock session still exists after release"
+        "lock session still exists after leave"
     );
 }
 
@@ -135,17 +136,17 @@ async fn test_lock_heartbeat() {
     )
     .await;
 
-    shellkeep::ssh::lock::acquire_lock(&handle, client_id, Some(15), workspace)
+    shellkeep::ssh::lock::join_workspace(&handle, client_id, Some(15), workspace)
         .await
-        .expect("acquire failed");
+        .expect("join failed");
 
     // Heartbeat should succeed
-    shellkeep::ssh::lock::heartbeat(&handle, workspace)
+    shellkeep::ssh::lock::heartbeat(&handle, client_id, workspace)
         .await
         .expect("heartbeat failed");
 
     // Cleanup
-    shellkeep::ssh::lock::release_lock(&handle, workspace)
+    shellkeep::ssh::lock::leave_workspace(&handle, client_id, workspace)
         .await
         .ok();
 }

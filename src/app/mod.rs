@@ -5,6 +5,7 @@
 
 pub(crate) mod message;
 pub(crate) mod session;
+pub(crate) mod state_watcher;
 pub(crate) mod tab;
 pub(crate) mod update;
 pub(crate) mod view;
@@ -324,6 +325,13 @@ pub(crate) struct ShellKeep {
     /// In-memory device state (loaded from server on connect, written to server on flush)
     pub(crate) cached_device_state: Option<DeviceState>,
 
+    /// FR-SYNC-01: offset to convert local time to server time (seconds).
+    /// server_time ≈ local_time + server_time_offset
+    pub(crate) server_time_offset: i64,
+
+    /// FR-STATE-21: sync mode reported by state watcher ("inotify" or "poll")
+    pub(crate) sync_mode: Option<String>,
+
     /// FR-RECONNECT-08: last known default gateway (Linux network monitoring)
     #[cfg(target_os = "linux")]
     pub(crate) last_gateway: Option<String>,
@@ -441,6 +449,8 @@ impl ShellKeep {
             state_syncer: None,
             cached_shared_state: None,
             cached_device_state: None,
+            server_time_offset: 0,
+            sync_mode: None,
             #[cfg(target_os = "linux")]
             last_gateway: shellkeep::network::read_default_gateway(),
         };
@@ -800,6 +810,7 @@ impl ShellKeep {
             },
             history_writer,
             needs_initial_resize: true,
+            updated_at: self.server_now(),
         };
 
         // Add tab to the target window, or the active window
@@ -883,6 +894,7 @@ impl ShellKeep {
                     },
                     history_writer: None,
                     needs_initial_resize: true,
+                    updated_at: String::new(),
                 };
                 if let Some(win) = self.active_window_mut() {
                     win.tabs.push(new_tab);
@@ -1185,6 +1197,19 @@ impl ShellKeep {
         tracing::debug!("font size: {}", self.current_font_size);
     }
 
+    /// FR-SYNC-01: current server time as RFC3339 string.
+    /// Uses the offset probed on connect to convert local clock to server clock.
+    pub(crate) fn server_now(&self) -> String {
+        let local_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        let server_secs = local_secs + self.server_time_offset;
+        chrono::DateTime::from_timestamp(server_secs, 0)
+            .unwrap_or_else(chrono::Utc::now)
+            .to_rfc3339()
+    }
+
     pub(crate) fn save_state(&mut self) {
         self.state_dirty = true;
         if let Some(last) = self.last_state_save
@@ -1204,6 +1229,7 @@ impl ShellKeep {
 
         // Build shared state (workspaces, tabs from all windows)
         let mut shared = SharedState::new();
+        shared.last_modified_by = self.client_id.clone();
         let mut pos = 0usize;
         let mut env_tabs: Vec<TabState> = Vec::new();
         for win_id in &self.window_order {
@@ -1215,6 +1241,7 @@ impl ShellKeep {
                         title: tab.label.clone(),
                         position: pos,
                         server_window_id: Some(win.server_window_id.clone()),
+                        updated_at: tab.updated_at.clone(),
                     });
                     pos += 1;
                 }
@@ -1233,9 +1260,9 @@ impl ShellKeep {
                 name: self.current_workspace.clone(),
                 uuid: ws_uuid,
                 tabs: env_tabs,
+                updated_at: String::new(),
             },
         );
-        shared.last_workspace = Some(self.current_workspace.clone());
         // Preserve other workspaces from the previously loaded shared state
         if let Some(ref prev) = self.cached_shared_state {
             for (name, ws) in &prev.workspaces {
@@ -1286,6 +1313,7 @@ impl ShellKeep {
             }
         }
         device.hidden_sessions = self.hidden_sessions.clone();
+        device.last_workspace = Some(self.current_workspace.clone());
 
         // Update in-memory cache
         self.cached_shared_state = Some(shared.clone());
@@ -1310,16 +1338,11 @@ impl ShellKeep {
             }
         }
 
-        // FR-CONN-20: sync state to server if syncer is available
+        // FR-CONN-20 + FR-STATE-20: sync state to server with merge-on-flush.
+        // If another device wrote shared.json since our last read, we merge
+        // per-entry using updated_at timestamps before writing.
         if let Some(ref syncer) = self.state_syncer {
             let syncer = syncer.clone();
-            let shared_json = match serde_json::to_string_pretty(&shared) {
-                Ok(j) => j,
-                Err(e) => {
-                    tracing::warn!("failed to serialize shared state: {e}");
-                    return;
-                }
-            };
             let device_json = match serde_json::to_string_pretty(&device) {
                 Ok(j) => j,
                 Err(e) => {
@@ -1327,7 +1350,60 @@ impl ShellKeep {
                     return;
                 }
             };
+            let cached_version = self
+                .cached_shared_state
+                .as_ref()
+                .map(|s| s.version_uuid.clone())
+                .unwrap_or_default();
+            let client_id = self.client_id.clone();
+            let conn_manager = self.conn_manager.clone();
+            let conn_key = self.current_conn.as_ref().map(|c| c.key.clone());
             tokio::task::spawn(async move {
+                // FR-STATE-20: read-merge-write for shared state
+                let final_shared = match syncer.read_shared_state().await {
+                    Ok(Some(server_json)) => {
+                        match serde_json::from_str::<SharedState>(&server_json) {
+                            Ok(server_state) if server_state.version_uuid != cached_version => {
+                                // Conflict: another device wrote. Merge.
+                                tracing::info!(
+                                    "state conflict detected (cached={}, server={}), merging",
+                                    &cached_version[..8.min(cached_version.len())],
+                                    &server_state.version_uuid
+                                        [..8.min(server_state.version_uuid.len())]
+                                );
+                                // Get live tmux sessions for merge filtering
+                                let live_sessions = if let Some(ref key) = conn_key {
+                                    let mgr = conn_manager.lock().await;
+                                    if let Some(handle_arc) = mgr.get_cached(key) {
+                                        let handle = handle_arc.lock().await;
+                                        ssh::tmux::list_sessions_russh(&handle).await
+                                    } else {
+                                        Vec::new()
+                                    }
+                                } else {
+                                    Vec::new()
+                                };
+                                shellkeep::state::merge::merge_shared_states(
+                                    &shared,
+                                    &server_state,
+                                    &live_sessions,
+                                    &client_id,
+                                )
+                            }
+                            _ => shared, // same version or parse error — write ours
+                        }
+                    }
+                    _ => shared, // read error or no file — write ours
+                };
+
+                let shared_json = match serde_json::to_string_pretty(&final_shared) {
+                    Ok(j) => j,
+                    Err(e) => {
+                        tracing::warn!("failed to serialize merged shared state: {e}");
+                        return;
+                    }
+                };
+
                 if let Err(e) = syncer.write_shared_state(&shared_json).await {
                     tracing::warn!("server shared state sync failed: {e}");
                 } else {
@@ -1542,6 +1618,20 @@ impl ShellKeep {
                 iced::time::every(std::time::Duration::from_secs(5))
                     .map(|_| Message::NetworkChanged),
             );
+        }
+
+        // FR-STATE-21: state watcher — persistent SSH channel watching shared.json
+        if self.current_conn.is_some() && self.state_syncer.is_some() {
+            if let Some(ref conn) = self.current_conn {
+                let data = state_watcher::StateWatcherData {
+                    conn_key: conn.key.clone(),
+                    conn_manager: self.conn_manager.clone(),
+                };
+                subs.push(Subscription::run_with(
+                    data,
+                    state_watcher::state_watcher_stream,
+                ));
+            }
         }
 
         // FR-TABS-17: window close detection via Event::Closed in events() below.

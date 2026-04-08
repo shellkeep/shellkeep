@@ -197,6 +197,28 @@ impl ShellKeep {
             | Message::WorkspaceSessionsFound(..)
             | Message::RestoreWorkspaceHiddenWindows(..) => self.handle_workspace_message(message),
 
+            Message::StateFlushed(version_uuid) => {
+                // Update cached version so watcher ignores our own write
+                if let Some(ref mut state) = self.cached_shared_state {
+                    state.version_uuid = version_uuid;
+                }
+                Task::none()
+            }
+
+            // FR-STATE-21: state watcher messages
+            Message::WatcherMode(mode) => {
+                tracing::info!("state watcher sync mode: {mode}");
+                self.sync_mode = Some(mode);
+                Task::none()
+            }
+            Message::RemoteStateChanged(remote_state) => {
+                self.handle_remote_state_change(*remote_state)
+            }
+            Message::WatcherDisconnected => {
+                tracing::warn!("state watcher disconnected, will retry");
+                Task::none()
+            }
+
             Message::Noop => Task::none(),
         }
     }
@@ -496,10 +518,12 @@ impl ShellKeep {
                 self.hidden_sessions = device.hidden_sessions.clone();
             }
 
-            // FR-ENV-05: restore last workspace from saved state
-            if let Some(ref saved) = saved_state
-                && let Some(ref workspace_name) = saved.last_workspace
-            {
+            // FR-ENV-05: restore last workspace (per-device in v4, shared in v3)
+            let last_ws = device_opt
+                .as_ref()
+                .and_then(|d| d.last_workspace.as_ref())
+                .or_else(|| saved_state.as_ref().and_then(|s| s.last_workspace.as_ref()));
+            if let Some(workspace_name) = last_ws {
                 self.current_workspace = workspace_name.clone();
             }
 
@@ -565,13 +589,13 @@ impl ShellKeep {
             }
 
             // FR-SESSION-12: find orphaned sessions (on server but not in any tab).
-            // Only restore sessions that exist in saved state — sessions the user
-            // explicitly closed (close_tab kills tmux) should not be reopened.
+            // Key invariant: close_tab kills tmux immediately. Any shellkeep tmux
+            // session still alive was never explicitly closed — always safe to restore.
             let existing_tmux: Vec<String> =
                 self.all_tabs().map(|t| t.tmux_session.clone()).collect();
 
-            let mut restorable: Vec<(&str, &str, Option<&str>)> = Vec::new();
-            let mut stale: Vec<String> = Vec::new();
+            let mut restorable: Vec<(String, String, Option<String>)> = Vec::new();
+            let mut orphan_count = 0usize;
 
             for session in &server_sessions {
                 if existing_tmux.contains(session) {
@@ -592,51 +616,42 @@ impl ShellKeep {
                     }
                     // In saved state — restore it
                     restorable.push((
-                        saved.title.as_str(),
-                        session.as_str(),
-                        saved.server_window_id.as_deref(),
+                        saved.title.clone(),
+                        session.clone(),
+                        saved.server_window_id.clone(),
                     ));
                 } else {
-                    // Check if this is a shellkeep session in OUR workspace
-                    // (UUID format or legacy format) but NOT in saved state —
-                    // orphan from a failed kill.
+                    // Orphaned session: exists on server but not in shared state.
+                    // This could be from another device whose state was overwritten,
+                    // or from a crash. Either way, restore it — the user never
+                    // explicitly closed it (close_tab kills tmux immediately).
                     let ws_uuid = self.current_workspace_uuid();
                     let uuid_prefix = format!("shellkeep--{ws_uuid}--");
                     let legacy_prefix = format!("{}--shellkeep-", self.current_workspace);
                     if session.starts_with(&uuid_prefix) || session.starts_with(&legacy_prefix) {
-                        stale.push(session.clone());
+                        let label = session
+                            .rsplit("--")
+                            .next()
+                            .and_then(|uuid_part| uuid_part.get(..8))
+                            .map(|short| format!("Restored ({short})"))
+                            .unwrap_or_else(|| "Restored".to_string());
+                        tracing::info!("restoring orphaned session: {session} as \"{label}\"");
+                        restorable.push((label, session.clone(), None));
+                        orphan_count += 1;
                     }
                 }
             }
 
-            // Build a task list: restore saved sessions + clean up stale orphans
+            // Build a task list: restore sessions
             let mut tasks = Vec::new();
 
-            // Clean up stale orphans
-            if !stale.is_empty() {
-                tracing::info!(
-                    "cleaning up {} stale tmux session(s): {:?}",
-                    stale.len(),
-                    stale
-                );
-                let mgr = self.conn_manager.clone();
-                if let Some(ref conn) = self.current_conn {
-                    let conn_key = conn.key.clone();
-                    tasks.push(Task::perform(
-                        async move {
-                            let mgr_guard = mgr.lock().await;
-                            if let Some(handle_arc) = mgr_guard.get_cached(&conn_key) {
-                                let handle = handle_arc.lock().await;
-                                for name in &stale {
-                                    let cmd = format!("tmux kill-session -t {name} 2>/dev/null");
-                                    let _ = ssh::connection::exec_command(&handle, &cmd).await;
-                                    tracing::info!("killed stale tmux session: {name}");
-                                }
-                            }
-                        },
-                        |_| Message::Noop,
-                    ));
-                }
+            if orphan_count > 0 {
+                let msg = if orphan_count == 1 {
+                    "Restored 1 session from server".to_string()
+                } else {
+                    format!("Restored {orphan_count} session(s) from server")
+                };
+                self.toast = Some((msg, std::time::Instant::now()));
             }
 
             if !restorable.is_empty() {
@@ -701,7 +716,7 @@ impl ShellKeep {
 
                 for (label, session_name, swid) in &restorable {
                     // Route tab to the window matching its server_window_id
-                    let target = swid.and_then(|swid| {
+                    let target = swid.as_deref().and_then(|swid| {
                         self.windows
                             .iter()
                             .find(|(_, w)| w.server_window_id == swid)
@@ -726,6 +741,115 @@ impl ShellKeep {
                 sessions.len()
             );
             return self.reconcile_sessions(sessions);
+        }
+        Task::none()
+    }
+
+    /// FR-STATE-21: handle a remote state change detected by the state watcher.
+    /// Lightweight reconciliation for live sync — adds/removes tabs based on
+    /// differences between remote and local state.
+    fn handle_remote_state_change(
+        &mut self,
+        remote: shellkeep::state::state_file::SharedState,
+    ) -> Task<Message> {
+        // Skip if this is our own write
+        if let Some(ref cached) = self.cached_shared_state {
+            if remote.version_uuid == cached.version_uuid {
+                return Task::none();
+            }
+        }
+
+        tracing::info!(
+            "remote state change detected (by={}, version={})",
+            &remote.last_modified_by,
+            &remote.version_uuid[..8.min(remote.version_uuid.len())]
+        );
+
+        let remote_tabs = remote.workspace_tabs(&self.current_workspace);
+
+        // Collect local tab UUIDs
+        let local_uuids: std::collections::HashSet<String> =
+            self.all_tabs().map(|t| t.session_uuid.clone()).collect();
+
+        let mut tasks = Vec::new();
+
+        // 1. Remote-only tabs: open them (attach to existing tmux session)
+        for remote_tab in &remote_tabs {
+            if local_uuids.contains(&remote_tab.session_uuid) {
+                continue;
+            }
+            // Skip if hidden on this device
+            if self.hidden_sessions.contains(&remote_tab.session_uuid) {
+                continue;
+            }
+            tracing::info!(
+                "remote tab added: {} ({})",
+                remote_tab.title,
+                remote_tab.tmux_session_name
+            );
+            let target = remote_tab.server_window_id.as_deref().and_then(|swid| {
+                self.windows
+                    .iter()
+                    .find(|(_, w)| w.server_window_id == swid)
+                    .map(|(id, _)| *id)
+            });
+            tasks.push(self.open_tab_russh_in_window(
+                &remote_tab.title,
+                &remote_tab.tmux_session_name,
+                target,
+            ));
+        }
+
+        // 2. Local-only tabs: check if they should be removed
+        // Only remove if the tmux session name is NOT in the remote state
+        // AND we don't have a pending flush (our tab might not be synced yet)
+        // For safety, only remove if we can confirm the tab's tmux session is in
+        // the remote state's workspace (i.e., remote knows about this workspace
+        // but doesn't have this tab).
+        // Skipped for now — the merge-on-flush handles this case. Removing tabs
+        // based on remote state is risky (we might have just created them).
+
+        // 3. Update metadata for tabs in both states
+        for win in self.windows.values_mut() {
+            for tab in &mut win.tabs {
+                if let Some(remote_tab) = remote_tabs
+                    .iter()
+                    .find(|t| t.session_uuid == tab.session_uuid)
+                {
+                    // Update title if remote is newer
+                    if !remote_tab.updated_at.is_empty()
+                        && remote_tab.updated_at > tab.updated_at
+                        && remote_tab.title != tab.label
+                    {
+                        tracing::debug!("remote rename: {} -> {}", tab.label, remote_tab.title);
+                        tab.label = remote_tab.title.clone();
+                        tab.updated_at = remote_tab.updated_at.clone();
+                    }
+                }
+            }
+        }
+
+        // Update workspace list from remote state
+        let mut ws_list: Vec<String> = remote.workspaces.keys().cloned().collect();
+        ws_list.sort();
+        self.dialogs.workspace_list = ws_list;
+
+        // Update cached state
+        self.cached_shared_state = Some(remote);
+
+        // Show toast if new tabs appeared
+        let new_count = tasks.len();
+        if new_count > 0 {
+            let msg = if new_count == 1 {
+                "New tab from another device".to_string()
+            } else {
+                format!("{new_count} new tabs from another device")
+            };
+            self.toast = Some((msg, std::time::Instant::now()));
+        }
+
+        if !tasks.is_empty() {
+            return Task::batch(tasks);
         }
         Task::none()
     }
@@ -1022,8 +1146,10 @@ impl ShellKeep {
                         && !self.rename_input.trim().is_empty();
                     if valid {
                         let new_label = self.rename_input.trim().to_string();
+                        let now = self.server_now();
                         if let Some(win) = self.active_window_mut() {
                             win.tabs[index].label = new_label;
+                            win.tabs[index].updated_at = now;
                             win.update_title();
                         }
                         self.save_state();
@@ -1180,6 +1306,21 @@ impl ShellKeep {
                 {
                     self.focused_window = self.window_order.first().copied();
                 }
+                // FR-LOCK-10: leave workspace (remove from device list)
+                let mgr_leave = self.conn_manager.clone();
+                let cid_leave = self.client_id.clone();
+                let ws_leave = self.current_workspace.clone();
+                if let Some(ref conn) = self.current_conn {
+                    let ck = conn.key.clone();
+                    tokio::task::spawn(async move {
+                        let m = mgr_leave.lock().await;
+                        if let Some(h) = m.get_cached(&ck) {
+                            let handle = h.lock().await;
+                            let _ =
+                                ssh::lock::leave_workspace(&handle, &cid_leave, &ws_leave).await;
+                        }
+                    });
+                }
                 self.current_conn = None;
                 self.sessions_listed = false;
                 self.server_state_loaded = false;
@@ -1187,6 +1328,7 @@ impl ShellKeep {
                 self.connecting_server = None;
                 self.cached_shared_state = None;
                 self.cached_device_state = None;
+                self.sync_mode = None;
                 self.save_state();
                 self.toast = Some((
                     "Disconnected. Sessions kept on server.".into(),
@@ -1804,10 +1946,12 @@ impl ShellKeep {
                     }
                     self.dialogs.workspace_list.sort();
                     // Rename in cached shared state (the authoritative source)
+                    let now = self.server_now();
                     if let Some(ref mut state) = self.cached_shared_state
                         && let Some(mut ws) = state.workspaces.remove(&old_name)
                     {
                         ws.name = new_name.clone();
+                        ws.updated_at = now;
                         state.workspaces.insert(new_name.clone(), ws);
                     }
                     if self.current_workspace == old_name {
@@ -2104,18 +2248,19 @@ impl ShellKeep {
         Task::perform(
             async move {
                 // 1. Connect to server (SSH + tmux check + lock)
-                super::session::connect_server(super::session::ConnectServerParams {
-                    conn_manager: mgr.clone(),
-                    conn: conn.clone(),
-                    keepalive_secs: keepalive,
-                    client_id: client_id.clone(),
-                    workspace,
-                    force_lock,
-                    phase,
-                    password,
-                })
-                .await
-                .map_err(|e| e.to_string())?;
+                let server_time_offset =
+                    super::session::connect_server(super::session::ConnectServerParams {
+                        conn_manager: mgr.clone(),
+                        conn: conn.clone(),
+                        keepalive_secs: keepalive,
+                        client_id: client_id.clone(),
+                        workspace,
+                        force_lock,
+                        phase,
+                        password,
+                    })
+                    .await
+                    .map_err(|e| e.to_string())?;
 
                 // 2. List existing tmux sessions
                 let sessions = {
@@ -2155,6 +2300,7 @@ impl ShellKeep {
                     syncer,
                     shared_state,
                     device_state,
+                    server_time_offset,
                 }))
             },
             Message::ServerConnected,
@@ -2217,12 +2363,13 @@ impl ShellKeep {
                 };
                 let conn_key = conn.key.clone();
                 let workspace = self.current_workspace.clone();
+                let client_id = self.client_id.clone();
                 Task::perform(
                     async move {
                         let mgr = mgr.lock().await;
                         if let Some(handle_arc) = mgr.get_cached(&conn_key) {
                             let handle = handle_arc.lock().await;
-                            ssh::lock::heartbeat(&handle, &workspace)
+                            ssh::lock::heartbeat(&handle, &client_id, &workspace)
                                 .await
                                 .map_err(|e| e.to_string())
                         } else {
@@ -2763,6 +2910,7 @@ impl ShellKeep {
         let mut needs_title_update = false;
         let mut shutdown = false;
         let mut resize_info: Option<(u32, u32)> = None;
+        let now = self.server_now();
 
         if let Some(tab) = self.find_tab_mut(id) {
             let is_russh = tab.is_russh();
@@ -2771,6 +2919,7 @@ impl ShellKeep {
                 match action {
                     iced_term::actions::Action::ChangeTitle(new_title) => {
                         tab.label = new_title;
+                        tab.updated_at = now.clone();
                         needs_title_update = true;
                     }
                     iced_term::actions::Action::Shutdown => {
@@ -2974,8 +3123,9 @@ impl ShellKeep {
                         return Task::none();
                     }
 
-                    // Store the syncer
+                    // Store the syncer and server time offset
                     self.state_syncer = Some(result.syncer);
+                    self.server_time_offset = result.server_time_offset;
 
                     // Parse shared state
                     if let Some(json) = result.shared_state {

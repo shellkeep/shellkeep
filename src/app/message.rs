@@ -238,6 +238,19 @@ pub(crate) enum Message {
     /// Result of the control-plane server connection.
     ServerConnected(Result<Box<super::session::ServerConnectResult>, String>),
 
+    /// FR-STATE-20: async flush completed, carries the new version_uuid.
+    /// Used to update cached state so the watcher doesn't treat our own write as a change.
+    StateFlushed(String),
+
+    /// FR-STATE-21: state watcher reports its mode ("inotify" or "poll").
+    WatcherMode(String),
+
+    /// FR-STATE-21: state watcher detected a change in shared.json.
+    RemoteStateChanged(Box<shellkeep::state::state_file::SharedState>),
+
+    /// FR-STATE-21: state watcher channel disconnected (will retry on next subscription).
+    WatcherDisconnected,
+
     /// Intentional no-op — use for callbacks that require a Message but need no action.
     Noop,
 }

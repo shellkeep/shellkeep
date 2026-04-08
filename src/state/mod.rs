@@ -5,6 +5,7 @@
 
 pub mod client_id;
 pub mod history;
+pub mod merge;
 pub mod permissions;
 pub mod recent;
 pub mod server;

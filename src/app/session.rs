@@ -165,6 +165,9 @@ pub(crate) struct ServerConnectResult {
     pub syncer: Arc<ssh::sftp::StateSyncer>,
     pub shared_state: Option<String>,
     pub device_state: Option<String>,
+    /// FR-SYNC-01: offset to convert local time to server time (seconds).
+    /// server_time ≈ local_time + server_time_offset
+    pub server_time_offset: i64,
 }
 
 impl Clone for ServerConnectResult {
@@ -174,6 +177,7 @@ impl Clone for ServerConnectResult {
             syncer: self.syncer.clone(),
             shared_state: self.shared_state.clone(),
             device_state: self.device_state.clone(),
+            server_time_offset: self.server_time_offset,
         }
     }
 }
@@ -190,7 +194,8 @@ impl std::fmt::Debug for ServerConnectResult {
 
 /// Connect to a server: SSH connect, health check, tmux version check, lock acquire.
 /// Does NOT create tmux sessions or open PTY channels (control-plane only).
-pub(crate) async fn connect_server(params: ConnectServerParams) -> Result<(), SshError> {
+/// Returns the server time offset (seconds) on success.
+pub(crate) async fn connect_server(params: ConnectServerParams) -> Result<i64, SshError> {
     tracing::info!(
         "connect_server: {}:{} as {}",
         params.conn.key.host,
@@ -269,6 +274,23 @@ pub(crate) async fn connect_server(params: ConnectServerParams) -> Result<(), Ss
         tracing::warn!("tmux version {ver_str} < 3.0 — some features may not work");
     }
 
+    // FR-SYNC-01: probe server time for cross-device timestamp consistency
+    let server_time_offset = {
+        let h = handle_arc.lock().await;
+        let local_before = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        let server_epoch: i64 = ssh::connection::exec_command(&h, "date +%s")
+            .await
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or(local_before);
+        let offset = server_epoch - local_before;
+        tracing::info!("server time offset: {offset}s");
+        offset
+    };
+
     // FR-LOCK-01: acquire client-ID lock before reading state or creating sessions
     // SAFETY: mutex is never held across a panic path
     #[allow(clippy::unwrap_used)]
@@ -292,13 +314,21 @@ pub(crate) async fn connect_server(params: ConnectServerParams) -> Result<(), Ss
         ssh::lock::release_lock(&h, &params.workspace).await?;
     }
 
+    // FR-LOCK-01: join workspace (multi-device — no conflict dialog)
     {
         let h = handle_arc.lock().await;
-        ssh::lock::acquire_lock(&h, &params.client_id, keepalive_timeout, &params.workspace)
-            .await?;
+        let other_devices =
+            ssh::lock::join_workspace(&h, &params.client_id, keepalive_timeout, &params.workspace)
+                .await?;
+        if !other_devices.is_empty() {
+            tracing::info!(
+                "joined workspace with {} other device(s)",
+                other_devices.len()
+            );
+        }
     }
 
-    Ok(())
+    Ok(server_time_offset)
 }
 
 /// Open a PTY channel for a tab: create/attach tmux session, open channel.

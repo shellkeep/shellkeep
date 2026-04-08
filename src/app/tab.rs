@@ -94,6 +94,9 @@ pub(crate) struct Tab {
     pub(crate) history_writer: Option<history::HistoryWriter>,
     /// FR-TERMINAL-16: true until first resize is sent to SSH channel after connect
     pub(crate) needs_initial_resize: bool,
+    /// FR-STATE-22: server time of last metadata change (rename, reorder, move).
+    /// Used for per-entry conflict resolution in multi-device merge.
+    pub(crate) updated_at: String,
 }
 
 // ---------------------------------------------------------------------------

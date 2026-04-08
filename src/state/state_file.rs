@@ -16,7 +16,7 @@ use std::sync::LazyLock;
 
 use serde::{Deserialize, Serialize};
 
-const SCHEMA_VERSION: u32 = 3;
+const SCHEMA_VERSION: u32 = 4;
 
 /// Cached regex for validating tmux session names.
 // SAFETY: this regex pattern is a compile-time constant and is known to be valid
@@ -28,20 +28,25 @@ static TMUX_NAME_RE: LazyLock<regex::Regex> =
 // Shared state — same for all devices connecting to a server
 // ---------------------------------------------------------------------------
 
-/// Shared state: workspaces with windows/tabs, last active workspace.
+/// Shared state: workspaces with windows/tabs.
+/// FR-STATE-20: version_uuid changes on every write for conflict detection.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SharedState {
     pub schema_version: u32,
+    /// FR-STATE-20: changes on every write, used for conflict detection and
+    /// state watcher deduplication.
+    #[serde(default = "generate_uuid")]
+    pub version_uuid: String,
+    /// Client-id of the device that last wrote this state (informational).
+    #[serde(default)]
+    pub last_modified_by: String,
     pub last_modified: String,
     /// FR-ENV-01: named workspace groupings
     #[serde(default, alias = "environments")]
     pub workspaces: HashMap<String, Workspace>,
-    /// FR-ENV-04: last active workspace
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        alias = "last_environment"
-    )]
+    /// Deprecated: moved to DeviceState in schema v4.
+    /// Kept for backward-compatible deserialization of v3 files.
+    #[serde(default, skip_serializing, alias = "last_environment")]
     pub last_workspace: Option<String>,
     /// FR-SESSION-13a: hidden window snapshots (shared across devices)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -52,6 +57,8 @@ impl SharedState {
     pub fn new() -> Self {
         Self {
             schema_version: SCHEMA_VERSION,
+            version_uuid: generate_uuid(),
+            last_modified_by: String::new(),
             last_modified: chrono_now(),
             workspaces: HashMap::new(),
             last_workspace: None,
@@ -103,6 +110,9 @@ pub struct DeviceState {
     /// Last active window ID
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_active_window: Option<String>,
+    /// FR-ENV-04: last active workspace (per-device, moved from SharedState in v4)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_workspace: Option<String>,
 }
 
 impl DeviceState {
@@ -114,6 +124,7 @@ impl DeviceState {
             window_geometry: HashMap::new(),
             hidden_sessions: Vec::new(),
             last_active_window: None,
+            last_workspace: None,
         }
     }
 }
@@ -154,6 +165,10 @@ pub struct Workspace {
     #[serde(default = "generate_uuid")]
     pub uuid: String,
     pub tabs: Vec<TabState>,
+    /// FR-STATE-22: server time of last metadata change (rename).
+    /// Used for per-entry conflict resolution in multi-device merge.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub updated_at: String,
 }
 
 /// FR-SESSION-13a: hidden window snapshot (persisted in shared state).
@@ -198,6 +213,10 @@ pub struct TabState {
     /// FR-SESSION-10: which window this tab belongs to (for multi-window restore)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server_window_id: Option<String>,
+    /// FR-STATE-22: server time of last metadata change (rename, reorder, move).
+    /// Used for per-entry conflict resolution in multi-device merge.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub updated_at: String,
 }
 
 impl StateFile {
@@ -217,14 +236,18 @@ impl StateFile {
     pub fn into_split(self) -> (SharedState, DeviceState) {
         let mut shared = SharedState {
             schema_version: SCHEMA_VERSION,
+            version_uuid: generate_uuid(),
+            last_modified_by: String::new(),
             last_modified: chrono_now(),
             workspaces: self.workspaces,
-            last_workspace: self.last_workspace,
+            last_workspace: None, // deprecated in v4
             hidden_windows: Vec::new(),
         };
         validate_workspaces(&mut shared.workspaces);
 
         let mut device = DeviceState::new(&self.client_id);
+        // Migrate last_workspace from shared to per-device (v4)
+        device.last_workspace = self.last_workspace;
         if let Some(w) = self.window {
             device.window_geometry.insert(
                 "main".to_string(),
@@ -301,14 +324,16 @@ mod tests {
                     title: "Session 1".into(),
                     position: 0,
                     server_window_id: None,
+                    updated_at: String::new(),
                 }],
+                updated_at: String::new(),
             },
         );
 
         let json = serde_json::to_string_pretty(&state).unwrap();
         let loaded: SharedState = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(loaded.schema_version, 3);
+        assert_eq!(loaded.schema_version, 4);
         assert_eq!(loaded.workspaces.len(), 1);
         let ws = loaded.workspaces.get("Default").unwrap();
         assert_eq!(ws.tabs.len(), 1);
@@ -331,7 +356,7 @@ mod tests {
         let json = serde_json::to_string_pretty(&state).unwrap();
         let loaded: DeviceState = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(loaded.schema_version, 3);
+        assert_eq!(loaded.schema_version, 4);
         assert_eq!(loaded.client_id, "test-device");
         let geo = loaded.window_geometry.get("main").unwrap();
         assert_eq!(geo.x, Some(100));
@@ -350,7 +375,7 @@ mod tests {
     fn shared_state_empty() {
         let state = SharedState::new();
         assert!(state.workspaces.is_empty());
-        assert_eq!(state.schema_version, 3);
+        assert_eq!(state.schema_version, 4);
     }
 
     #[test]
@@ -367,7 +392,9 @@ mod tests {
                     title: "Session 1".into(),
                     position: 0,
                     server_window_id: None,
+                    updated_at: String::new(),
                 }],
+                updated_at: String::new(),
             },
         );
 
@@ -396,7 +423,9 @@ mod tests {
                     title: "Tab 1".into(),
                     position: 0,
                     server_window_id: None,
+                    updated_at: String::new(),
                 }],
+                updated_at: String::new(),
             },
         );
         legacy.last_workspace = Some("Default".to_string());
@@ -409,13 +438,14 @@ mod tests {
 
         let (shared, device) = legacy.into_split();
 
-        assert_eq!(shared.schema_version, 3);
+        assert_eq!(shared.schema_version, 4);
         assert_eq!(shared.workspaces.len(), 1);
-        assert_eq!(shared.last_workspace, Some("Default".to_string()));
+        // last_workspace migrated to DeviceState in v4
+        assert_eq!(device.last_workspace, Some("Default".to_string()));
         let ws = shared.workspaces.get("Default").unwrap();
         assert_eq!(ws.tabs.len(), 1);
 
-        assert_eq!(device.schema_version, 3);
+        assert_eq!(device.schema_version, 4);
         assert_eq!(device.client_id, "migrate-test");
         let geo = device.window_geometry.get("main").unwrap();
         assert_eq!(geo.x, Some(50));
@@ -461,7 +491,9 @@ mod tests {
                     title: "T1".into(),
                     position: 0,
                     server_window_id: None,
+                    updated_at: String::new(),
                 }],
+                updated_at: String::new(),
             },
         );
         legacy.window = Some(WindowState {

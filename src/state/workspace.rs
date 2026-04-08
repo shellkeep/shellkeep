@@ -25,6 +25,7 @@ pub fn create_workspace(state: &mut SharedState, name: &str) -> Result<(), State
             name: name.to_string(),
             uuid: uuid::Uuid::new_v4().to_string(),
             tabs: Vec::new(),
+            updated_at: String::new(),
         },
     );
     Ok(())

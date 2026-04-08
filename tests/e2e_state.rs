@@ -107,7 +107,9 @@ async fn test_state_roundtrip_shared() {
                 title: "My Tab".to_string(),
                 position: 0,
                 server_window_id: Some("win-001".to_string()),
+                updated_at: String::new(),
             }],
+            updated_at: String::new(),
         },
     );
     shared.last_workspace = Some("TestWorkspace".to_string());
@@ -226,7 +228,9 @@ async fn test_state_preserves_other_workspaces() {
                 title: "Tab A".to_string(),
                 position: 0,
                 server_window_id: None,
+                updated_at: String::new(),
             }],
+            updated_at: String::new(),
         },
     );
     let json = serde_json::to_string_pretty(&shared).unwrap();
@@ -246,7 +250,9 @@ async fn test_state_preserves_other_workspaces() {
                 title: "Tab B".to_string(),
                 position: 0,
                 server_window_id: None,
+                updated_at: String::new(),
             }],
+            updated_at: String::new(),
         },
     );
     let json2 = serde_json::to_string_pretty(&read).unwrap();
@@ -296,6 +302,7 @@ async fn test_state_multi_window_tabs() {
                     title: "Window1-Tab1".to_string(),
                     position: 0,
                     server_window_id: Some("window-A".to_string()),
+                    updated_at: String::new(),
                 },
                 TabState {
                     session_uuid: "tab-2".to_string(),
@@ -303,6 +310,7 @@ async fn test_state_multi_window_tabs() {
                     title: "Window1-Tab2".to_string(),
                     position: 1,
                     server_window_id: Some("window-A".to_string()),
+                    updated_at: String::new(),
                 },
                 TabState {
                     session_uuid: "tab-3".to_string(),
@@ -310,8 +318,10 @@ async fn test_state_multi_window_tabs() {
                     title: "Window2-Tab1".to_string(),
                     position: 0,
                     server_window_id: Some("window-B".to_string()),
+                    updated_at: String::new(),
                 },
             ],
+            updated_at: String::new(),
         },
     );
 
@@ -690,6 +700,7 @@ async fn test_tmux_orphan_detection() {
         title: "Known".to_string(),
         position: 0,
         server_window_id: None,
+        updated_at: String::new(),
     }];
 
     let all = tmux::list_sessions_russh(&handle).await;
@@ -713,7 +724,7 @@ async fn test_tmux_orphan_detection() {
 
 #[tokio::test]
 #[ignore]
-async fn test_lock_same_client_takeover() {
+async fn test_lock_same_client_rejoin() {
     let handle = connect().await;
     let client_id = "e2e-lock-same";
     let workspace = "e2e-lock-test";
@@ -724,31 +735,38 @@ async fn test_lock_same_client_takeover() {
     )
     .await;
 
-    // Acquire lock
-    lock::acquire_lock(&handle, client_id, Some(15), workspace)
+    // Join workspace
+    lock::join_workspace(&handle, client_id, Some(15), workspace)
         .await
         .unwrap();
 
-    // Acquire again with SAME client_id — should succeed silently (FR-LOCK-06)
-    lock::acquire_lock(&handle, client_id, Some(15), workspace)
+    // Join again with SAME client_id — should succeed, replacing stale entry (FR-LOCK-06)
+    let others = lock::join_workspace(&handle, client_id, Some(15), workspace)
         .await
-        .expect("same client_id takeover should succeed");
+        .expect("same client_id rejoin should succeed");
+    assert!(
+        others.is_empty(),
+        "no other devices expected on same-client rejoin"
+    );
 
-    // Verify lock still exists
-    let check = lock::check_lock(&handle, client_id, workspace)
+    // Verify device is listed
+    let devices = lock::list_devices(&handle, Some(15), workspace).await;
+    assert!(!devices.is_empty(), "device list should not be empty");
+    assert!(
+        devices.iter().any(|d| d.client_id == client_id),
+        "our device should be in the list"
+    );
+
+    lock::leave_workspace(&handle, client_id, workspace)
         .await
-        .unwrap();
-    assert!(check.is_some(), "lock should still exist");
-    assert_eq!(check.unwrap().client_id, client_id);
-
-    lock::release_lock(&handle, workspace).await.ok();
+        .ok();
 }
 
 #[tokio::test]
 #[ignore]
-async fn test_lock_different_client_conflict() {
+async fn test_lock_multi_device_coexistence() {
     let handle = connect().await;
-    let workspace = "e2e-lock-conflict";
+    let workspace = "e2e-lock-multi";
     let lock_name = format!("shellkeep-lock-{workspace}");
     let _ = exec(
         &handle,
@@ -756,29 +774,42 @@ async fn test_lock_different_client_conflict() {
     )
     .await;
 
-    // Client A acquires lock
-    lock::acquire_lock(&handle, "client-A", Some(15), workspace)
+    // Client A joins
+    let others_a = lock::join_workspace(&handle, "client-A", Some(15), workspace)
         .await
         .unwrap();
+    assert!(others_a.is_empty(), "client-A should see no others");
 
-    // Client B tries — should fail (lock is fresh, not orphaned)
-    let result = lock::acquire_lock(&handle, "client-B", Some(15), workspace).await;
-    assert!(
-        result.is_err(),
-        "different client should be rejected: {result:?}"
+    // Client B joins — should succeed and see client-A
+    let others_b = lock::join_workspace(&handle, "client-B", Some(15), workspace)
+        .await
+        .unwrap();
+    assert_eq!(
+        others_b.len(),
+        1,
+        "client-B should see 1 other device: {others_b:?}"
     );
-    let err = result.unwrap_err().to_string();
-    assert!(
-        err.contains("lock") || err.contains("Lock") || err.contains("held"),
-        "error should mention lock conflict: {err}"
-    );
+    assert_eq!(others_b[0].client_id, "client-A");
 
-    lock::release_lock(&handle, workspace).await.ok();
+    // Verify both devices listed
+    let devices = lock::list_devices(&handle, Some(15), workspace).await;
+    assert_eq!(devices.len(), 2, "should have 2 devices: {devices:?}");
+    let ids: Vec<&str> = devices.iter().map(|d| d.client_id.as_str()).collect();
+    assert!(ids.contains(&"client-A"));
+    assert!(ids.contains(&"client-B"));
+
+    // Clean up
+    lock::leave_workspace(&handle, "client-A", workspace)
+        .await
+        .ok();
+    lock::leave_workspace(&handle, "client-B", workspace)
+        .await
+        .ok();
 }
 
 #[tokio::test]
 #[ignore]
-async fn test_lock_orphan_expired() {
+async fn test_lock_orphan_pruned() {
     let handle = connect().await;
     let workspace = "e2e-lock-orphan";
     let lock_name = format!("shellkeep-lock-{workspace}");
@@ -788,31 +819,45 @@ async fn test_lock_orphan_expired() {
     )
     .await;
 
-    // Client A acquires lock
-    lock::acquire_lock(&handle, "client-orphan-A", Some(15), workspace)
+    // Client A joins
+    lock::join_workspace(&handle, "client-orphan-A", Some(15), workspace)
         .await
         .unwrap();
 
-    // Manually backdate the CONNECTED_AT to make it look orphaned
-    let old_time = "2020-01-01T00:00:00Z";
+    // Manually backdate the SHELLKEEP_LOCK_DEVICES to make client-A look orphaned
+    let orphaned_device = serde_json::json!([{
+        "client_id": "client-orphan-A",
+        "hostname": "old-host",
+        "connected_at": "2020-01-01T00:00:00Z",
+        "pid": 1,
+        "version": "0.1.0"
+    }]);
     exec(
         &handle,
-        &format!("tmux set-environment -t '{lock_name}' SHELLKEEP_LOCK_CONNECTED_AT '{old_time}'"),
+        &format!(
+            "tmux set-environment -t '{lock_name}' SHELLKEEP_LOCK_DEVICES '{}'",
+            orphaned_device
+        ),
     )
     .await;
 
-    // Client B should be able to take over (orphan detection, FR-LOCK-07)
-    let result = lock::acquire_lock(&handle, "client-orphan-B", Some(15), workspace).await;
-    assert!(result.is_ok(), "orphan takeover should succeed: {result:?}");
-
-    // Verify new client holds the lock
-    let info = lock::check_lock(&handle, "client-orphan-B", workspace)
+    // Client B joins — orphaned client-A should be pruned (FR-LOCK-07)
+    let others = lock::join_workspace(&handle, "client-orphan-B", Some(15), workspace)
         .await
         .unwrap();
-    assert!(info.is_some());
-    assert_eq!(info.unwrap().client_id, "client-orphan-B");
+    assert!(
+        others.is_empty(),
+        "orphaned client-A should have been pruned: {others:?}"
+    );
 
-    lock::release_lock(&handle, workspace).await.ok();
+    // Verify only client-B is listed
+    let devices = lock::list_devices(&handle, Some(15), workspace).await;
+    assert_eq!(devices.len(), 1, "only client-B should remain: {devices:?}");
+    assert_eq!(devices[0].client_id, "client-orphan-B");
+
+    lock::leave_workspace(&handle, "client-orphan-B", workspace)
+        .await
+        .ok();
 }
 
 // =========================================================================
@@ -849,6 +894,7 @@ async fn test_reconcile_hidden_not_restored() {
                     title: "Visible".to_string(),
                     position: 0,
                     server_window_id: None,
+                    updated_at: String::new(),
                 },
                 TabState {
                     session_uuid: hidden_uuid.to_string(),
@@ -856,8 +902,10 @@ async fn test_reconcile_hidden_not_restored() {
                     title: "Hidden".to_string(),
                     position: 1,
                     server_window_id: None,
+                    updated_at: String::new(),
                 },
             ],
+            updated_at: String::new(),
         },
     );
 
@@ -915,6 +963,7 @@ async fn test_reconcile_dead_session() {
             title: "Alive".to_string(),
             position: 0,
             server_window_id: None,
+            updated_at: String::new(),
         },
         TabState {
             session_uuid: "dead-sess".to_string(),
@@ -922,6 +971,7 @@ async fn test_reconcile_dead_session() {
             title: "Dead".to_string(),
             position: 1,
             server_window_id: None,
+            updated_at: String::new(),
         },
     ];
 
@@ -1058,6 +1108,7 @@ async fn test_workspace_uuid_stable_across_rename() {
             title: "Tab 1".to_string(),
             position: 0,
             server_window_id: None,
+            updated_at: String::new(),
         });
 
     // Write original
@@ -1128,6 +1179,7 @@ async fn test_fr_tabs_03_move_tab_between_windows() {
                     title: "Tab1".to_string(),
                     position: 0,
                     server_window_id: Some("window-A".to_string()),
+                    updated_at: String::new(),
                 },
                 TabState {
                     session_uuid: "tab-2".to_string(),
@@ -1135,6 +1187,7 @@ async fn test_fr_tabs_03_move_tab_between_windows() {
                     title: "Tab2".to_string(),
                     position: 1,
                     server_window_id: Some("window-A".to_string()),
+                    updated_at: String::new(),
                 },
                 TabState {
                     session_uuid: "tab-3".to_string(),
@@ -1142,8 +1195,10 @@ async fn test_fr_tabs_03_move_tab_between_windows() {
                     title: "Tab3".to_string(),
                     position: 0,
                     server_window_id: Some("window-B".to_string()),
+                    updated_at: String::new(),
                 },
             ],
+            updated_at: String::new(),
         },
     );
 
@@ -1231,7 +1286,9 @@ async fn test_fr_tabs_03_workspace_isolation() {
                 title: "DevTab".to_string(),
                 position: 0,
                 server_window_id: Some("win-dev".to_string()),
+                updated_at: String::new(),
             }],
+            updated_at: String::new(),
         },
     );
     shared.workspaces.insert(
@@ -1245,7 +1302,9 @@ async fn test_fr_tabs_03_workspace_isolation() {
                 title: "ProdTab".to_string(),
                 position: 0,
                 server_window_id: Some("win-prod".to_string()),
+                updated_at: String::new(),
             }],
+            updated_at: String::new(),
         },
     );
 
