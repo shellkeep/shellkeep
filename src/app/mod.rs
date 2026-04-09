@@ -1383,17 +1383,22 @@ impl ShellKeep {
                                     &server_state.version_uuid
                                         [..8.min(server_state.version_uuid.len())]
                                 );
-                                // Get live tmux sessions for merge filtering
+                                // Get live tmux sessions for merge filtering.
+                                // If the SSH handle is dead, skip the merge entirely —
+                                // merging with an empty session list would incorrectly
+                                // drop all tabs as "dead".
                                 let live_sessions = if let Some(ref key) = conn_key {
                                     let mgr = conn_manager.lock().await;
                                     if let Some(handle_arc) = mgr.get_cached(key) {
                                         let handle = handle_arc.lock().await;
                                         ssh::tmux::list_sessions_russh(&handle).await
                                     } else {
-                                        Vec::new()
+                                        tracing::warn!("merge skipped: SSH handle not available");
+                                        return; // Skip write — don't corrupt state
                                     }
                                 } else {
-                                    Vec::new()
+                                    tracing::warn!("merge skipped: no connection key");
+                                    return;
                                 };
                                 shellkeep::state::merge::merge_shared_states(
                                     &shared,
