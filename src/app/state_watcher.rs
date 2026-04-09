@@ -21,19 +21,23 @@ use super::message::Message;
 pub(crate) struct StateWatcherData {
     pub conn_key: ConnKey,
     pub conn_manager: Arc<Mutex<ConnectionManager>>,
+    /// Generation counter — incremented on each connect so iced creates
+    /// a new subscription instead of reusing a stale dead stream.
+    pub generation: u64,
 }
 
 // Implement Hash/Eq so iced can deduplicate subscriptions
 impl std::hash::Hash for StateWatcherData {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.conn_key.hash(state);
+        self.generation.hash(state);
         "state-watcher".hash(state);
     }
 }
 
 impl PartialEq for StateWatcherData {
     fn eq(&self, other: &Self) -> bool {
-        self.conn_key == other.conn_key
+        self.conn_key == other.conn_key && self.generation == other.generation
     }
 }
 

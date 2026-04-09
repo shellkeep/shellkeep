@@ -332,6 +332,10 @@ pub(crate) struct ShellKeep {
     /// FR-STATE-21: sync mode reported by state watcher ("inotify" or "poll")
     pub(crate) sync_mode: Option<String>,
 
+    /// Generation counter for state watcher subscription deduplication.
+    /// Incremented on each server connect to ensure iced creates a fresh stream.
+    pub(crate) watcher_generation: u64,
+
     /// FR-RECONNECT-08: last known default gateway (Linux network monitoring)
     #[cfg(target_os = "linux")]
     pub(crate) last_gateway: Option<String>,
@@ -451,6 +455,7 @@ impl ShellKeep {
             cached_device_state: None,
             server_time_offset: 0,
             sync_mode: None,
+            watcher_generation: 0,
             #[cfg(target_os = "linux")]
             last_gateway: shellkeep::network::read_default_gateway(),
         };
@@ -1366,7 +1371,11 @@ impl ShellKeep {
                 let final_shared = match syncer.read_shared_state().await {
                     Ok(Some(server_json)) => {
                         match serde_json::from_str::<SharedState>(&server_json) {
-                            Ok(server_state) if server_state.version_uuid != cached_version => {
+                            Ok(server_state)
+                                if !cached_version.is_empty()
+                                    && !server_state.version_uuid.is_empty()
+                                    && server_state.version_uuid != cached_version =>
+                            {
                                 // Conflict: another device wrote. Merge.
                                 tracing::info!(
                                     "state conflict detected (cached={}, server={}), merging",
@@ -1630,6 +1639,7 @@ impl ShellKeep {
             let data = state_watcher::StateWatcherData {
                 conn_key: conn.key.clone(),
                 conn_manager: self.conn_manager.clone(),
+                generation: self.watcher_generation,
             };
             subs.push(Subscription::run_with(
                 data,

@@ -826,6 +826,7 @@ impl ShellKeep {
                     }
                 }
             }
+            win.update_title();
         }
 
         // Update workspace list from remote state
@@ -3129,6 +3130,7 @@ impl ShellKeep {
                     // Store the syncer and server time offset
                     self.state_syncer = Some(result.syncer);
                     self.server_time_offset = result.server_time_offset;
+                    self.watcher_generation += 1;
 
                     // Parse shared state
                     if let Some(json) = result.shared_state {

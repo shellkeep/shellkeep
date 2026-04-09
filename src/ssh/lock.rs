@@ -74,7 +74,9 @@ pub async fn join_workspace(
         }
     }
 
-    // Read current device list
+    // Read-modify-write device list. Note: not atomic — if two devices join
+    // simultaneously, one entry may be lost. The heartbeat self-heals this by
+    // re-adding the device if its entry is missing (see heartbeat() below).
     let mut devices = read_devices(handle, &lock_name).await;
 
     // Prune orphaned entries

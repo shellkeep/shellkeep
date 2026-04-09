@@ -35,7 +35,7 @@ pub struct SharedState {
     pub schema_version: u32,
     /// FR-STATE-20: changes on every write, used for conflict detection and
     /// state watcher deduplication.
-    #[serde(default = "generate_uuid")]
+    #[serde(default)]
     pub version_uuid: String,
     /// Client-id of the device that last wrote this state (informational).
     #[serde(default)]
