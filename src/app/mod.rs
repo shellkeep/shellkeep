@@ -1320,8 +1320,20 @@ impl ShellKeep {
         device.hidden_sessions = self.hidden_sessions.clone();
         device.last_workspace = Some(self.current_workspace.clone());
 
-        // Update in-memory cache
-        self.cached_shared_state = Some(shared.clone());
+        // Update in-memory cache. Preserve the old version_uuid so the watcher
+        // can correctly detect our own writes vs remote changes. The actual write
+        // to disk will get a fresh UUID (generated in the async block). The watcher
+        // updates the cached version when it sees the actual write.
+        let cached_version = self
+            .cached_shared_state
+            .as_ref()
+            .map(|s| s.version_uuid.clone())
+            .unwrap_or_default();
+        {
+            let mut cache_shared = shared.clone();
+            cache_shared.version_uuid = cached_version.clone();
+            self.cached_shared_state = Some(cache_shared);
+        }
         self.cached_device_state = Some(device.clone());
 
         // P24-25: update tray with detailed session status
@@ -1387,25 +1399,30 @@ impl ShellKeep {
                                 // If the SSH handle is dead, skip the merge entirely —
                                 // merging with an empty session list would incorrectly
                                 // drop all tabs as "dead".
+                                // Get live tmux sessions. If handle is dead, skip
+                                // shared state merge (but still write device state).
                                 let live_sessions = if let Some(ref key) = conn_key {
                                     let mgr = conn_manager.lock().await;
                                     if let Some(handle_arc) = mgr.get_cached(key) {
                                         let handle = handle_arc.lock().await;
-                                        ssh::tmux::list_sessions_russh(&handle).await
+                                        Some(ssh::tmux::list_sessions_russh(&handle).await)
                                     } else {
                                         tracing::warn!("merge skipped: SSH handle not available");
-                                        return; // Skip write — don't corrupt state
+                                        None
                                     }
                                 } else {
-                                    tracing::warn!("merge skipped: no connection key");
-                                    return;
+                                    None
                                 };
-                                shellkeep::state::merge::merge_shared_states(
-                                    &shared,
-                                    &server_state,
-                                    &live_sessions,
-                                    &client_id,
-                                )
+                                if let Some(live) = live_sessions {
+                                    shellkeep::state::merge::merge_shared_states(
+                                        &shared,
+                                        &server_state,
+                                        &live,
+                                        &client_id,
+                                    )
+                                } else {
+                                    shared // Can't merge; write local state as-is
+                                }
                             }
                             _ => shared, // same version or parse error — write ours
                         }
