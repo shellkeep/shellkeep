@@ -21,9 +21,10 @@ pub struct ConnectedDevice {
     pub version: String,
 }
 
-/// Default orphan timeout multiplier: device is orphaned if
-/// connected_at + (2 * keepalive_timeout) < now.
-const LOCK_ORPHAN_MULTIPLIER: u64 = 2;
+/// Orphan timeout multiplier: device is orphaned if
+/// connected_at + (3 * keepalive_timeout) < now.
+/// Set to 3 (not 2) to tolerate one missed heartbeat without pruning.
+const LOCK_ORPHAN_MULTIPLIER: u64 = 3;
 
 /// Default keepalive timeout in seconds.
 const DEFAULT_KEEPALIVE_TIMEOUT: u64 = 30;

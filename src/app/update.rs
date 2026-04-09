@@ -208,6 +208,7 @@ impl ShellKeep {
             }
             Message::WatcherDisconnected => {
                 tracing::warn!("state watcher disconnected, will retry");
+                self.watcher_generation += 1;
                 Task::none()
             }
 
@@ -751,12 +752,10 @@ impl ShellKeep {
         {
             return Task::none();
         }
-        if remote.last_modified_by == self.client_id {
-            // Our own write (possibly with a merged version_uuid we don't know yet).
-            // Update cache to prevent re-processing.
-            self.cached_shared_state = Some(remote);
-            return Task::none();
-        }
+        // Note: we do NOT skip based on last_modified_by. A merge-on-flush writes
+        // with our client_id but may contain new tabs from another device. The tab
+        // dedup below (local_uuids check) prevents duplicates while allowing new
+        // remote tabs to be opened.
 
         tracing::info!(
             "remote state change detected (by={}, version={})",
